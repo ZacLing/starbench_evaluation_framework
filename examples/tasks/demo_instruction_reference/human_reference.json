@@ -1,0 +1,28 @@
+{
+  "steps": [
+    {
+      "step_id": "H001",
+      "step_type": "structure",
+      "instruction": "Before drafting, organize the answer around the required deliverable headings and make sure each heading has a distinct purpose.",
+      "reasoning": "Step 1 of the expert process: the expert first maps the memo to the specified sections, then checks that each section carries a different part of the policy argument before drafting."
+    },
+    {
+      "step_id": "H002",
+      "step_type": "coverage",
+      "instruction": "Make a quick checklist of required named entities, interventions, metrics, and timeline labels, then verify the final memo against that checklist.",
+      "reasoning": "Step 2 of the expert process: after the structure is clear, the expert creates a private constraint checklist so required entities, interventions, metrics, and timeline labels are not omitted."
+    },
+    {
+      "step_id": "H003",
+      "step_type": "evidence",
+      "instruction": "Separate measurable monitoring indicators from general policy recommendations so the evaluation plan is easy to audit.",
+      "reasoning": "Step 3 of the expert process: once required content is accounted for, the expert separates actions from metrics to avoid burying measurement details inside implementation prose."
+    },
+    {
+      "step_id": "H004",
+      "step_type": "risk",
+      "instruction": "Explicitly name implementation risks and avoid presenting any single intervention as sufficient by itself.",
+      "reasoning": "Step 4 of the expert process: near the end, the expert checks for overclaiming and names implementation risks, especially the common mistake of treating tree planting as a standalone heat solution."
+    }
+  ]
+}

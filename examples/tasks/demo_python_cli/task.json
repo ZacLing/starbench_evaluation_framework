@@ -1,0 +1,9 @@
+{
+  "id": "demo_python_cli",
+  "name": "Demo Python CLI: Stellar Measure",
+  "prompt": "prompt.md",
+  "rubrics": "rubrics.json",
+  "timeout_seconds": 1800,
+  "allow_web_search": false
+}
+

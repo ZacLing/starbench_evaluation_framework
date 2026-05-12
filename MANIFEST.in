@@ -1,0 +1,6 @@
+include README.md
+include LICENSE
+recursive-include src/starbench/runner/schemas *.json
+recursive-include examples/tasks *
+recursive-include docs *.md
+recursive-include docker Dockerfile*

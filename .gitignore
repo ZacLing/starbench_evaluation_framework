@@ -1,0 +1,32 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# Benchmark outputs and isolated Codex state
+runs/
+codex_home/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Local credentials and environment
+.env
+.env.*
+auth.json
+config.toml
+models_cache.json
+installation_id
+
+# Large temporary artifacts
+tmp/
+*.zip
+*.tar
+*.tar.gz

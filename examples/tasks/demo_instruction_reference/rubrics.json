@@ -1,0 +1,101 @@
+{
+  "rubrics": [
+    {
+      "id": "U001",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Does `outputs/urban_heat_resilience_memo.md` exist?"
+    },
+    {
+      "id": "U002",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Is `outputs/urban_heat_resilience_memo.md` at least 700 words and no more than 1000 words?"
+    },
+    {
+      "id": "U003",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Does the memo include the exact title `Three-Summer Urban Heat Resilience Plan`?"
+    },
+    {
+      "id": "U004",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Does the memo include all five exact headings: `Executive Summary`, `Risk Prioritization`, `Interventions`, `Measurement Plan`, and `Equity and Implementation Risks`?"
+    },
+    {
+      "id": "U005",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the memo name all three priority neighborhoods: `Riverside`, `East Market`, and `South Junction`?"
+    },
+    {
+      "id": "U006",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the memo include tree canopy as an intervention?"
+    },
+    {
+      "id": "U007",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the memo include cool roofs as an intervention?"
+    },
+    {
+      "id": "U008",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the memo include shade structures as an intervention?"
+    },
+    {
+      "id": "U009",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the memo include cooling centers as an intervention?"
+    },
+    {
+      "id": "U010",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the measurement plan include land surface temperature?"
+    },
+    {
+      "id": "U011",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the measurement plan include emergency calls?"
+    },
+    {
+      "id": "U012",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the measurement plan include cooling center visits?"
+    },
+    {
+      "id": "U013",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the measurement plan include tree survival rate?"
+    },
+    {
+      "id": "U014",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the measurement plan include resident-reported heat stress?"
+    },
+    {
+      "id": "U015",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the memo include Year 1, Year 2, and Year 3 actions?"
+    },
+    {
+      "id": "U016",
+      "fail_fast": true,
+      "expected": false,
+      "question": "Does the memo claim that tree planting alone solves heat risk?"
+    }
+  ]
+}
+

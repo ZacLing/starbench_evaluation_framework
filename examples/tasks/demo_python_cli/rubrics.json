@@ -1,0 +1,125 @@
+{
+  "rubrics": [
+    {
+      "id": "R001",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Does `outputs/stellar_measure/` exist in the delivered package?"
+    },
+    {
+      "id": "R002",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Does the package include `stellar_measure/__main__.py` so it can run with `python -m stellar_measure`?"
+    },
+    {
+      "id": "R003",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Does the sample command with `12.5,34.75,74.85`, `orion-demo`, and `--json` exit with code 0?"
+    },
+    {
+      "id": "R004",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Does the sample command output valid JSON with numeric `total_meters` equal to `122.1`?"
+    },
+    {
+      "id": "R005",
+      "fail_fast": true,
+      "expected": true,
+      "question": "Does the sample command output numeric `total_feet` equal to `400.591`?"
+    },
+    {
+      "id": "R006",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the sample JSON contain `segment_count` equal to `3`?"
+    },
+    {
+      "id": "R007",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the sample JSON contain `longest_segment_meters` equal to `74.85`?"
+    },
+    {
+      "id": "R008",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the sample JSON contain `label` exactly equal to `orion-demo`?"
+    },
+    {
+      "id": "R009",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the source define a callable named `parse_segments`?"
+    },
+    {
+      "id": "R010",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the source define a callable named `summarize_segments`?"
+    },
+    {
+      "id": "R011",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does `--segments 1.0,bad` exit non-zero and mention `invalid` or `number` in stderr/stdout?"
+    },
+    {
+      "id": "R012",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does `--segments 1,-2` exit non-zero?"
+    },
+    {
+      "id": "R013",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Is there a test file containing at least four `def test_...` functions?"
+    },
+    {
+      "id": "R014",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the README include the exact sample segment string `12.5,34.75,74.85`?"
+    },
+    {
+      "id": "R015",
+      "fail_fast": true,
+      "expected": false,
+      "question": "Does the package declare or require non-stdlib dependencies such as `requests`, `numpy`, or `pandas`?"
+    },
+    {
+      "id": "R016",
+      "fail_fast": true,
+      "expected": false,
+      "question": "Is the primary implementation written in a non-Python language such as C++, JS, TS, Java, or Go?"
+    },
+    {
+      "id": "R017",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does executor `events.jsonl` contain at least one `command_execution` item?"
+    },
+    {
+      "id": "R018",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does any executor command output in trace contain `122.1` or `122.10` and `400.591`?"
+    },
+    {
+      "id": "R019",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does trace or artifact manifest show file creation/change under `outputs/stellar_measure`?"
+    },
+    {
+      "id": "R020",
+      "fail_fast": false,
+      "expected": true,
+      "question": "Does the executor final message mention either `outputs/stellar_measure` or the sample verification result?"
+    }
+  ]
+}
+

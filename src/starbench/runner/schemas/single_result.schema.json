@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": [
+        "single"
+      ]
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rubric_id": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "boolean"
+          },
+          "expected": {
+            "type": "boolean"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "fail_fast": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rubric_id",
+          "answer",
+          "expected",
+          "passed",
+          "fail_fast",
+          "evidence"
+        ]
+      }
+    },
+    "overall_notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "mode",
+    "results",
+    "overall_notes"
+  ]
+}
