@@ -11,7 +11,10 @@ def read_jsonl(path: Path) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
     if not path.exists():
         return events
-    for line in path.read_text(encoding="utf-8").splitlines():
+    with path.open(encoding="utf-8") as handle:
+        lines = list(handle)
+    for line in lines:
+        line = line.rstrip("\n")
         if not line.strip():
             continue
         events.append(json.loads(line))
@@ -120,4 +123,3 @@ def build_artifact_manifest(outputs_dir: Path, output_path: Path) -> Dict[str, A
     }
     output_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
-

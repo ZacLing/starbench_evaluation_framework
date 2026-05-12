@@ -11,7 +11,7 @@ from pathlib import Path
 
 from starbench.runner.evaluation import aggregate_results
 from starbench.runner.models import Rubric, RubricResult
-from starbench.runner.trace import summarize_events
+from starbench.runner.trace import read_jsonl, summarize_events
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +19,19 @@ DEMO_TASK = ROOT / "examples" / "tasks" / "demo_python_cli"
 
 
 class TraceParserTests(unittest.TestCase):
+    def test_read_jsonl_does_not_split_on_unicode_line_separator_like_characters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            event = {
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "aggregated_output": "before\u0084after",
+                },
+            }
+            path.write_text(json.dumps(event, ensure_ascii=False) + "\n", encoding="utf-8")
+            self.assertEqual(read_jsonl(path), [event])
+
     def test_trace_summary_preserves_reasoning_commands_files_and_usage(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread_1"},
