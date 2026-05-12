@@ -88,3 +88,32 @@ The included unit tests use a fake Codex CLI process to validate trace parsing, 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
+
+## Your Own Tasks
+
+Put real benchmark task packages in `tasks/`:
+
+```text
+tasks/
+  my_task/
+    task.json
+    prompt.md
+    rubrics.json
+```
+
+Then run without `--tasks-dir`:
+
+```bash
+starbench-run \
+  --task my_task \
+  --runs-dir runs \
+  --run-id my_task_run \
+  --executor-backend docker \
+  --docker-image starbench-codex:latest \
+  --auth-mode copy-auth \
+  --executor-model gpt-5.5 \
+  --evaluator-model gpt-5.5 \
+  --judge-mode single
+```
+
+The bundled sample tasks stay in `examples/tasks/`, so sample commands explicitly pass `--tasks-dir examples/tasks`.

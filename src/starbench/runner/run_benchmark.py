@@ -23,7 +23,7 @@ from .trace import build_artifact_manifest, write_trace_summary
 
 
 PROJECT_ROOT = Path.cwd()
-DEFAULT_TASKS_DIR = PROJECT_ROOT / "examples" / "tasks"
+DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks"
 DEFAULT_RUNS_DIR = PROJECT_ROOT / "runs"
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 

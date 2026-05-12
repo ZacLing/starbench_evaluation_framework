@@ -12,6 +12,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
 - Trace capture: raw JSONL events, final message, status/timing, artifact manifest, and derived summary.
+- A default `tasks/` directory for user task packages.
 - Two sample task packages under `examples/tasks/`.
 - Unit and closed-loop fake-runner smoke tests that do not call a live model.
 
@@ -64,6 +65,21 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Docker Isolation](docs/docker.md)
 - [Authoring Rubrics](docs/rubrics.md)
 - [Human Reference Instructions](docs/human_reference.md)
+
+## Where To Put Tasks
+
+Put your own task packages under `tasks/`:
+
+```text
+tasks/
+  my_task/
+    task.json
+    prompt.md
+    rubrics.json
+    materials/
+```
+
+`starbench-run` uses `tasks/` by default. The bundled `examples/tasks/` directory is only for sample tasks and smoke tests. To run a sample, pass `--tasks-dir examples/tasks`.
 
 ## Output Layout
 

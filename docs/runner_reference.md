@@ -8,7 +8,7 @@ starbench-run [options]
 
 ## Core Options
 
-- `--tasks-dir PATH`: directory containing task packages. Default: `examples/tasks`.
+- `--tasks-dir PATH`: directory containing task packages. Default: `tasks`.
 - `--runs-dir PATH`: directory for run outputs. Default: `runs`.
 - `--task ID_OR_DIR`: include one task. Repeat for multiple tasks.
 - `--repeat N`: repeat the selected task list.
