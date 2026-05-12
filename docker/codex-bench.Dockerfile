@@ -9,6 +9,7 @@ RUN apt-get update \
         git \
         jq \
         python3 \
+        python-is-python3 \
         python3-pip \
         ripgrep \
         unzip \
