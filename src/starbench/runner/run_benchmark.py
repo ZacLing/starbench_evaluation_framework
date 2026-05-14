@@ -33,9 +33,23 @@ def json_dump(path: Path, data: Dict[str, Any]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def build_augmented_prompt_text(task_run: TaskRunSpec) -> str:
+    prompt_text = task_run.task.prompt_text
+    if not task_run.selected_steps:
+        return prompt_text
+
+    instructions = "\n".join(
+        f"{index}. {step.instruction}" for index, step in enumerate(task_run.selected_steps, start=1)
+    )
+    return f"""{prompt_text.rstrip()}
+
+Additional human reference instructions:
+{instructions}
+"""
+
+
 def build_executor_prompt(task_run: TaskRunSpec) -> str:
-    task = task_run.task
-    base_prompt = f"""You are running inside an isolated benchmark task workspace.
+    return f"""You are running inside an isolated benchmark task workspace.
 
 Rules:
 - Read task materials from ./inputs/.
@@ -47,17 +61,7 @@ Rules:
 
 Task prompt from ./inputs/prompt.md:
 
-{task.prompt_text}
-"""
-    if not task_run.selected_steps:
-        return base_prompt
-
-    instructions = "\n".join(
-        f"{index}. {step.instruction}" for index, step in enumerate(task_run.selected_steps, start=1)
-    )
-    return f"""{base_prompt}
-Additional human reference instructions:
-{instructions}
+{build_augmented_prompt_text(task_run)}
 """
 
 
@@ -166,7 +170,16 @@ def prepare_evaluator_workspace(paths: Dict[str, Path], name: str) -> Path:
 
     outputs_path = source_workspace / "outputs"
     if outputs_path.exists():
-        shutil.copytree(outputs_path, judge_workspace / "workspace" / "outputs", dirs_exist_ok=True)
+        # Executor outputs may include temporary Python environments or vendored
+        # packages created while extracting PDFs. They are not deliverables and
+        # can contain container-local symlinks that break host-side copytree.
+        shutil.copytree(
+            outputs_path,
+            judge_workspace / "workspace" / "outputs",
+            dirs_exist_ok=True,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(".venv", "venv", "__pycache__", "_vendor"),
+        )
 
     for path in sorted(source_workspace.iterdir()):
         if path.name in {"inputs", "outputs", ".runner"}:
@@ -203,7 +216,7 @@ def materialize_task(task_run: TaskRunSpec, run_root: Path, run_task_id: str) ->
     judges.mkdir(parents=True, exist_ok=True)
     codex_home.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(task.prompt_path, inputs / "prompt.md")
+    (inputs / "prompt.md").write_text(build_augmented_prompt_text(task_run), encoding="utf-8")
     if task.files_dir is not None:
         destination = inputs / "files"
         copy_task_material(task.files_dir, destination)
@@ -475,6 +488,187 @@ def executor_timing_from_status(status: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _rate(numerator: int | float, denominator: int | float) -> float | None:
+    if not denominator:
+        return None
+    return round(float(numerator) / float(denominator), 4)
+
+
+def _delta(value: float | None, baseline: float | None) -> float | None:
+    if value is None or baseline is None:
+        return None
+    return round(value - baseline, 4)
+
+
+def build_instruction_ablation_summary(batch_summaries: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    grouped: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+    for batch in batch_summaries:
+        for task_result in batch.get("tasks", []):
+            for judge_mode, judge_data in task_result.get("judges", {}).items():
+                aggregate = judge_data.get("aggregate")
+                if not isinstance(aggregate, dict):
+                    continue
+                variant = task_result.get("instruction_variant", "baseline")
+                key = (task_result["task_id"], judge_mode, variant)
+                group = grouped.setdefault(
+                    key,
+                    {
+                        "task_id": task_result["task_id"],
+                        "judge_mode": judge_mode,
+                        "instruction_variant": variant,
+                        "instruction_step_ids": task_result.get("instruction_step_ids", []),
+                        "instruction_step_indices": task_result.get("instruction_step_indices", []),
+                        "instruction_steps": task_result.get("instruction_steps", []),
+                        "_run_task_ids": [],
+                        "_overall_pass_count": 0,
+                        "_passed_count_sum": 0,
+                        "_total_count_sum": 0,
+                        "_rubrics": {},
+                    },
+                )
+                group["_run_task_ids"].append(task_result["run_task_id"])
+                if aggregate.get("overall_pass"):
+                    group["_overall_pass_count"] += 1
+                group["_passed_count_sum"] += int(aggregate.get("passed_count") or 0)
+                group["_total_count_sum"] += int(aggregate.get("total_count") or 0)
+                for row in aggregate.get("results", []):
+                    rubric_id = row.get("rubric_id")
+                    if not rubric_id:
+                        continue
+                    rubric = group["_rubrics"].setdefault(
+                        rubric_id,
+                        {"rubric_id": rubric_id, "runs": 0, "passed_count": 0},
+                    )
+                    rubric["runs"] += 1
+                    if row.get("passed"):
+                        rubric["passed_count"] += 1
+
+    groups: List[Dict[str, Any]] = []
+    for group in grouped.values():
+        runs = len(group["_run_task_ids"])
+        rubrics = []
+        for rubric in group["_rubrics"].values():
+            rubrics.append(
+                {
+                    "rubric_id": rubric["rubric_id"],
+                    "runs": rubric["runs"],
+                    "passed_count": rubric["passed_count"],
+                    "pass_rate": _rate(rubric["passed_count"], rubric["runs"]),
+                }
+            )
+        rubrics.sort(key=lambda item: item["rubric_id"])
+        groups.append(
+            {
+                "task_id": group["task_id"],
+                "judge_mode": group["judge_mode"],
+                "instruction_variant": group["instruction_variant"],
+                "instruction_step_ids": group["instruction_step_ids"],
+                "instruction_step_indices": group["instruction_step_indices"],
+                "instruction_steps": group["instruction_steps"],
+                "runs": runs,
+                "run_task_ids": group["_run_task_ids"],
+                "overall_pass_count": group["_overall_pass_count"],
+                "overall_pass_rate": _rate(group["_overall_pass_count"], runs),
+                "mean_passed_count": _rate(group["_passed_count_sum"], runs),
+                "mean_rubric_pass_rate": _rate(group["_passed_count_sum"], group["_total_count_sum"]),
+                "rubrics": rubrics,
+            }
+        )
+
+    def sort_key(item: Dict[str, Any]) -> tuple[str, str, int, str]:
+        indices = item.get("instruction_step_indices") or []
+        order = 0 if item["instruction_variant"] == "baseline" else int(indices[0]) if indices else 9999
+        return (item["task_id"], item["judge_mode"], order, item["instruction_variant"])
+
+    groups.sort(key=sort_key)
+    by_key = {
+        (group["task_id"], group["judge_mode"], group["instruction_variant"]): group
+        for group in groups
+    }
+    for group in groups:
+        baseline = by_key.get((group["task_id"], group["judge_mode"], "baseline"))
+        if baseline is None or group["instruction_variant"] == "baseline":
+            continue
+        baseline_rubrics = {item["rubric_id"]: item for item in baseline["rubrics"]}
+        rubric_deltas = []
+        for rubric in group["rubrics"]:
+            baseline_rubric = baseline_rubrics.get(rubric["rubric_id"])
+            if baseline_rubric is None:
+                continue
+            rubric_deltas.append(
+                {
+                    "rubric_id": rubric["rubric_id"],
+                    "pass_rate_delta": _delta(rubric["pass_rate"], baseline_rubric["pass_rate"]),
+                    "pass_rate": rubric["pass_rate"],
+                    "baseline_pass_rate": baseline_rubric["pass_rate"],
+                }
+            )
+        group["delta_vs_baseline"] = {
+            "overall_pass_rate_delta": _delta(group["overall_pass_rate"], baseline["overall_pass_rate"]),
+            "mean_rubric_pass_rate_delta": _delta(group["mean_rubric_pass_rate"], baseline["mean_rubric_pass_rate"]),
+            "rubrics": rubric_deltas,
+        }
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "baseline_variant": "baseline",
+        "groups": groups,
+    }
+
+
+def format_instruction_ablation_markdown(summary: Dict[str, Any]) -> str:
+    lines = [
+        "# Instruction Ablation Summary",
+        "",
+        f"Generated at: `{summary.get('generated_at')}`",
+        "",
+        "| Task | Judge | Variant | Runs | Overall pass rate | Mean rubric pass rate | Delta vs baseline |",
+        "|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for group in summary.get("groups", []):
+        delta_data = group.get("delta_vs_baseline") or {}
+        delta = delta_data.get("mean_rubric_pass_rate_delta")
+        delta_text = "" if delta is None else f"{delta:+.4f}"
+        lines.append(
+            "| {task} | {judge} | {variant} | {runs} | {overall} | {mean} | {delta} |".format(
+                task=group["task_id"],
+                judge=group["judge_mode"],
+                variant=group["instruction_variant"],
+                runs=group["runs"],
+                overall=group["overall_pass_rate"],
+                mean=group["mean_rubric_pass_rate"],
+                delta=delta_text,
+            )
+        )
+
+    for group in summary.get("groups", []):
+        if group["instruction_variant"] == "baseline" or "delta_vs_baseline" not in group:
+            continue
+        rubric_deltas = [
+            item
+            for item in group["delta_vs_baseline"].get("rubrics", [])
+            if item.get("pass_rate_delta") is not None
+        ]
+        rubric_deltas.sort(key=lambda item: item["pass_rate_delta"], reverse=True)
+        top_gains = [item for item in rubric_deltas if item["pass_rate_delta"] > 0][:5]
+        regressions = [item for item in reversed(rubric_deltas) if item["pass_rate_delta"] < 0][:5]
+        lines.extend(["", f"## {group['task_id']} {group['instruction_variant']}"])
+        if group.get("instruction_steps"):
+            instruction = group["instruction_steps"][0].get("instruction", "")
+            lines.extend(["", f"Instruction: {instruction}"])
+        if top_gains:
+            lines.extend(["", "Top rubric gains:"])
+            for item in top_gains:
+                lines.append(f"- `{item['rubric_id']}`: {item['pass_rate_delta']:+.4f}")
+        if regressions:
+            lines.extend(["", "Top rubric regressions:"])
+            for item in regressions:
+                lines.append(f"- `{item['rubric_id']}`: {item['pass_rate_delta']:+.4f}")
+
+    lines.append("")
+    return "\n".join(lines)
+
+
 async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     tasks = duplicate_tasks(discover_tasks(args.tasks_dir, args.task), args.repeat)
     task_runs = build_task_runs(
@@ -492,6 +686,19 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     run_root = args.runs_dir / run_id
     run_root.mkdir(parents=True, exist_ok=False)
     selected_instruction_step_ids = task_runs[0].instruction_step_ids if args.instruction_mode == "select" and task_runs else []
+    instruction_variants: List[Dict[str, Any]] = []
+    seen_instruction_variants = set()
+    for task_run in task_runs:
+        key = (task_run.task.id, task_run.instruction_variant)
+        if key in seen_instruction_variants:
+            continue
+        seen_instruction_variants.add(key)
+        instruction_variants.append(
+            {
+                "task_id": task_run.task.id,
+                **task_run.instruction_metadata(),
+            }
+        )
 
     run_config = {
         "run_id": run_id,
@@ -508,6 +715,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "requested_instruction_step_ids": args.instruction_step or [],
         "instruction_step_ids": selected_instruction_step_ids,
         "instruction_step_order": "human_reference",
+        "instruction_variants": instruction_variants,
         "task_order": run_task_ids,
         "codex_bin": args.codex_bin,
     }
@@ -637,11 +845,19 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     finally:
         progress.close()
 
-    summary = {
+    summary: Dict[str, Any] = {
         **run_config,
         "run_root": str(run_root),
         "batches": batch_summaries,
     }
+    if args.instruction_mode == "ablation":
+        ablation_summary = build_instruction_ablation_summary(batch_summaries)
+        ablation_json_path = run_root / "instruction_ablation_summary.json"
+        ablation_md_path = run_root / "instruction_ablation_summary.md"
+        json_dump(ablation_json_path, ablation_summary)
+        ablation_md_path.write_text(format_instruction_ablation_markdown(ablation_summary), encoding="utf-8")
+        summary["instruction_ablation_summary_path"] = str(ablation_json_path)
+        summary["instruction_ablation_report_path"] = str(ablation_md_path)
     json_dump(run_root / "summary.json", summary)
     return summary
 
@@ -676,9 +892,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--evaluator-timeout-seconds", type=int, default=900)
     parser.add_argument(
         "--instruction-mode",
-        choices=["none", "traverse", "select"],
+        choices=["none", "traverse", "select", "ablation"],
         default="none",
-        help="Append human_reference instructions: none, one run per step, or selected step bundle.",
+        help="Append human_reference instructions: none, one run per step, selected step bundle, or baseline plus one run per step.",
     )
     parser.add_argument(
         "--instruction-step",

@@ -142,7 +142,7 @@ def build_task_runs(
     requested_steps = list(instruction_steps or [])
     if instruction_mode == "none" and requested_steps:
         instruction_mode = "select"
-    if instruction_mode not in {"none", "traverse", "select"}:
+    if instruction_mode not in {"none", "traverse", "select", "ablation"}:
         raise ValueError(f"Unknown instruction mode: {instruction_mode}")
     if instruction_mode == "select" and not requested_steps:
         raise ValueError("--instruction-mode select requires at least one --instruction-step")
@@ -153,6 +153,7 @@ def build_task_runs(
     task_runs: List[TaskRunSpec] = []
     for task in tasks:
         step_by_id = {step.step_id: step for step in task.human_reference_steps}
+        requested_set = set(requested_steps)
         if instruction_mode == "none":
             task_runs.append(TaskRunSpec(task=task, instruction_mode="none", selected_steps=[]))
         elif instruction_mode == "traverse":
@@ -166,7 +167,6 @@ def build_task_runs(
             missing = [step_id for step_id in requested_steps if step_id not in step_by_id]
             if missing:
                 raise ValueError(f"Task {task.id} missing human reference step(s): {', '.join(missing)}")
-            requested_set = set(requested_steps)
             task_runs.append(
                 TaskRunSpec(
                     task=task,
@@ -174,4 +174,18 @@ def build_task_runs(
                     selected_steps=[step for step in task.human_reference_steps if step.step_id in requested_set],
                 )
             )
+        elif instruction_mode == "ablation":
+            if not task.human_reference_steps:
+                raise ValueError(f"Task {task.id} has no human_reference.json for ablation mode")
+            missing = [step_id for step_id in requested_steps if step_id not in step_by_id]
+            if missing:
+                raise ValueError(f"Task {task.id} missing human reference step(s): {', '.join(missing)}")
+            steps = [
+                step
+                for step in task.human_reference_steps
+                if not requested_set or step.step_id in requested_set
+            ]
+            task_runs.append(TaskRunSpec(task=task, instruction_mode="ablation", selected_steps=[]))
+            for step in steps:
+                task_runs.append(TaskRunSpec(task=task, instruction_mode="ablation", selected_steps=[step]))
     return task_runs

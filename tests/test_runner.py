@@ -11,11 +11,14 @@ from pathlib import Path
 
 from starbench.runner.evaluation import aggregate_results
 from starbench.runner.models import Rubric, RubricResult
+from starbench.runner.run_benchmark import build_augmented_prompt_text
+from starbench.runner.task_loader import build_task_runs, load_task
 from starbench.runner.trace import read_jsonl, summarize_events
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO_TASK = ROOT / "examples" / "tasks" / "demo_python_cli"
+DEMO_INSTRUCTION_TASK = ROOT / "examples" / "tasks" / "demo_instruction_reference"
 
 
 class TraceParserTests(unittest.TestCase):
@@ -82,6 +85,24 @@ class AggregationTests(unittest.TestCase):
         self.assertEqual(aggregate["fail_fast_failures"], ["R001"])
         self.assertEqual(aggregate["passed_count"], 1)
         self.assertEqual(aggregate["executor_timing"]["duration_seconds"], 5.0)
+
+
+class InstructionAblationTests(unittest.TestCase):
+    def test_ablation_mode_creates_baseline_and_one_variant_per_step(self) -> None:
+        task = load_task(DEMO_INSTRUCTION_TASK)
+        task_runs = build_task_runs([task], instruction_mode="ablation")
+        self.assertEqual(
+            [task_run.instruction_variant for task_run in task_runs],
+            ["baseline", "H001", "H002", "H003", "H004"],
+        )
+
+    def test_augmented_prompt_materializes_instruction_without_reasoning(self) -> None:
+        task = load_task(DEMO_INSTRUCTION_TASK)
+        task_run = build_task_runs([task], instruction_mode="select", instruction_steps=["H001"])[0]
+        prompt = build_augmented_prompt_text(task_run)
+        self.assertIn("Additional human reference instructions:", prompt)
+        self.assertIn("Before drafting, organize the answer", prompt)
+        self.assertNotIn("Step 1 of the expert process", prompt)
 
 
 class ClosedLoopTests(unittest.TestCase):
@@ -196,6 +217,54 @@ class ClosedLoopTests(unittest.TestCase):
             self.assertTrue((task_root / "judges" / "single_aggregate.json").exists())
             aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
             self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
+
+    def test_closed_loop_ablation_with_repeats_and_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tasks_dir = tmp_path / "tasks"
+            runs_dir = tmp_path / "runs"
+            shutil.copytree(DEMO_INSTRUCTION_TASK, tasks_dir / "demo_instruction_reference")
+            fake_codex = self.make_fake_codex(tmp_path)
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "starbench.runner.run_benchmark",
+                "--tasks-dir",
+                str(tasks_dir),
+                "--runs-dir",
+                str(runs_dir),
+                "--run-id",
+                "ablation_run",
+                "--seed",
+                "123",
+                "--judge-mode",
+                "single",
+                "--auth-mode",
+                "global",
+                "--executor-backend",
+                "local",
+                "--codex-bin",
+                f"{sys.executable} {fake_codex}",
+                "--instruction-mode",
+                "ablation",
+                "--repeat",
+                "2",
+                "--no-progress",
+            ]
+            subprocess.run(cmd, cwd=ROOT, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            summary_path = runs_dir / "ablation_run" / "instruction_ablation_summary.json"
+            self.assertTrue(summary_path.exists())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(summary["groups"]), 5)
+            self.assertTrue(all(group["runs"] == 2 for group in summary["groups"]))
+
+            run_config = json.loads((runs_dir / "ablation_run" / "run_config.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(run_config["task_order"]), 10)
+
+            prompts = [path.read_text(encoding="utf-8") for path in runs_dir.rglob("workspace/inputs/prompt.md")]
+            self.assertTrue(any("Additional human reference instructions:" in prompt for prompt in prompts))
+            self.assertFalse(any("Step 1 of the expert process" in prompt for prompt in prompts))
 
 
 if __name__ == "__main__":

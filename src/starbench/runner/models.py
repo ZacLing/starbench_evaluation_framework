@@ -97,12 +97,18 @@ class TaskRunSpec:
             return None
         return "_".join(step.step_id for step in self.selected_steps)
 
+    @property
+    def instruction_variant(self) -> str:
+        return self.instruction_label or "baseline"
+
     def instruction_metadata(self) -> Dict[str, Any]:
         return {
             "instruction_mode": self.instruction_mode,
+            "instruction_variant": self.instruction_variant,
             "instruction_step_ids": self.instruction_step_ids,
             "instruction_step_indices": self.instruction_step_indices,
             "instruction_count": len(self.selected_steps),
+            "instruction_steps": [step.public_metadata() for step in self.selected_steps],
         }
 
 

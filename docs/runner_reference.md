@@ -94,4 +94,15 @@ Run one executor with selected step ids appended together:
 starbench-run --instruction-mode select --instruction-step H001 --instruction-step H004
 ```
 
-Only `instruction` text is appended to the executor prompt. `reasoning` stays hidden in the task package and is not copied into executor or evaluator workspaces.
+Run a baseline plus one executor per human-reference step:
+
+```bash
+starbench-run --instruction-mode ablation --repeat 5 --judge-mode single
+```
+
+Only `instruction` text is appended to the executor prompt. `reasoning` stays hidden in the task package and is not copied into executor or evaluator workspaces. For instruction variants, the augmented prompt is also written to `workspace/inputs/prompt.md` so the exact task seen by the executor is replayable.
+
+When `--instruction-mode ablation` is used, the runner also writes:
+
+- `instruction_ablation_summary.json`: grouped pass-rate and rubric-level deltas versus baseline.
+- `instruction_ablation_summary.md`: compact human-readable uplift report.

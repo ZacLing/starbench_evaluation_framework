@@ -40,6 +40,18 @@ Traverse:
 starbench-run --task demo_instruction_reference --instruction-mode traverse
 ```
 
+Rule-based ablation:
+
+```bash
+starbench-run \
+  --task demo_instruction_reference \
+  --instruction-mode ablation \
+  --repeat 5 \
+  --judge-mode single
+```
+
+`ablation` runs the baseline plus one variant per `human_reference.steps[]` instruction. `--repeat 5` repeats each variant five times. Starbench writes both `instruction_ablation_summary.json` and `instruction_ablation_summary.md` so the run is replayable and easy to compare against baseline.
+
 Selected bundle:
 
 ```bash
@@ -57,3 +69,5 @@ Additional human reference instructions:
 1. <instruction text>
 2. <instruction text>
 ```
+
+For instruction variants, Starbench writes the augmented text into each run's `workspace/inputs/prompt.md`. `reasoning` is still kept out of executor and evaluator workspaces.
