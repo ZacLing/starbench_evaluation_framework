@@ -94,7 +94,7 @@ Run one executor with selected step ids appended together:
 starbench-run --instruction-mode select --instruction-step H001 --instruction-step H004
 ```
 
-Run a baseline plus one executor per human-reference step:
+Run a baseline, one executor per human-reference step, and one all-instructions executor:
 
 ```bash
 starbench-run --instruction-mode ablation --repeat 5 --judge-mode single

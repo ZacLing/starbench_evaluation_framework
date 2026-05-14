@@ -11,7 +11,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - Independent executor and evaluator model selection.
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
-- Rule-based instruction ablation: baseline plus one variant per expert instruction, with repeat runs and uplift summaries.
+- Rule-based instruction ablation: baseline, one variant per expert instruction, and an all-instructions variant, with repeat runs and uplift summaries.
 - Trace capture: raw JSONL events, final message, status/timing, artifact manifest, and derived summary.
 - A default `tasks/` directory for user task packages.
 - Two sample task packages under `examples/tasks/`.

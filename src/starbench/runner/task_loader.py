@@ -188,4 +188,13 @@ def build_task_runs(
             task_runs.append(TaskRunSpec(task=task, instruction_mode="ablation", selected_steps=[]))
             for step in steps:
                 task_runs.append(TaskRunSpec(task=task, instruction_mode="ablation", selected_steps=[step]))
+            if len(steps) > 1:
+                task_runs.append(
+                    TaskRunSpec(
+                        task=task,
+                        instruction_mode="ablation",
+                        selected_steps=steps,
+                        variant_label="all_instructions",
+                    )
+                )
     return task_runs

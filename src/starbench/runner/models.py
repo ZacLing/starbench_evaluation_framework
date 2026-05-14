@@ -82,6 +82,7 @@ class TaskRunSpec:
     task: TaskSpec
     instruction_mode: str
     selected_steps: List[HumanReferenceStep]
+    variant_label: str | None = None
 
     @property
     def instruction_step_ids(self) -> List[str]:
@@ -99,7 +100,7 @@ class TaskRunSpec:
 
     @property
     def instruction_variant(self) -> str:
-        return self.instruction_label or "baseline"
+        return self.variant_label or self.instruction_label or "baseline"
 
     def instruction_metadata(self) -> Dict[str, Any]:
         return {

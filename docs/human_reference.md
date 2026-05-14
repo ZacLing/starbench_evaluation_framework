@@ -50,7 +50,7 @@ starbench-run \
   --judge-mode single
 ```
 
-`ablation` runs the baseline plus one variant per `human_reference.steps[]` instruction. `--repeat 5` repeats each variant five times. Starbench writes both `instruction_ablation_summary.json` and `instruction_ablation_summary.md` so the run is replayable and easy to compare against baseline.
+`ablation` runs the baseline, one variant per `human_reference.steps[]` instruction, and one `all_instructions` variant that appends every selected instruction together. `--repeat 5` repeats each variant five times. Starbench writes both `instruction_ablation_summary.json` and `instruction_ablation_summary.md` so the run is replayable and easy to compare against baseline.
 
 Selected bundle:
 

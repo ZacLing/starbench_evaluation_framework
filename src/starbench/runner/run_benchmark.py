@@ -469,8 +469,8 @@ def make_run_task_ids(task_runs: Sequence[TaskRunSpec]) -> List[str]:
     run_task_ids: List[str] = []
     for task_run in task_runs:
         base_id = task_run.task.id
-        if task_run.instruction_label:
-            base_id = f"{base_id}__{task_run.instruction_label}"
+        if task_run.instruction_variant != "baseline":
+            base_id = f"{base_id}__{task_run.instruction_variant}"
         counts[base_id] = counts.get(base_id, 0) + 1
         suffix = counts[base_id]
         run_task_ids.append(base_id if suffix == 1 else f"{base_id}__{suffix:03d}")
@@ -577,7 +577,12 @@ def build_instruction_ablation_summary(batch_summaries: Sequence[Dict[str, Any]]
 
     def sort_key(item: Dict[str, Any]) -> tuple[str, str, int, str]:
         indices = item.get("instruction_step_indices") or []
-        order = 0 if item["instruction_variant"] == "baseline" else int(indices[0]) if indices else 9999
+        if item["instruction_variant"] == "baseline":
+            order = 0
+        elif item["instruction_variant"] == "all_instructions":
+            order = 9998
+        else:
+            order = int(indices[0]) if indices else 9999
         return (item["task_id"], item["judge_mode"], order, item["instruction_variant"])
 
     groups.sort(key=sort_key)

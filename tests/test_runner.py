@@ -93,7 +93,7 @@ class InstructionAblationTests(unittest.TestCase):
         task_runs = build_task_runs([task], instruction_mode="ablation")
         self.assertEqual(
             [task_run.instruction_variant for task_run in task_runs],
-            ["baseline", "H001", "H002", "H003", "H004"],
+            ["baseline", "H001", "H002", "H003", "H004", "all_instructions"],
         )
 
     def test_augmented_prompt_materializes_instruction_without_reasoning(self) -> None:
@@ -256,15 +256,28 @@ class ClosedLoopTests(unittest.TestCase):
             summary_path = runs_dir / "ablation_run" / "instruction_ablation_summary.json"
             self.assertTrue(summary_path.exists())
             summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            self.assertEqual(len(summary["groups"]), 5)
+            self.assertEqual(len(summary["groups"]), 6)
             self.assertTrue(all(group["runs"] == 2 for group in summary["groups"]))
 
             run_config = json.loads((runs_dir / "ablation_run" / "run_config.json").read_text(encoding="utf-8"))
-            self.assertEqual(len(run_config["task_order"]), 10)
+            self.assertEqual(len(run_config["task_order"]), 12)
+            self.assertTrue(
+                any(run_task_id.startswith("demo_instruction_reference__all_instructions") for run_task_id in run_config["task_order"])
+            )
 
             prompts = [path.read_text(encoding="utf-8") for path in runs_dir.rglob("workspace/inputs/prompt.md")]
             self.assertTrue(any("Additional human reference instructions:" in prompt for prompt in prompts))
             self.assertFalse(any("Step 1 of the expert process" in prompt for prompt in prompts))
+            all_prompt = (
+                runs_dir
+                / "ablation_run"
+                / "demo_instruction_reference__all_instructions"
+                / "workspace"
+                / "inputs"
+                / "prompt.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("1. Before drafting, organize the answer", all_prompt)
+            self.assertIn("4. Explicitly name implementation risks", all_prompt)
 
 
 if __name__ == "__main__":
