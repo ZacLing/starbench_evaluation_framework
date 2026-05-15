@@ -65,7 +65,7 @@ starbench-run \
 The appended prompt section looks like:
 
 ```text
-Additional human reference instructions:
+Here are some instructions you might find helpful:
 1. <instruction text>
 2. <instruction text>
 ```

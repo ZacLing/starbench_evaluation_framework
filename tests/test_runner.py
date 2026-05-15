@@ -100,7 +100,7 @@ class InstructionAblationTests(unittest.TestCase):
         task = load_task(DEMO_INSTRUCTION_TASK)
         task_run = build_task_runs([task], instruction_mode="select", instruction_steps=["H001"])[0]
         prompt = build_augmented_prompt_text(task_run)
-        self.assertIn("Additional human reference instructions:", prompt)
+        self.assertIn("Here are some instructions you might find helpful:", prompt)
         self.assertIn("Before drafting, organize the answer", prompt)
         self.assertNotIn("Step 1 of the expert process", prompt)
 
@@ -266,7 +266,7 @@ class ClosedLoopTests(unittest.TestCase):
             )
 
             prompts = [path.read_text(encoding="utf-8") for path in runs_dir.rglob("workspace/inputs/prompt.md")]
-            self.assertTrue(any("Additional human reference instructions:" in prompt for prompt in prompts))
+            self.assertTrue(any("Here are some instructions you might find helpful:" in prompt for prompt in prompts))
             self.assertFalse(any("Step 1 of the expert process" in prompt for prompt in prompts))
             all_prompt = (
                 runs_dir

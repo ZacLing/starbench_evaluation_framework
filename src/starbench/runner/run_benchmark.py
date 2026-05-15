@@ -43,7 +43,7 @@ def build_augmented_prompt_text(task_run: TaskRunSpec) -> str:
     )
     return f"""{prompt_text.rstrip()}
 
-Additional human reference instructions:
+Here are some instructions you might find helpful:
 {instructions}
 """
 
