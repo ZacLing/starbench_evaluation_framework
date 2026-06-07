@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 starbench-run = "starbench.runner.run_benchmark:main"
+starbench-distill-skill = "starbench.skill_distiller.distill:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

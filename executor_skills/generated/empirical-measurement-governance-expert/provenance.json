@@ -1,0 +1,42 @@
+{
+  "created_at": "2026-05-18T12:24:05.016756+00:00",
+  "decision_heuristic_count": 22,
+  "distiller": "starbench.skill_distiller.distill",
+  "expert_archetype": {
+    "id": "empirical-measurement-governance-expert",
+    "title": "Empirical Measurement Governance Expert",
+    "work_type_ids": [
+      "task_framing",
+      "platform_boundary",
+      "derived_variable_contract",
+      "data_governance",
+      "validation_design",
+      "selection_control",
+      "method_taxonomy",
+      "compliance_audit",
+      "roadmap_resources",
+      "success_exit"
+    ]
+  },
+  "generalized_card_count": 10,
+  "groups": [
+    "empirical-measurement",
+    "research-platforms",
+    "senior-expert-stack"
+  ],
+  "leakage_level": "S4-trace-and-rubric-distilled",
+  "method_version": "senior-expert-archetype-v2",
+  "operating_principle_count": 5,
+  "skill_id": "empirical-measurement-governance-expert",
+  "source_tasks": [
+    {
+      "human_reference_step_count": 12,
+      "review_count": 4,
+      "rubric_count": 33,
+      "task_id": "accounting_latent_measurement_platform",
+      "task_name": "会计研究潜变量测量方法评估平台技术方案",
+      "task_root": "/Users/zacling/Workspace/StardustAI/starbench_evaluation_framework/tasks/accounting_latent_measurement_platform_v2"
+    }
+  ],
+  "title": "Empirical Measurement Governance Expert"
+}

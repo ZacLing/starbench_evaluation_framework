@@ -58,6 +58,84 @@ class HumanReferenceStep:
 
 
 @dataclass(frozen=True)
+class Rigor:
+    id: str
+    rubric_id: str
+    requirement: str
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Rigor":
+        return cls(
+            id=str(data["id"]),
+            rubric_id=str(data.get("rubric_id", data["id"])),
+            requirement=str(data["requirement"]),
+        )
+
+    def public_metadata(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "rubric_id": self.rubric_id,
+            "requirement": self.requirement,
+        }
+
+
+@dataclass(frozen=True)
+class ExecutorSkill:
+    id: str
+    source_path: Path
+    activation: str
+    description: str
+    leakage_level: str | None = None
+    sha256: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], *, task_dir: Path) -> "ExecutorSkill":
+        return cls.from_base_dir(data, base_dir=task_dir)
+
+    @classmethod
+    def from_base_dir(cls, data: Dict[str, Any], *, base_dir: Path) -> "ExecutorSkill":
+        skill_id = str(data["id"])
+        if not skill_id or skill_id in {".", ".."} or "/" in skill_id or "\\" in skill_id:
+            raise ValueError(f"Invalid executor skill id: {skill_id!r}")
+
+        source_value = str(data.get("path") or f"skills/{skill_id}")
+        source_path = (base_dir / source_value).resolve()
+        if not source_path.exists() or not source_path.is_dir():
+            raise FileNotFoundError(f"Missing executor skill directory for {skill_id}: {source_path}")
+
+        skill_md = source_path / "SKILL.md"
+        if not skill_md.exists() or not skill_md.is_file():
+            raise FileNotFoundError(f"Executor skill {skill_id} is missing SKILL.md: {skill_md}")
+
+        return cls(
+            id=skill_id,
+            source_path=source_path,
+            activation=str(
+                data.get("activation")
+                or f"Use the installed Codex skill `{skill_id}` as private execution guidance for this task."
+            ),
+            description=str(data.get("description", "")),
+            leakage_level=str(data["leakage_level"]) if data.get("leakage_level") is not None else None,
+            sha256=str(data["sha256"]) if data.get("sha256") is not None else None,
+        )
+
+    def public_metadata(self, *, installed_to: str | None = None) -> Dict[str, Any]:
+        metadata: Dict[str, Any] = {
+            "id": self.id,
+            "activation": self.activation,
+            "description": self.description,
+            "source_path": str(self.source_path),
+        }
+        if self.leakage_level is not None:
+            metadata["leakage_level"] = self.leakage_level
+        if self.sha256 is not None:
+            metadata["sha256"] = self.sha256
+        if installed_to is not None:
+            metadata["installed_to"] = installed_to
+        return metadata
+
+
+@dataclass(frozen=True)
 class TaskSpec:
     id: str
     name: str
@@ -65,12 +143,16 @@ class TaskSpec:
     prompt_path: Path
     rubrics_path: Path
     human_reference_path: Path | None
+    rigors_path: Path | None
+    executor_skills_path: Path | None
     files_dir: Path | None
     material_paths: List[Path]
     timeout_seconds: int
     allow_web_search: bool
     rubrics: List[Rubric]
     human_reference_steps: List[HumanReferenceStep]
+    rigors: List[Rigor]
+    executor_skills: List[ExecutorSkill]
 
     @property
     def prompt_text(self) -> str:
@@ -82,6 +164,9 @@ class TaskRunSpec:
     task: TaskSpec
     instruction_mode: str
     selected_steps: List[HumanReferenceStep]
+    rigor_mode: str = "none"
+    selected_rigors: List[Rigor] | None = None
+    selected_executor_skills: List[ExecutorSkill] | None = None
     variant_label: str | None = None
 
     @property
@@ -100,7 +185,42 @@ class TaskRunSpec:
 
     @property
     def instruction_variant(self) -> str:
-        return self.variant_label or self.instruction_label or "baseline"
+        labels = []
+        if self.variant_label:
+            labels.append(self.variant_label)
+        elif self.instruction_label:
+            labels.append(self.instruction_label)
+        rigor_label = self.rigor_label
+        if rigor_label:
+            labels.append(rigor_label)
+        executor_skill_label = self.executor_skill_label
+        if executor_skill_label:
+            labels.append(executor_skill_label)
+        return "__".join(labels) if labels else "baseline"
+
+    @property
+    def rigor_ids(self) -> List[str]:
+        return [rigor.id for rigor in self.selected_rigors or []]
+
+    @property
+    def rigor_rubric_ids(self) -> List[str]:
+        return [rigor.rubric_id for rigor in self.selected_rigors or []]
+
+    @property
+    def rigor_label(self) -> str | None:
+        if not self.selected_rigors:
+            return None
+        return "rigor_" + "_".join(rigor.id for rigor in self.selected_rigors)
+
+    @property
+    def executor_skill_ids(self) -> List[str]:
+        return [skill.id for skill in self.selected_executor_skills or []]
+
+    @property
+    def executor_skill_label(self) -> str | None:
+        if not self.selected_executor_skills:
+            return None
+        return "skill_" + "_".join(skill.id for skill in self.selected_executor_skills)
 
     def instruction_metadata(self) -> Dict[str, Any]:
         return {
@@ -110,6 +230,14 @@ class TaskRunSpec:
             "instruction_step_indices": self.instruction_step_indices,
             "instruction_count": len(self.selected_steps),
             "instruction_steps": [step.public_metadata() for step in self.selected_steps],
+            "rigor_mode": self.rigor_mode,
+            "rigor_ids": self.rigor_ids,
+            "rigor_rubric_ids": self.rigor_rubric_ids,
+            "rigor_count": len(self.selected_rigors or []),
+            "rigors": [rigor.public_metadata() for rigor in self.selected_rigors or []],
+            "executor_skill_ids": self.executor_skill_ids,
+            "executor_skill_count": len(self.selected_executor_skills or []),
+            "executor_skills": [skill.public_metadata() for skill in self.selected_executor_skills or []],
         }
 
 

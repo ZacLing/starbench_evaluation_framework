@@ -13,5 +13,10 @@ setup(
     package_data={"starbench.runner": ["schemas/*.json"]},
     python_requires=">=3.9",
     install_requires=["tqdm>=4.66"],
-    entry_points={"console_scripts": ["starbench-run=starbench.runner.run_benchmark:main"]},
+    entry_points={
+        "console_scripts": [
+            "starbench-run=starbench.runner.run_benchmark:main",
+            "starbench-distill-skill=starbench.skill_distiller.distill:main",
+        ]
+    },
 )

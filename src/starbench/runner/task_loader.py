@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
-from .models import HumanReferenceStep, Rubric, TaskRunSpec, TaskSpec
+from .models import ExecutorSkill, HumanReferenceStep, Rigor, Rubric, TaskRunSpec, TaskSpec
 
 
 def _discover_material_paths(
@@ -50,6 +50,9 @@ def load_task(task_dir: Path) -> TaskSpec:
     prompt_path = task_dir / config.get("prompt", "prompt.md")
     rubrics_path = task_dir / config.get("rubrics", "rubrics.json")
     human_reference_path = task_dir / config.get("human_reference", "human_reference.json")
+    rigors_path = task_dir / config.get("rigors", "rigors.json")
+    executor_skills_value = config.get("executor_skills", "executor_skills.json")
+    executor_skills_path = task_dir / executor_skills_value if executor_skills_value else None
     subtle_difference_value = config.get("subtle_difference")
     subtle_difference_path = task_dir / subtle_difference_value if subtle_difference_value else None
     files_dir_value = config.get("files_dir", "files")
@@ -59,6 +62,30 @@ def load_task(task_dir: Path) -> TaskSpec:
     configured_materials = config.get("materials")
     if configured_materials is None:
         configured_materials = config.get("input_materials")
+    executor_skills: List[ExecutorSkill] = []
+    executor_skill_exclusions: List[Path] = []
+    if executor_skills_path is not None and executor_skills_path.exists():
+        executor_skills_data = json.loads(executor_skills_path.read_text(encoding="utf-8"))
+        seen_executor_skill_ids = set()
+        for item in executor_skills_data.get("skills", []):
+            skill = ExecutorSkill.from_dict(item, task_dir=task_dir)
+            if skill.id in seen_executor_skill_ids:
+                raise ValueError(f"Duplicate executor skill id {skill.id} in {executor_skills_path}")
+            seen_executor_skill_ids.add(skill.id)
+            executor_skills.append(skill)
+        executor_skill_exclusions.append(executor_skills_path)
+        for skill in executor_skills:
+            try:
+                relative_source = skill.source_path.relative_to(task_dir)
+            except ValueError:
+                executor_skill_exclusions.append(skill.source_path)
+            else:
+                if relative_source.parts:
+                    executor_skill_exclusions.append(task_dir / relative_source.parts[0])
+        if (task_dir / "skills").exists():
+            executor_skill_exclusions.append(task_dir / "skills")
+    else:
+        executor_skills_path = None
     material_paths = _discover_material_paths(
         task_dir,
         config_path=config_path,
@@ -67,7 +94,10 @@ def load_task(task_dir: Path) -> TaskSpec:
         human_reference_path=human_reference_path,
         files_dir=files_dir,
         configured_materials=configured_materials,
-        extra_excluded_paths=[subtle_difference_path] if subtle_difference_path is not None else [],
+        extra_excluded_paths=[
+            path for path in (subtle_difference_path, rigors_path) if path is not None
+        ]
+        + executor_skill_exclusions,
     )
     missing_materials = [str(path) for path in material_paths if not path.exists()]
     if missing_materials:
@@ -92,6 +122,18 @@ def load_task(task_dir: Path) -> TaskSpec:
             human_reference_steps.append(step)
     else:
         human_reference_path = None
+    rigors: List[Rigor] = []
+    if rigors_path.exists():
+        rigors_data = json.loads(rigors_path.read_text(encoding="utf-8"))
+        seen_rigor_ids = set()
+        for item in rigors_data.get("rigors", []):
+            rigor = Rigor.from_dict(item)
+            if rigor.id in seen_rigor_ids:
+                raise ValueError(f"Duplicate rigor id {rigor.id} in {rigors_path}")
+            seen_rigor_ids.add(rigor.id)
+            rigors.append(rigor)
+    else:
+        rigors_path = None
 
     return TaskSpec(
         id=str(config["id"]),
@@ -100,12 +142,16 @@ def load_task(task_dir: Path) -> TaskSpec:
         prompt_path=prompt_path,
         rubrics_path=rubrics_path,
         human_reference_path=human_reference_path,
+        rigors_path=rigors_path,
+        executor_skills_path=executor_skills_path,
         files_dir=files_dir,
         material_paths=material_paths,
         timeout_seconds=int(config.get("timeout_seconds", 1800)),
         allow_web_search=bool(config.get("allow_web_search", False)),
         rubrics=rubrics,
         human_reference_steps=human_reference_steps,
+        rigors=rigors,
+        executor_skills=executor_skills,
     )
 
 
@@ -138,29 +184,119 @@ def build_task_runs(
     *,
     instruction_mode: str,
     instruction_steps: Sequence[str] | None = None,
+    rigor_mode: str = "none",
+    rigor_ids: Sequence[str] | None = None,
+    executor_skill_ids: Sequence[str] | None = None,
+    external_executor_skills: Sequence[ExecutorSkill] | None = None,
 ) -> List[TaskRunSpec]:
     requested_steps = list(instruction_steps or [])
+    requested_rigors = list(rigor_ids or [])
+    requested_executor_skills = list(executor_skill_ids or [])
     if instruction_mode == "none" and requested_steps:
         instruction_mode = "select"
+    if rigor_mode == "none" and requested_rigors:
+        rigor_mode = "select"
     if instruction_mode not in {"none", "traverse", "select", "ablation"}:
         raise ValueError(f"Unknown instruction mode: {instruction_mode}")
+    if rigor_mode not in {"none", "select"}:
+        raise ValueError(f"Unknown rigor mode: {rigor_mode}")
     if instruction_mode == "select" and not requested_steps:
         raise ValueError("--instruction-mode select requires at least one --instruction-step")
+    if rigor_mode == "select" and not requested_rigors:
+        raise ValueError("--rigor-mode select requires at least one --rigor")
     duplicate_requested_steps = sorted({step_id for step_id in requested_steps if requested_steps.count(step_id) > 1})
     if duplicate_requested_steps:
         raise ValueError(f"Duplicate --instruction-step value(s): {', '.join(duplicate_requested_steps)}")
+    duplicate_requested_rigors = sorted({rigor_id for rigor_id in requested_rigors if requested_rigors.count(rigor_id) > 1})
+    if duplicate_requested_rigors:
+        raise ValueError(f"Duplicate --rigor value(s): {', '.join(duplicate_requested_rigors)}")
+    duplicate_requested_executor_skills = sorted(
+        {
+            skill_id
+            for skill_id in requested_executor_skills
+            if requested_executor_skills.count(skill_id) > 1
+        }
+    )
+    if duplicate_requested_executor_skills:
+        raise ValueError(
+            f"Duplicate --executor-skill value(s): {', '.join(duplicate_requested_executor_skills)}"
+        )
+    external_executor_skills = list(external_executor_skills or [])
+    external_executor_skill_by_id = {skill.id: skill for skill in external_executor_skills}
+    if len(external_executor_skill_by_id) != len(external_executor_skills):
+        duplicate_external_ids = sorted(
+            {
+                skill.id
+                for skill in external_executor_skills
+                if [item.id for item in external_executor_skills].count(skill.id) > 1
+            }
+        )
+        raise ValueError(f"Duplicate external executor skill id(s): {', '.join(duplicate_external_ids)}")
 
     task_runs: List[TaskRunSpec] = []
     for task in tasks:
         step_by_id = {step.step_id: step for step in task.human_reference_steps}
         requested_set = set(requested_steps)
+        rigor_by_id = {rigor.id: rigor for rigor in task.rigors}
+        requested_rigor_set = set(requested_rigors)
+        executor_skill_by_id = {skill.id: skill for skill in task.executor_skills}
+        overlapping_executor_skill_ids = sorted(set(executor_skill_by_id) & set(external_executor_skill_by_id))
+        if overlapping_executor_skill_ids:
+            raise ValueError(
+                f"Executor skill id(s) defined both in task {task.id} and external registry: "
+                f"{', '.join(overlapping_executor_skill_ids)}"
+            )
+        requested_executor_skill_set = set(requested_executor_skills)
+        selected_rigors: List[Rigor] = []
+        selected_executor_skills: List[ExecutorSkill] = []
+        if rigor_mode == "select":
+            if not task.rigors:
+                raise ValueError(f"Task {task.id} has no rigors.json for rigor mode")
+            missing_rigors = [rigor_id for rigor_id in requested_rigors if rigor_id not in rigor_by_id]
+            if missing_rigors:
+                raise ValueError(f"Task {task.id} missing rigor(s): {', '.join(missing_rigors)}")
+            selected_rigors = [rigor for rigor in task.rigors if rigor.id in requested_rigor_set]
+        if requested_executor_skills:
+            missing_executor_skills = [
+                skill_id
+                for skill_id in requested_executor_skills
+                if skill_id not in executor_skill_by_id and skill_id not in external_executor_skill_by_id
+            ]
+            if missing_executor_skills:
+                raise ValueError(f"Task {task.id} missing executor skill(s): {', '.join(missing_executor_skills)}")
+            selected_executor_skills = [
+                skill for skill in task.executor_skills if skill.id in requested_executor_skill_set
+            ]
+            selected_executor_skills.extend(
+                skill
+                for skill in external_executor_skills
+                if skill.id in requested_executor_skill_set
+            )
         if instruction_mode == "none":
-            task_runs.append(TaskRunSpec(task=task, instruction_mode="none", selected_steps=[]))
+            task_runs.append(
+                TaskRunSpec(
+                    task=task,
+                    instruction_mode="none",
+                    selected_steps=[],
+                    rigor_mode=rigor_mode,
+                    selected_rigors=selected_rigors,
+                    selected_executor_skills=selected_executor_skills,
+                )
+            )
         elif instruction_mode == "traverse":
             if not task.human_reference_steps:
                 raise ValueError(f"Task {task.id} has no human_reference.json for traverse mode")
             for step in task.human_reference_steps:
-                task_runs.append(TaskRunSpec(task=task, instruction_mode="traverse", selected_steps=[step]))
+                task_runs.append(
+                    TaskRunSpec(
+                        task=task,
+                        instruction_mode="traverse",
+                        selected_steps=[step],
+                        rigor_mode=rigor_mode,
+                        selected_rigors=selected_rigors,
+                        selected_executor_skills=selected_executor_skills,
+                    )
+                )
         elif instruction_mode == "select":
             if not task.human_reference_steps:
                 raise ValueError(f"Task {task.id} has no human_reference.json for select mode")
@@ -172,6 +308,9 @@ def build_task_runs(
                     task=task,
                     instruction_mode="select",
                     selected_steps=[step for step in task.human_reference_steps if step.step_id in requested_set],
+                    rigor_mode=rigor_mode,
+                    selected_rigors=selected_rigors,
+                    selected_executor_skills=selected_executor_skills,
                 )
             )
         elif instruction_mode == "ablation":
@@ -185,15 +324,36 @@ def build_task_runs(
                 for step in task.human_reference_steps
                 if not requested_set or step.step_id in requested_set
             ]
-            task_runs.append(TaskRunSpec(task=task, instruction_mode="ablation", selected_steps=[]))
+            task_runs.append(
+                TaskRunSpec(
+                    task=task,
+                    instruction_mode="ablation",
+                    selected_steps=[],
+                    rigor_mode=rigor_mode,
+                    selected_rigors=selected_rigors,
+                    selected_executor_skills=selected_executor_skills,
+                )
+            )
             for step in steps:
-                task_runs.append(TaskRunSpec(task=task, instruction_mode="ablation", selected_steps=[step]))
+                task_runs.append(
+                    TaskRunSpec(
+                        task=task,
+                        instruction_mode="ablation",
+                        selected_steps=[step],
+                        rigor_mode=rigor_mode,
+                        selected_rigors=selected_rigors,
+                        selected_executor_skills=selected_executor_skills,
+                    )
+                )
             if len(steps) > 1:
                 task_runs.append(
                     TaskRunSpec(
                         task=task,
                         instruction_mode="ablation",
                         selected_steps=steps,
+                        rigor_mode=rigor_mode,
+                        selected_rigors=selected_rigors,
+                        selected_executor_skills=selected_executor_skills,
                         variant_label="all_instructions",
                     )
                 )

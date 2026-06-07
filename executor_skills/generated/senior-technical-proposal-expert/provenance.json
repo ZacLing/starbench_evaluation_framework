@@ -1,0 +1,44 @@
+{
+  "created_at": "2026-05-18T12:23:51.361134+00:00",
+  "decision_heuristic_count": 33,
+  "distiller": "starbench.skill_distiller.distill",
+  "expert_archetype": {
+    "id": "senior-technical-proposal-expert",
+    "title": "Senior Technical Proposal Expert",
+    "work_type_ids": [
+      "task_framing",
+      "platform_boundary",
+      "roadmap_resources",
+      "success_exit",
+      "compliance_audit"
+    ]
+  },
+  "generalized_card_count": 5,
+  "groups": [
+    "senior-expert-core",
+    "senior-expert-stack"
+  ],
+  "leakage_level": "S4-trace-and-rubric-distilled",
+  "method_version": "senior-expert-archetype-v2",
+  "operating_principle_count": 3,
+  "skill_id": "senior-technical-proposal-expert",
+  "source_tasks": [
+    {
+      "human_reference_step_count": 12,
+      "review_count": 4,
+      "rubric_count": 33,
+      "task_id": "accounting_latent_measurement_platform",
+      "task_name": "会计研究潜变量测量方法评估平台技术方案",
+      "task_root": "/Users/zacling/Workspace/StardustAI/starbench_evaluation_framework/tasks/accounting_latent_measurement_platform_v2"
+    },
+    {
+      "human_reference_step_count": 16,
+      "review_count": 4,
+      "rubric_count": 30,
+      "task_id": "rsj_intraday_factor_platform",
+      "task_name": "日内高频 RSJ 因子研究与生产化验证平台技术方案",
+      "task_root": "/Users/zacling/Workspace/StardustAI/starbench_evaluation_framework/tasks/rsj_intraday_factor_platform_hsw-v3"
+    }
+  ],
+  "title": "Senior Technical Proposal Expert"
+}

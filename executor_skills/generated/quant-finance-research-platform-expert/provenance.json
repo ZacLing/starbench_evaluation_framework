@@ -1,0 +1,44 @@
+{
+  "created_at": "2026-05-18T12:23:59.296199+00:00",
+  "decision_heuristic_count": 28,
+  "distiller": "starbench.skill_distiller.distill",
+  "expert_archetype": {
+    "id": "quant-finance-research-platform-expert",
+    "title": "Quant Finance Research Platform Expert",
+    "work_type_ids": [
+      "task_framing",
+      "platform_boundary",
+      "derived_variable_contract",
+      "data_governance",
+      "validation_design",
+      "selection_control",
+      "cost_capacity",
+      "monitoring_failure_gates",
+      "research_production_consistency",
+      "compliance_audit",
+      "roadmap_resources",
+      "success_exit"
+    ]
+  },
+  "generalized_card_count": 12,
+  "groups": [
+    "quant-finance",
+    "research-platforms",
+    "senior-expert-stack"
+  ],
+  "leakage_level": "S4-trace-and-rubric-distilled",
+  "method_version": "senior-expert-archetype-v2",
+  "operating_principle_count": 5,
+  "skill_id": "quant-finance-research-platform-expert",
+  "source_tasks": [
+    {
+      "human_reference_step_count": 16,
+      "review_count": 4,
+      "rubric_count": 30,
+      "task_id": "rsj_intraday_factor_platform",
+      "task_name": "日内高频 RSJ 因子研究与生产化验证平台技术方案",
+      "task_root": "/Users/zacling/Workspace/StardustAI/starbench_evaluation_framework/tasks/rsj_intraday_factor_platform_hsw-v3"
+    }
+  ],
+  "title": "Quant Finance Research Platform Expert"
+}

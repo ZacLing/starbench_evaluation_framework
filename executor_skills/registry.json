@@ -1,0 +1,55 @@
+{
+  "groups": {
+    "empirical-measurement": [
+      "empirical-measurement-governance-expert"
+    ],
+    "quant-finance": [
+      "quant-finance-research-platform-expert"
+    ],
+    "research-platforms": [
+      "empirical-measurement-governance-expert",
+      "quant-finance-research-platform-expert",
+      "research-platform-architecture-expert"
+    ],
+    "senior-expert-core": [
+      "research-platform-architecture-expert",
+      "senior-technical-proposal-expert"
+    ],
+    "senior-expert-stack": [
+      "empirical-measurement-governance-expert",
+      "quant-finance-research-platform-expert",
+      "research-platform-architecture-expert",
+      "senior-technical-proposal-expert"
+    ]
+  },
+  "skills": [
+    {
+      "activation": "Use `empirical-measurement-governance-expert` as private empirical measurement governance expert guidance for this task.",
+      "description": "Use when executing empirical-research platform tasks involving latent constructs, proxy construction, measurement-method comparison, preregistration, dependent-variable leakage, sample comparability, method applicability, audit artifacts, and reviewer-facing evidence packages.",
+      "id": "empirical-measurement-governance-expert",
+      "leakage_level": "S4-trace-and-rubric-distilled",
+      "path": "generated/empirical-measurement-governance-expert"
+    },
+    {
+      "activation": "Use `quant-finance-research-platform-expert` as private quant finance research platform expert guidance for this task.",
+      "description": "Use when executing quantitative-finance research platform tasks involving alpha or factor definition, market-data quality, backtest validity, point-in-time controls, cost and capacity modeling, production readiness gates, monitoring, compliance, and research-to-production promotion decisions.",
+      "id": "quant-finance-research-platform-expert",
+      "leakage_level": "S4-trace-and-rubric-distilled",
+      "path": "generated/quant-finance-research-platform-expert"
+    },
+    {
+      "activation": "Use `research-platform-architecture-expert` as private research platform architecture expert guidance for this task.",
+      "description": "Use when executing tasks about reusable research platforms, evaluation workflows, governance gates, auditability, reproducibility, stakeholder outputs, implementation phasing, and long-term maintenance. Provides private senior architecture guidance for turning a research idea into an operable platform.",
+      "id": "research-platform-architecture-expert",
+      "leakage_level": "S4-trace-and-rubric-distilled",
+      "path": "generated/research-platform-architecture-expert"
+    },
+    {
+      "activation": "Use `senior-technical-proposal-expert` as private senior technical proposal expert guidance for this task.",
+      "description": "Use when executing senior technical-proposal tasks that require correct task framing, stakeholder-aware structure, scoped MVP choices, risk-to-control mapping, implementation roadmap, resource realism, success criteria, and final coverage checks. Provides private planning and proposal-quality guidance.",
+      "id": "senior-technical-proposal-expert",
+      "leakage_level": "S4-trace-and-rubric-distilled",
+      "path": "generated/senior-technical-proposal-expert"
+    }
+  ]
+}

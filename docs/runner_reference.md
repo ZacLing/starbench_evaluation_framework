@@ -33,6 +33,54 @@ starbench-run \
   --evaluator-model gpt-5.5
 ```
 
+## Agent Runtimes
+
+Codex is the default executor and evaluator runtime:
+
+```bash
+--executor-agent codex
+--evaluator-agent codex
+```
+
+Claude Code can also be selected for either side:
+
+```bash
+--executor-agent claude
+--evaluator-agent claude
+--claude-bin /path/to/claude-or-wrapper
+--executor-model claude-opus-4-8
+--evaluator-model claude-opus-4-8
+```
+
+Claude Code runs through `claude -p --output-format json`. Evaluators use Claude Code structured output with `--json-schema`, and Starbench writes the resulting `structured_output` into the same judge result files used by Codex evaluators.
+
+Claude Code does not currently expose a native CLI equivalent of Codex `model_reasoning_effort`. Starbench provides a prompt-level control:
+
+```bash
+--claude-thinking-effort high
+```
+
+The allowed values are `none`, `low`, `medium`, and `high`. They append increasingly explicit think/deep-think instructions to Claude Code prompts and are recorded in `run_config.json`. This is not the same as directly sending Anthropic API `thinking.effort`.
+
+For proxy/API-gateway use, set Claude Code environment variables before launching the runner:
+
+```bash
+export ANTHROPIC_BASE_URL=https://your-anthropic-compatible-gateway
+export ANTHROPIC_AUTH_TOKEN=...
+```
+
+Claude executor support currently uses `--executor-backend local`. If the host does not have `claude`, build the helper image and use the Docker wrapper:
+
+```bash
+docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
+
+starbench-run \
+  --executor-agent claude \
+  --evaluator-agent claude \
+  --claude-bin /absolute/path/to/tmp/claude-code-docker.sh \
+  --executor-backend local
+```
+
 ## Judge Modes
 
 - `--judge-mode single`: one evaluator sees all rubrics for a task.

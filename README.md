@@ -9,6 +9,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - Batch execution with `--seed`, `--batch-size`, and deterministic task ordering.
 - Docker-backed executor isolation by default.
 - Independent executor and evaluator model selection.
+- Runtime selection for Codex or Claude Code executors/evaluators.
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
 - Rule-based instruction ablation: baseline, one variant per expert instruction, and an all-instructions variant, with repeat runs and uplift summaries.
@@ -35,6 +36,12 @@ Build the Docker executor image:
 docker build -t starbench-codex:latest -f docker/codex-bench.Dockerfile .
 ```
 
+Optional Claude Code helper image, useful when the host does not have the `claude` CLI:
+
+```bash
+docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
+```
+
 Run the sample task with real Codex execution and one GPT judge:
 
 ```bash
@@ -52,6 +59,27 @@ starbench-run \
   --seed 123
 ```
 
+Run the sample task with Claude Code through an Anthropic-compatible gateway:
+
+```bash
+export ANTHROPIC_BASE_URL=https://your-gateway.example
+export ANTHROPIC_AUTH_TOKEN=...
+
+PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
+  --tasks-dir examples/tasks \
+  --task demo_python_cli \
+  --runs-dir runs \
+  --run-id smoke_claude \
+  --executor-agent claude \
+  --evaluator-agent claude \
+  --claude-bin "$(pwd)/tmp/claude-code-docker.sh" \
+  --auth-mode env \
+  --executor-backend local \
+  --executor-model claude-opus-4-8 \
+  --evaluator-model claude-opus-4-8 \
+  --judge-mode single
+```
+
 For a no-cost local framework smoke test:
 
 ```bash
@@ -64,6 +92,10 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Task Package Structure](docs/task_package.md)
 - [Runner Reference](docs/runner_reference.md)
 - [Docker Isolation](docs/docker.md)
+- [Executor Codex Skills](docs/executor_skills.md)
+- [Trace-to-Skill Distillation](docs/skill_distillation.md)
+- [Distill Tasks Into Executor Skills](docs/distill_task_to_skill.md)
+- [Use Executor Skills In Evaluation Runs](docs/use_skills_in_eval.md)
 - [Authoring Rubrics](docs/rubrics.md)
 - [Human Reference Instructions](docs/human_reference.md)
 

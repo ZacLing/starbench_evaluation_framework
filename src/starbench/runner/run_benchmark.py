@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import random
 import shutil
@@ -10,14 +11,18 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from .codex_process import (
+    build_claude_print_command,
     build_codex_exec_command,
+    prepare_claude_env,
     prepare_auth_home,
     run_codex_process,
     run_codex_process_in_docker,
+    write_claude_final_output,
 )
 from .evaluation import aggregate_results, normalize_parallel_results, normalize_single_result, write_aggregate
 from .models import Rubric, TaskRunSpec, TaskSpec
 from .progress import BenchmarkProgress, make_benchmark_progress
+from starbench.skills.registry import expand_skill_groups, load_registry_skills
 from .task_loader import build_task_runs, discover_tasks, duplicate_tasks
 from .trace import build_artifact_manifest, write_trace_summary
 
@@ -25,7 +30,15 @@ from .trace import build_artifact_manifest, write_trace_summary
 PROJECT_ROOT = Path.cwd()
 DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks"
 DEFAULT_RUNS_DIR = PROJECT_ROOT / "runs"
+DEFAULT_EXECUTOR_SKILLS_DIR = PROJECT_ROOT / "executor_skills"
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
+IGNORED_EXECUTOR_SKILL_NAMES = {".DS_Store", ".git", "__pycache__"}
+CLAUDE_THINKING_EFFORT_INSTRUCTIONS = {
+    "none": "",
+    "low": "Before responding, think carefully about the task and check for obvious gaps.",
+    "medium": "Before responding, think through the task carefully, including constraints, edge cases, and verification steps.",
+    "high": "Before responding, think deeply about the task. Build a complete plan, inspect relevant evidence, consider failure modes and alternatives, and self-check the final deliverable before finishing.",
+}
 
 
 def json_dump(path: Path, data: Dict[str, Any]) -> None:
@@ -35,20 +48,44 @@ def json_dump(path: Path, data: Dict[str, Any]) -> None:
 
 def build_augmented_prompt_text(task_run: TaskRunSpec) -> str:
     prompt_text = task_run.task.prompt_text
-    if not task_run.selected_steps:
+    sections = []
+
+    if task_run.selected_steps:
+        instructions = "\n".join(
+            f"{index}. {step.instruction}" for index, step in enumerate(task_run.selected_steps, start=1)
+        )
+        sections.append(f"""Here are some instructions you might find helpful:
+{instructions}""")
+
+    if task_run.selected_rigors:
+        rigors = "\n".join(
+            f"{index}. {rigor.requirement}" for index, rigor in enumerate(task_run.selected_rigors, start=1)
+        )
+        sections.append(f"""Ensure your answer reaches an equivalent level of rigor and depth to the following requirements:
+{rigors}""")
+
+    if not sections:
         return prompt_text
-
-    instructions = "\n".join(
-        f"{index}. {step.instruction}" for index, step in enumerate(task_run.selected_steps, start=1)
-    )
-    return f"""{prompt_text.rstrip()}
-
-Here are some instructions you might find helpful:
-{instructions}
-"""
+    return f"{prompt_text.rstrip()}\n\n" + "\n\n".join(sections) + "\n"
 
 
 def build_executor_prompt(task_run: TaskRunSpec) -> str:
+    executor_skill_section = ""
+    if task_run.selected_executor_skills:
+        skills = "\n".join(
+            f"- `{skill.id}`: {skill.activation}" for skill in task_run.selected_executor_skills
+        )
+        executor_skill_section = f"""
+
+Installed executor Codex skills:
+{skills}
+
+Skill usage rules:
+- Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
+- You may read installed skill files under $CODEX_HOME/skills/<skill-id>/.
+- The task prompt and materials remain authoritative if they conflict with a skill.
+- Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables."""
+
     return f"""You are running inside an isolated benchmark task workspace.
 
 Rules:
@@ -57,12 +94,19 @@ Rules:
 - Do not inspect parent directories or sibling benchmark tasks.
 - Do not look for or infer hidden rubrics.
 - Use only the capabilities requested by the task.
-- Before finishing, run the requested sample verification if the task asks for one.
+- Before finishing, run the requested sample verification if the task asks for one.{executor_skill_section}
 
 Task prompt from ./inputs/prompt.md:
 
 {build_augmented_prompt_text(task_run)}
 """
+
+
+def append_claude_thinking_instruction(prompt: str, effort: str) -> str:
+    instruction = CLAUDE_THINKING_EFFORT_INSTRUCTIONS[effort]
+    if not instruction:
+        return prompt
+    return f"{prompt.rstrip()}\n\nClaude thinking effort instruction:\n{instruction}\n"
 
 
 def build_single_judge_prompt(task: TaskSpec) -> str:
@@ -153,6 +197,68 @@ def copy_task_material(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
 
 
+def _is_ignored_executor_skill_path(path: Path) -> bool:
+    return any(part in IGNORED_EXECUTOR_SKILL_NAMES for part in path.parts)
+
+
+def hash_executor_skill_directory(source: Path) -> str:
+    hasher = hashlib.sha256()
+    for path in sorted(source.rglob("*")):
+        relative_path = path.relative_to(source)
+        if _is_ignored_executor_skill_path(relative_path):
+            continue
+        if not path.is_file():
+            continue
+        hasher.update(str(relative_path).encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(path.read_bytes())
+        hasher.update(b"\0")
+    return hasher.hexdigest()
+
+
+def executor_skill_install_root(codex_home: Path, executor_backend: str) -> Path:
+    if executor_backend == "docker":
+        return codex_home / "docker" / "skills"
+    if executor_backend == "local":
+        return codex_home / "skills"
+    raise ValueError(f"Unknown executor backend: {executor_backend}")
+
+
+def install_executor_skills(task_run: TaskRunSpec, paths: Dict[str, Path], *, executor_backend: str) -> List[Dict[str, Any]]:
+    installed: List[Dict[str, Any]] = []
+    if not task_run.selected_executor_skills:
+        return installed
+
+    install_root = executor_skill_install_root(paths["codex_home"], executor_backend)
+    install_root.mkdir(parents=True, exist_ok=True)
+    for skill in task_run.selected_executor_skills:
+        digest = hash_executor_skill_directory(skill.source_path)
+        if skill.sha256 is not None and skill.sha256 != digest:
+            raise ValueError(
+                f"Executor skill {skill.id} sha256 mismatch: expected {skill.sha256}, got {digest}"
+            )
+
+        destination = install_root / skill.id
+        if destination.exists():
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        shutil.copytree(
+            skill.source_path,
+            destination,
+            ignore=shutil.ignore_patterns(*IGNORED_EXECUTOR_SKILL_NAMES),
+        )
+        try:
+            installed_to = str(destination.relative_to(paths["task_root"]))
+        except ValueError:
+            installed_to = str(destination)
+        metadata = skill.public_metadata(installed_to=installed_to)
+        metadata["sha256"] = digest
+        installed.append(metadata)
+    return installed
+
+
 def prepare_evaluator_workspace(paths: Dict[str, Path], name: str) -> Path:
     """Create a slim judge workspace that omits raw input materials by default."""
     task_root = paths["task_root"]
@@ -200,7 +306,13 @@ def prepare_evaluator_workspace(paths: Dict[str, Path], name: str) -> Path:
     return judge_workspace
 
 
-def materialize_task(task_run: TaskRunSpec, run_root: Path, run_task_id: str) -> Dict[str, Path]:
+def materialize_task(
+    task_run: TaskRunSpec,
+    run_root: Path,
+    run_task_id: str,
+    *,
+    executor_backend: str = "docker",
+) -> Dict[str, Path]:
     task = task_run.task
     task_root = run_root / run_task_id
     workspace = task_root / "workspace"
@@ -230,6 +342,21 @@ def materialize_task(task_run: TaskRunSpec, run_root: Path, run_task_id: str) ->
         copy_task_material(material_path, destination)
         input_materials.append(str(relative_path))
 
+    paths = {
+        "task_root": task_root,
+        "workspace": workspace,
+        "inputs": inputs,
+        "outputs": outputs,
+        "logs": logs,
+        "judges": judges,
+        "codex_home": codex_home,
+    }
+    installed_executor_skills = install_executor_skills(
+        task_run,
+        paths,
+        executor_backend=executor_backend,
+    )
+
     json_dump(
         task_root / "manifest.json",
         {
@@ -240,26 +367,22 @@ def materialize_task(task_run: TaskRunSpec, run_root: Path, run_task_id: str) ->
             "timeout_seconds": task.timeout_seconds,
             "allow_web_search": task.allow_web_search,
             "input_materials": input_materials,
+            "installed_executor_skills": installed_executor_skills,
             **task_run.instruction_metadata(),
         },
     )
 
-    return {
-        "task_root": task_root,
-        "workspace": workspace,
-        "inputs": inputs,
-        "outputs": outputs,
-        "logs": logs,
-        "judges": judges,
-        "codex_home": codex_home,
-    }
+    return paths
 
 
 async def run_executor(
     task_run: TaskRunSpec,
     paths: Dict[str, Path],
     *,
+    agent: str,
     codex_bin: str,
+    claude_bin: str,
+    claude_thinking_effort: str,
     auth_mode: str,
     model: str | None,
     executor_backend: str,
@@ -268,7 +391,48 @@ async def run_executor(
 ) -> Dict[str, Any]:
     task = task_run.task
     logs = paths["logs"]
-    if executor_backend == "local":
+    if agent == "claude" and executor_backend != "local":
+        raise ValueError("Claude executor currently supports --executor-backend local")
+
+    if agent == "claude":
+        command = build_claude_print_command(
+            claude_bin,
+            cwd=paths["workspace"],
+            model=model,
+            permission_mode="acceptEdits",
+            allowed_tools="Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS",
+            max_turns=20,
+        )
+        env = prepare_claude_env(paths["codex_home"] / "claude_executor", auth_mode)
+        result = await run_codex_process(
+            command,
+            cwd=paths["workspace"],
+            prompt=append_claude_thinking_instruction(
+                build_executor_prompt(task_run),
+                claude_thinking_effort,
+            ),
+            env=env,
+            stdout_path=logs / "events.jsonl",
+            stderr_path=logs / "stderr.log",
+            timeout_seconds=task.timeout_seconds,
+        )
+        if result.status == "success":
+            try:
+                write_claude_final_output(logs / "events.jsonl", logs / "final.md")
+            except Exception as exc:
+                result = result.__class__(
+                    command=result.command,
+                    exit_code=result.exit_code,
+                    status="failed",
+                    timed_out=result.timed_out,
+                    started_at=result.started_at,
+                    ended_at=result.ended_at,
+                    duration_seconds=result.duration_seconds,
+                )
+                (logs / "stderr.log").open("a", encoding="utf-8").write(
+                    f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
+    elif executor_backend == "local":
         command = build_codex_exec_command(
             codex_bin,
             cwd=paths["workspace"],
@@ -327,7 +491,10 @@ async def run_single_judge(
     task: TaskSpec,
     paths: Dict[str, Path],
     *,
+    agent: str,
     codex_bin: str,
+    claude_bin: str,
+    claude_thinking_effort: str,
     auth_mode: str,
     model: str | None,
     timeout_seconds: int,
@@ -340,25 +507,59 @@ async def run_single_judge(
     async def run() -> Dict[str, Any]:
         judge_workspace = prepare_evaluator_workspace(paths, "single")
         judge_final_path = judge_workspace / "single_result.json"
-        command = build_codex_exec_command(
-            codex_bin,
-            cwd=judge_workspace,
-            final_path=judge_final_path,
-            sandbox="read-only",
-            output_schema=SCHEMAS_DIR / "single_result.schema.json",
-            model=model,
-            include_trace_config=False,
-        )
-        env = prepare_auth_home(paths["codex_home"] / "judge_single", auth_mode)
+        if agent == "claude":
+            command = build_claude_print_command(
+                claude_bin,
+                cwd=judge_workspace,
+                model=model,
+                output_schema=SCHEMAS_DIR / "single_result.schema.json",
+                allowed_tools="Read,Glob,Grep,Bash,LS",
+                max_turns=20,
+            )
+            env = prepare_claude_env(paths["codex_home"] / "judge_single_claude", auth_mode)
+        else:
+            command = build_codex_exec_command(
+                codex_bin,
+                cwd=judge_workspace,
+                final_path=judge_final_path,
+                sandbox="read-only",
+                output_schema=SCHEMAS_DIR / "single_result.schema.json",
+                model=model,
+                include_trace_config=False,
+            )
+            env = prepare_auth_home(paths["codex_home"] / "judge_single", auth_mode)
         process_result = await run_codex_process(
             command,
             cwd=judge_workspace,
-            prompt=build_single_judge_prompt(task),
+            prompt=append_claude_thinking_instruction(
+                build_single_judge_prompt(task),
+                claude_thinking_effort if agent == "claude" else "none",
+            ),
             env=env,
             stdout_path=judges / "single_events.jsonl",
             stderr_path=judges / "single_stderr.log",
             timeout_seconds=timeout_seconds,
         )
+        if agent == "claude" and process_result.status == "success":
+            try:
+                write_claude_final_output(
+                    judges / "single_events.jsonl",
+                    judge_final_path,
+                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
+                )
+            except Exception as exc:
+                process_result = process_result.__class__(
+                    command=process_result.command,
+                    exit_code=process_result.exit_code,
+                    status="failed",
+                    timed_out=process_result.timed_out,
+                    started_at=process_result.started_at,
+                    ended_at=process_result.ended_at,
+                    duration_seconds=process_result.duration_seconds,
+                )
+                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
+                    f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
         if judge_final_path.exists():
             shutil.copy2(judge_final_path, final_path)
         return process_result.to_dict()
@@ -393,7 +594,10 @@ async def run_parallel_judges(
     task: TaskSpec,
     paths: Dict[str, Path],
     *,
+    agent: str,
     codex_bin: str,
+    claude_bin: str,
+    claude_thinking_effort: str,
     auth_mode: str,
     model: str | None,
     timeout_seconds: int,
@@ -411,25 +615,59 @@ async def run_parallel_judges(
             rubric_dir.mkdir(parents=True, exist_ok=True)
             judge_workspace = prepare_evaluator_workspace(paths, f"parallel_{rubric.id}")
             judge_final_path = judge_workspace / "result.json"
-            command = build_codex_exec_command(
-                codex_bin,
-                cwd=judge_workspace,
-                final_path=judge_final_path,
-                sandbox="read-only",
-                output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
-                model=model,
-                include_trace_config=False,
-            )
-            env = prepare_auth_home(paths["codex_home"] / f"judge_{rubric.id}", auth_mode)
+            if agent == "claude":
+                command = build_claude_print_command(
+                    claude_bin,
+                    cwd=judge_workspace,
+                    model=model,
+                    output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
+                    allowed_tools="Read,Glob,Grep,Bash,LS",
+                    max_turns=10,
+                )
+                env = prepare_claude_env(paths["codex_home"] / f"judge_{rubric.id}_claude", auth_mode)
+            else:
+                command = build_codex_exec_command(
+                    codex_bin,
+                    cwd=judge_workspace,
+                    final_path=judge_final_path,
+                    sandbox="read-only",
+                    output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
+                    model=model,
+                    include_trace_config=False,
+                )
+                env = prepare_auth_home(paths["codex_home"] / f"judge_{rubric.id}", auth_mode)
             process_result = await run_codex_process(
                 command,
                 cwd=judge_workspace,
-                prompt=build_parallel_judge_prompt(task, rubric),
+                prompt=append_claude_thinking_instruction(
+                    build_parallel_judge_prompt(task, rubric),
+                    claude_thinking_effort if agent == "claude" else "none",
+                ),
                 env=env,
                 stdout_path=rubric_dir / "events.jsonl",
                 stderr_path=rubric_dir / "stderr.log",
                 timeout_seconds=timeout_seconds,
             )
+            if agent == "claude" and process_result.status == "success":
+                try:
+                    write_claude_final_output(
+                        rubric_dir / "events.jsonl",
+                        judge_final_path,
+                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
+                    )
+                except Exception as exc:
+                    process_result = process_result.__class__(
+                        command=process_result.command,
+                        exit_code=process_result.exit_code,
+                        status="failed",
+                        timed_out=process_result.timed_out,
+                        started_at=process_result.started_at,
+                        ended_at=process_result.ended_at,
+                        duration_seconds=process_result.duration_seconds,
+                    )
+                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
+                        f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
+                    )
             if judge_final_path.exists():
                 shutil.copy2(judge_final_path, rubric_dir / "result.json")
             status = process_result.to_dict()
@@ -519,6 +757,8 @@ def build_instruction_ablation_summary(batch_summaries: Sequence[Dict[str, Any]]
                         "instruction_step_ids": task_result.get("instruction_step_ids", []),
                         "instruction_step_indices": task_result.get("instruction_step_indices", []),
                         "instruction_steps": task_result.get("instruction_steps", []),
+                        "executor_skill_ids": task_result.get("executor_skill_ids", []),
+                        "executor_skills": task_result.get("executor_skills", []),
                         "_run_task_ids": [],
                         "_overall_pass_count": 0,
                         "_passed_count_sum": 0,
@@ -565,6 +805,8 @@ def build_instruction_ablation_summary(batch_summaries: Sequence[Dict[str, Any]]
                 "instruction_step_ids": group["instruction_step_ids"],
                 "instruction_step_indices": group["instruction_step_indices"],
                 "instruction_steps": group["instruction_steps"],
+                "executor_skill_ids": group["executor_skill_ids"],
+                "executor_skills": group["executor_skills"],
                 "runs": runs,
                 "run_task_ids": group["_run_task_ids"],
                 "overall_pass_count": group["_overall_pass_count"],
@@ -676,10 +918,35 @@ def format_instruction_ablation_markdown(summary: Dict[str, Any]) -> str:
 
 async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     tasks = duplicate_tasks(discover_tasks(args.tasks_dir, args.task), args.repeat)
+    registry_skills = load_registry_skills(args.executor_skill_root) if args.executor_skill_root.exists() else []
+    registry_skill_by_id = {skill.id: skill for skill in registry_skills}
+    group_skill_ids = expand_skill_groups(args.executor_skill_root, args.executor_skill_group)
+    requested_executor_skill_ids = list(args.executor_skill or []) + group_skill_ids
+    duplicate_requested_executor_skill_ids = sorted(
+        {
+            skill_id
+            for skill_id in requested_executor_skill_ids
+            if requested_executor_skill_ids.count(skill_id) > 1
+        }
+    )
+    if duplicate_requested_executor_skill_ids:
+        raise ValueError(
+            "Duplicate executor skill selected from ids/groups: "
+            + ", ".join(duplicate_requested_executor_skill_ids)
+        )
+    external_executor_skills = [
+        registry_skill_by_id[skill_id]
+        for skill_id in requested_executor_skill_ids
+        if skill_id in registry_skill_by_id
+    ]
     task_runs = build_task_runs(
         tasks,
         instruction_mode=args.instruction_mode,
         instruction_steps=args.instruction_step,
+        rigor_mode=args.rigor_mode,
+        rigor_ids=args.rigor,
+        executor_skill_ids=requested_executor_skill_ids,
+        external_executor_skills=external_executor_skills,
     )
     rng = random.Random(args.seed)
     indexed = list(enumerate(task_runs))
@@ -712,6 +979,9 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "judge_mode": args.judge_mode,
         "max_evaluator_parallel": args.max_evaluator_parallel,
         "auth_mode": args.auth_mode,
+        "executor_agent": args.executor_agent,
+        "evaluator_agent": args.evaluator_agent,
+        "claude_thinking_effort": args.claude_thinking_effort,
         "executor_model": args.executor_model,
         "evaluator_model": args.evaluator_model,
         "executor_backend": args.executor_backend,
@@ -720,9 +990,16 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "requested_instruction_step_ids": args.instruction_step or [],
         "instruction_step_ids": selected_instruction_step_ids,
         "instruction_step_order": "human_reference",
+        "rigor_mode": args.rigor_mode,
+        "requested_rigor_ids": args.rigor or [],
+        "requested_executor_skill_ids": requested_executor_skill_ids,
+        "requested_executor_skill_groups": args.executor_skill_group or [],
+        "executor_skill_root": str(args.executor_skill_root),
+        "executor_skill_order": "executor_skills",
         "instruction_variants": instruction_variants,
         "task_order": run_task_ids,
         "codex_bin": args.codex_bin,
+        "claude_bin": args.claude_bin,
     }
     json_dump(run_root / "run_config.json", run_config)
 
@@ -733,7 +1010,12 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                 "task_run": task_run,
                 "task": task_run.task,
                 "run_task_id": run_task_id,
-                "paths": materialize_task(task_run, run_root, run_task_id),
+                "paths": materialize_task(
+                    task_run,
+                    run_root,
+                    run_task_id,
+                    executor_backend=args.executor_backend,
+                ),
             }
         )
 
@@ -764,7 +1046,10 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                 status = await run_executor(
                     record["task_run"],
                     record["paths"],
+                    agent=args.executor_agent,
                     codex_bin=args.codex_bin,
+                    claude_bin=args.claude_bin,
+                    claude_thinking_effort=args.claude_thinking_effort,
                     auth_mode=args.auth_mode,
                     model=args.executor_model,
                     executor_backend=args.executor_backend,
@@ -792,7 +1077,10 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     modes["single"] = await run_single_judge(
                         task,
                         paths,
+                        agent=args.evaluator_agent,
                         codex_bin=args.codex_bin,
+                        claude_bin=args.claude_bin,
+                        claude_thinking_effort=args.claude_thinking_effort,
                         auth_mode=args.auth_mode,
                         model=args.evaluator_model,
                         timeout_seconds=args.evaluator_timeout_seconds,
@@ -811,7 +1099,10 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     modes["parallel"] = await run_parallel_judges(
                         task,
                         paths,
+                        agent=args.evaluator_agent,
                         codex_bin=args.codex_bin,
+                        claude_bin=args.claude_bin,
+                        claude_thinking_effort=args.claude_thinking_effort,
                         auth_mode=args.auth_mode,
                         model=args.evaluator_model,
                         timeout_seconds=args.evaluator_timeout_seconds,
@@ -879,6 +1170,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task", action="append", help="Task id or task directory name to include. Repeatable.")
     parser.add_argument("--repeat", type=int, default=1, help="Repeat the selected task list N times.")
     parser.add_argument("--codex-bin", default="codex", help="Codex executable, or a shell-like command prefix.")
+    parser.add_argument("--claude-bin", default="claude", help="Claude Code executable, or a shell-like command prefix.")
+    parser.add_argument("--executor-agent", choices=["codex", "claude"], default="codex")
+    parser.add_argument("--evaluator-agent", choices=["codex", "claude"], default="codex")
+    parser.add_argument(
+        "--claude-thinking-effort",
+        choices=["none", "low", "medium", "high"],
+        default="none",
+        help=(
+            "Prompt-level thinking instruction for Claude Code. Claude Code does not expose a "
+            "native reasoning-effort flag, so this maps to explicit think/deep-think instructions."
+        ),
+    )
     parser.add_argument("--auth-mode", choices=["env", "global", "copy-auth"], default="env")
     parser.add_argument("--executor-model", help="Exact model id passed to executor `codex exec -m`.")
     parser.add_argument("--evaluator-model", help="Exact model id passed to evaluator `codex exec -m`.")
@@ -906,6 +1209,36 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="append",
         help="Human reference step_id to include. Repeatable. Implies select mode when mode is none.",
     )
+    parser.add_argument(
+        "--rigor-mode",
+        choices=["none", "select"],
+        default="none",
+        help="Append selected rigors from rigors.json to the executor prompt.",
+    )
+    parser.add_argument(
+        "--rigor",
+        action="append",
+        help="Rigor id to include from rigors.json. Repeatable. Implies select mode when mode is none.",
+    )
+    parser.add_argument(
+        "--executor-skill",
+        action="append",
+        help=(
+            "Executor Codex skill id to install from task executor_skills.json or the shared "
+            "executor skill registry. Repeatable."
+        ),
+    )
+    parser.add_argument(
+        "--executor-skill-group",
+        action="append",
+        help="Executor Codex skill group id to expand from the shared executor skill registry. Repeatable.",
+    )
+    parser.add_argument(
+        "--executor-skill-root",
+        type=Path,
+        default=DEFAULT_EXECUTOR_SKILLS_DIR,
+        help="Shared executor skill registry root containing registry.json and skill directories.",
+    )
     parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars and progress stderr output.")
     args = parser.parse_args(argv)
     if args.batch_size < 1:
@@ -916,8 +1249,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.instruction_mode = "select"
     if args.instruction_mode == "select" and not args.instruction_step:
         parser.error("--instruction-mode select requires at least one --instruction-step")
+    if args.rigor and args.rigor_mode == "none":
+        args.rigor_mode = "select"
+    if args.rigor_mode == "select" and not args.rigor:
+        parser.error("--rigor-mode select requires at least one --rigor")
     args.tasks_dir = args.tasks_dir.resolve()
     args.runs_dir = args.runs_dir.resolve()
+    args.executor_skill_root = args.executor_skill_root.resolve()
     return args
 
 

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shlex
 import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List
 
 from .models import ProcessResult
 
@@ -100,6 +101,64 @@ def build_codex_exec_command(
         command.extend(["--output-schema", str(output_schema)])
     command.append("-")
     return command
+
+
+def build_claude_print_command(
+    claude_bin: str,
+    *,
+    cwd: Path,
+    model: str | None = None,
+    output_schema: Path | None = None,
+    permission_mode: str | None = None,
+    allowed_tools: str | None = None,
+    max_turns: int | None = None,
+) -> List[str]:
+    command = split_command(claude_bin)
+    command.extend(["-p", "--output-format", "json", "--no-session-persistence"])
+    if model:
+        command.extend(["--model", model])
+    if permission_mode:
+        command.extend(["--permission-mode", permission_mode])
+    if allowed_tools:
+        command.extend(["--allowedTools", allowed_tools])
+    if max_turns is not None:
+        command.extend(["--max-turns", str(max_turns)])
+    if output_schema is not None:
+        command.extend(["--json-schema", output_schema.read_text(encoding="utf-8")])
+    return command
+
+
+def prepare_claude_env(claude_home: Path, auth_mode: str) -> Dict[str, str]:
+    if auth_mode not in {"env", "global"}:
+        raise ValueError("Claude agent currently supports --auth-mode env or global")
+    env = os.environ.copy()
+    claude_home.mkdir(parents=True, exist_ok=True)
+    env["CLAUDE_CONFIG_DIR"] = str(claude_home)
+    env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+    return env
+
+
+def _extract_claude_payload(stdout_path: Path) -> Dict[str, Any]:
+    data = json.loads(stdout_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("Claude output was not a JSON object")
+    return data
+
+
+def write_claude_final_output(stdout_path: Path, final_path: Path, *, output_schema: Path | None = None) -> None:
+    data = _extract_claude_payload(stdout_path)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_schema is not None:
+        structured = data.get("structured_output")
+        if structured is None:
+            result_text = data.get("result")
+            if isinstance(result_text, str):
+                structured = json.loads(result_text)
+        if structured is None:
+            raise ValueError("Claude JSON output did not include structured_output")
+        final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    else:
+        final_path.write_text(str(data.get("result", "")), encoding="utf-8")
 
 
 def build_docker_codex_command(
