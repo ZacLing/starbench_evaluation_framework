@@ -29,6 +29,8 @@ starbench-run --help
 
 Use Claude Code for Claude-family models, Codex for GPT/OpenAI-family models, and OpenCode for other OpenAI-compatible models such as Doubao or Qwen. See [Runner Reference](runner_reference.md#agent-runtimes) for provider-specific flags and mixed-auth examples.
 
+Executor and evaluator runtimes are selected independently. To change the evaluator, set `--evaluator-agent` to `codex`, `claude`, or `opencode`, and set `--evaluator-model` to the exact model id that runtime should call.
+
 ## Build the Docker Image
 
 ```bash

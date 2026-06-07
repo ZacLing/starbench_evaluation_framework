@@ -70,6 +70,14 @@ GPT/OpenAI-family models      -> --executor-agent/--evaluator-agent codex
 Other OpenAI-compatible models -> --executor-agent/--evaluator-agent opencode
 ```
 
+To switch the evaluator, set both the evaluator model and evaluator runtime:
+
+```bash
+--evaluator-agent codex    --evaluator-model gpt-5.5
+--evaluator-agent claude   --evaluator-model claude-opus-4-8
+--evaluator-agent opencode --evaluator-model yunwu/doubao-seed-2-0-pro-260215
+```
+
 When mixing runtimes, split auth modes. For example, use `--executor-auth-mode env` for an OpenCode executor that reads an API key from the environment, and `--evaluator-auth-mode global` for a Codex evaluator that should read local Codex login credentials.
 
 Run the sample task with Claude Code through an Anthropic-compatible gateway:

@@ -20,10 +20,10 @@ The seed controls Starbench scheduling randomness. It does not claim to make mod
 
 ## Models
 
-- `--executor-model MODEL_ID`: exact model id passed to executor `codex exec -m`.
-- `--evaluator-model MODEL_ID`: exact model id passed to evaluator `codex exec -m`.
+- `--executor-model MODEL_ID`: exact model id passed to the selected executor runtime.
+- `--evaluator-model MODEL_ID`: exact model id passed to the selected evaluator runtime.
 
-These are independent. Starbench does not normalize model names.
+These are independent. Starbench does not normalize model names. When the executor and evaluator use different runtimes, pair each model flag with the matching agent runtime flag from [Agent Runtimes](#agent-runtimes).
 
 Example:
 
@@ -31,6 +31,26 @@ Example:
 starbench-run \
   --executor-model gpt-5.4-mini \
   --evaluator-model gpt-5.5
+```
+
+Evaluator-only switch examples:
+
+```bash
+# GPT/OpenAI-family evaluator through Codex.
+--evaluator-agent codex \
+--evaluator-model gpt-5.5
+
+# Claude-family evaluator through Claude Code.
+--evaluator-agent claude \
+--claude-bin /path/to/claude-or-wrapper \
+--evaluator-model claude-opus-4-8
+
+# Other OpenAI-compatible evaluator through OpenCode.
+--evaluator-agent opencode \
+--opencode-provider yunwu \
+--opencode-base-url https://yunwu.ai/v1 \
+--opencode-api-key-env ANTHROPIC_AUTH_TOKEN \
+--evaluator-model yunwu/doubao-seed-2-0-pro-260215
 ```
 
 ## Agent Runtimes
