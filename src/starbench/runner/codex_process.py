@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import shlex
 import shutil
 import time
@@ -128,6 +129,22 @@ def build_claude_print_command(
     return command
 
 
+def build_opencode_run_command(
+    opencode_bin: str,
+    *,
+    cwd: Path,
+    model: str | None = None,
+    agent: str = "build",
+    output_format: str = "json",
+) -> List[str]:
+    command = split_command(opencode_bin)
+    command.extend(["run", "--dir", str(cwd), "--agent", agent, "--format", output_format])
+    if model:
+        command.extend(["--model", model])
+    command.append("--dangerously-skip-permissions")
+    return command
+
+
 def prepare_claude_env(claude_home: Path, auth_mode: str) -> Dict[str, str]:
     if auth_mode not in {"env", "global"}:
         raise ValueError("Claude agent currently supports --auth-mode env or global")
@@ -135,6 +152,53 @@ def prepare_claude_env(claude_home: Path, auth_mode: str) -> Dict[str, str]:
     claude_home.mkdir(parents=True, exist_ok=True)
     env["CLAUDE_CONFIG_DIR"] = str(claude_home)
     env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+    return env
+
+
+def _opencode_model_id(model: str | None) -> str | None:
+    if not model:
+        return None
+    return model.split("/", 1)[1] if "/" in model else model
+
+
+def prepare_opencode_env(
+    opencode_home: Path,
+    auth_mode: str,
+    *,
+    provider: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+    api_key_env: str | None = None,
+) -> Dict[str, str]:
+    if auth_mode not in {"env", "global"}:
+        raise ValueError("OpenCode agent currently supports --auth-mode env or global")
+    env = os.environ.copy()
+    if auth_mode == "env":
+        opencode_home.mkdir(parents=True, exist_ok=True)
+        env["OPENCODE_CONFIG_DIR"] = str(opencode_home)
+    env.setdefault("OPENCODE_DISABLE_AUTOUPDATE", "1")
+    env.setdefault("OPENCODE_DISABLE_PRUNE", "1")
+
+    if provider and base_url:
+        provider_config: Dict[str, Any] = {
+            "npm": "@ai-sdk/openai-compatible",
+            "name": provider,
+            "options": {"baseURL": base_url},
+            "models": {},
+        }
+        if api_key_env:
+            provider_config["options"]["apiKey"] = f"{{env:{api_key_env}}}"
+        model_id = _opencode_model_id(model)
+        if model_id:
+            provider_config["models"][model_id] = {
+                "name": model_id,
+                "limit": {"context": 128000, "output": 8192},
+            }
+        inline_config = {
+            "$schema": "https://opencode.ai/config.json",
+            "provider": {provider: provider_config},
+        }
+        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline_config, sort_keys=True)
     return env
 
 
@@ -159,6 +223,191 @@ def write_claude_final_output(stdout_path: Path, final_path: Path, *, output_sch
         final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     else:
         final_path.write_text(str(data.get("result", "")), encoding="utf-8")
+
+
+def _extract_json_object(text: str) -> Any:
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("No JSON object found in OpenCode text output")
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(stripped):
+        if char not in "[{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(stripped[index:])
+        except json.JSONDecodeError:
+            continue
+        return value
+    raise ValueError("OpenCode text output did not contain parseable JSON")
+
+
+def _extract_opencode_session_id(stdout_path: Path) -> str:
+    for line in stdout_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            session_id = event.get("sessionID") or event.get("sessionId")
+            if isinstance(session_id, str) and session_id:
+                return session_id
+    raise ValueError("OpenCode JSON output did not include a sessionID")
+
+
+def _extract_opencode_text_from_events(stdout_path: Path) -> str | None:
+    text_parts: List[str] = []
+    for line in stdout_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "text":
+            continue
+        part = event.get("part")
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str):
+            text_parts.append(text)
+    if text_parts:
+        return "".join(text_parts).strip()
+    return None
+
+
+def append_opencode_compat_events(events_path: Path) -> None:
+    compat_events: List[Dict[str, Any]] = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict):
+            continue
+
+        event_type = event.get("type")
+        part = event.get("part")
+        if event_type == "text" and isinstance(part, dict):
+            compat_events.append(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "id": part.get("id"),
+                        "text": part.get("text"),
+                    },
+                }
+            )
+        elif event_type == "tool_use" and isinstance(part, dict):
+            state = part.get("state")
+            state = state if isinstance(state, dict) else {}
+            input_data = state.get("input")
+            input_data = input_data if isinstance(input_data, dict) else {}
+            metadata = state.get("metadata")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            tool = part.get("tool")
+            if tool == "bash":
+                compat_events.append(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "command_execution",
+                            "id": part.get("callID") or part.get("id"),
+                            "command": input_data.get("command"),
+                            "status": state.get("status"),
+                            "exit_code": metadata.get("exit"),
+                            "aggregated_output": state.get("output") or metadata.get("output"),
+                        },
+                    }
+                )
+            elif tool in {"write", "edit"}:
+                file_path = input_data.get("filePath") or input_data.get("file_path")
+                compat_events.append(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "file_change",
+                            "id": part.get("callID") or part.get("id"),
+                            "status": state.get("status"),
+                            "changes": [{"path": file_path}] if file_path else [],
+                        },
+                    }
+                )
+
+    if not compat_events:
+        return
+    with events_path.open("a", encoding="utf-8") as handle:
+        for event in compat_events:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def _load_opencode_export(opencode_bin: str, session_id: str, *, env: Dict[str, str]) -> Dict[str, Any]:
+    command = split_command(opencode_bin) + ["export", session_id]
+    result = subprocess.run(command, check=False, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        raise ValueError(f"opencode export failed with exit code {result.returncode}: {result.stderr.strip()}")
+    output = result.stdout
+    json_start = output.find("{")
+    if json_start < 0:
+        raise ValueError("opencode export did not return JSON")
+    data = json.loads(output[json_start:])
+    if not isinstance(data, dict):
+        raise ValueError("opencode export JSON was not an object")
+    return data
+
+
+def _extract_opencode_text(export_data: Dict[str, Any]) -> str:
+    messages = export_data.get("messages")
+    if not isinstance(messages, list):
+        raise ValueError("opencode export JSON has no messages array")
+
+    for message in reversed(messages):
+        info = message.get("info") if isinstance(message, dict) else None
+        if not isinstance(info, dict) or info.get("role") != "assistant":
+            continue
+        parts = message.get("parts")
+        if not isinstance(parts, list):
+            continue
+        text_parts = [
+            str(part.get("text", ""))
+            for part in parts
+            if isinstance(part, dict) and part.get("type") == "text" and part.get("text") is not None
+        ]
+        text = "".join(text_parts).strip()
+        if text:
+            return text
+    raise ValueError("opencode export did not contain assistant text")
+
+
+def write_opencode_final_output(
+    stdout_path: Path,
+    final_path: Path,
+    *,
+    opencode_bin: str,
+    env: Dict[str, str],
+    output_schema: Path | None = None,
+) -> None:
+    text = _extract_opencode_text_from_events(stdout_path)
+    if text is None:
+        session_id = _extract_opencode_session_id(stdout_path)
+        export_data = _load_opencode_export(opencode_bin, session_id, env=env)
+        text = _extract_opencode_text(export_data)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_schema is None:
+        final_path.write_text(text, encoding="utf-8")
+        return
+    structured = _extract_json_object(text)
+    final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def build_docker_codex_command(

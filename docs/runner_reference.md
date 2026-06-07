@@ -35,14 +35,22 @@ starbench-run \
 
 ## Agent Runtimes
 
-Codex is the default executor and evaluator runtime:
+Use this runtime convention:
+
+| Model family | Runtime |
+|---|---|
+| Claude-family models | Claude Code, `--executor-agent claude` / `--evaluator-agent claude` |
+| GPT/OpenAI-family models | Codex, `--executor-agent codex` / `--evaluator-agent codex` |
+| Other OpenAI-compatible models, such as Doubao or Qwen | OpenCode, `--executor-agent opencode` / `--evaluator-agent opencode` |
+
+Codex is the default executor and evaluator runtime, and is the expected runtime for GPT/OpenAI-family models:
 
 ```bash
 --executor-agent codex
 --evaluator-agent codex
 ```
 
-Claude Code can also be selected for either side:
+Claude Code is the expected runtime for Claude-family models:
 
 ```bash
 --executor-agent claude
@@ -79,6 +87,44 @@ starbench-run \
   --evaluator-agent claude \
   --claude-bin /absolute/path/to/tmp/claude-code-docker.sh \
   --executor-backend local
+```
+
+OpenCode is the expected runtime for other OpenAI-compatible models, including models that do not expose an Anthropic Messages API, such as Doubao:
+
+```bash
+--executor-agent opencode
+--evaluator-agent opencode
+--opencode-bin /path/to/opencode
+--executor-backend local
+--executor-model provider/model-id
+--evaluator-model provider/model-id
+```
+
+For OpenAI-compatible gateways, Starbench can generate isolated OpenCode provider config through `OPENCODE_CONFIG_CONTENT`:
+
+```bash
+export ANTHROPIC_AUTH_TOKEN=...
+
+starbench-run \
+  --executor-agent opencode \
+  --opencode-bin "$HOME/.opencode/bin/opencode" \
+  --opencode-provider yunwu \
+  --opencode-base-url https://yunwu.ai/v1 \
+  --opencode-api-key-env ANTHROPIC_AUTH_TOKEN \
+  --executor-model doubao-seed-2-0-pro-260215 \
+  --executor-backend local
+```
+
+If `--executor-model` or `--evaluator-model` does not include a slash and `--opencode-provider` is set, Starbench passes it to OpenCode as `provider/model`. OpenCode evaluator runs do not currently have a CLI schema-enforcement flag equivalent to Codex `--output-schema`; Starbench appends the JSON schema to the evaluator prompt, parses the final assistant text from the OpenCode JSON event stream, and falls back to `opencode export` when needed.
+
+When a run mixes runtimes, split auth modes if needed. For example, an OpenCode executor can read a gateway token from the environment while a Codex evaluator reads the local Codex login:
+
+```bash
+--executor-agent opencode \
+--evaluator-agent codex \
+--auth-mode env \
+--executor-auth-mode env \
+--evaluator-auth-mode global
 ```
 
 ## Judge Modes

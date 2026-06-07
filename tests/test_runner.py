@@ -9,9 +9,24 @@ import textwrap
 import unittest
 from pathlib import Path
 
+from starbench.runner.codex_process import (
+    _extract_json_object,
+    _extract_opencode_session_id,
+    _extract_opencode_text,
+    _extract_opencode_text_from_events,
+    append_opencode_compat_events,
+    build_opencode_run_command,
+    prepare_opencode_env,
+)
 from starbench.runner.evaluation import aggregate_results
 from starbench.runner.models import Rubric, RubricResult
-from starbench.runner.run_benchmark import build_augmented_prompt_text, build_executor_prompt, materialize_task, parse_args
+from starbench.runner.run_benchmark import (
+    build_augmented_prompt_text,
+    build_executor_prompt,
+    materialize_task,
+    opencode_model_name,
+    parse_args,
+)
 from starbench.runner.task_loader import build_task_runs, load_task
 from starbench.skill_distiller.distill import resolve_source_task, write_skill
 from starbench.skills.registry import load_registry_skills
@@ -279,6 +294,132 @@ class ExecutorSkillTests(unittest.TestCase):
             self.assertEqual(args.evaluator_agent, "claude")
             self.assertEqual(args.claude_bin, "/tmp/claude-wrapper")
             self.assertEqual(args.claude_thinking_effort, "high")
+
+    def test_agent_runtime_cli_arguments_can_select_opencode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(
+                [
+                    "--tasks-dir",
+                    tmp,
+                    "--runs-dir",
+                    tmp,
+                    "--executor-agent",
+                    "opencode",
+                    "--evaluator-agent",
+                    "opencode",
+                    "--opencode-bin",
+                    "/tmp/opencode",
+                    "--opencode-provider",
+                    "yunwu",
+                    "--opencode-base-url",
+                    "https://yunwu.ai/v1",
+                    "--opencode-api-key-env",
+                    "ANTHROPIC_AUTH_TOKEN",
+                    "--auth-mode",
+                    "env",
+                    "--evaluator-auth-mode",
+                    "global",
+                ]
+            )
+            self.assertEqual(args.executor_agent, "opencode")
+            self.assertEqual(args.evaluator_agent, "opencode")
+            self.assertEqual(args.opencode_bin, "/tmp/opencode")
+            self.assertEqual(args.opencode_provider, "yunwu")
+            self.assertEqual(args.opencode_base_url, "https://yunwu.ai/v1")
+            self.assertEqual(args.opencode_api_key_env, "ANTHROPIC_AUTH_TOKEN")
+            self.assertEqual(args.executor_auth_mode, "env")
+            self.assertEqual(args.evaluator_auth_mode, "global")
+
+    def test_split_auth_modes_default_to_shared_auth_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp, "--auth-mode", "global"])
+            self.assertEqual(args.executor_auth_mode, "global")
+            self.assertEqual(args.evaluator_auth_mode, "global")
+
+    def test_opencode_helpers_build_config_and_extract_export_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            command = build_opencode_run_command(
+                "opencode",
+                cwd=tmp_path,
+                model="yunwu/doubao-seed-2-0-pro-260215",
+            )
+            self.assertEqual(command[:2], ["opencode", "run"])
+            self.assertIn("--dangerously-skip-permissions", command)
+            self.assertEqual(opencode_model_name("doubao-seed-2-0-pro-260215", "yunwu"), "yunwu/doubao-seed-2-0-pro-260215")
+            self.assertEqual(opencode_model_name("yunwu/doubao-seed-2-0-pro-260215", "yunwu"), "yunwu/doubao-seed-2-0-pro-260215")
+
+            env = prepare_opencode_env(
+                tmp_path / "opencode-home",
+                "env",
+                provider="yunwu",
+                base_url="https://yunwu.ai/v1",
+                model="yunwu/doubao-seed-2-0-pro-260215",
+                api_key_env="ANTHROPIC_AUTH_TOKEN",
+            )
+            config = json.loads(env["OPENCODE_CONFIG_CONTENT"])
+            provider = config["provider"]["yunwu"]
+            self.assertEqual(provider["options"]["baseURL"], "https://yunwu.ai/v1")
+            self.assertEqual(provider["options"]["apiKey"], "{env:ANTHROPIC_AUTH_TOKEN}")
+            self.assertIn("doubao-seed-2-0-pro-260215", provider["models"])
+
+            events_path = tmp_path / "events.jsonl"
+            events_path.write_text(
+                json.dumps({"type": "step_start", "sessionID": "ses_test"})
+                + "\n"
+                + json.dumps({"type": "text", "part": {"text": "{\"results\": []}"}})
+                + "\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(_extract_opencode_session_id(events_path), "ses_test")
+            self.assertEqual(_extract_opencode_text_from_events(events_path), "{\"results\": []}")
+            export_text = _extract_opencode_text(
+                {
+                    "messages": [
+                        {"info": {"role": "user"}, "parts": [{"type": "text", "text": "prompt"}]},
+                        {"info": {"role": "assistant"}, "parts": [{"type": "text", "text": "{\"results\": []}"}]},
+                    ]
+                }
+            )
+            self.assertEqual(_extract_json_object(export_text), {"results": []})
+
+    def test_opencode_compat_events_add_codex_style_trace_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            events_path = Path(tmp) / "events.jsonl"
+            events_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "tool_use",
+                                "part": {
+                                    "tool": "bash",
+                                    "callID": "call_1",
+                                    "state": {
+                                        "status": "completed",
+                                        "input": {"command": "python3 -m demo"},
+                                        "output": "ok\n",
+                                        "metadata": {"exit": 0},
+                                    },
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "text",
+                                "part": {"id": "txt_1", "text": "done"},
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            append_opencode_compat_events(events_path)
+            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+            items = [event.get("item") for event in events if event.get("type") == "item.completed"]
+            self.assertIn("command_execution", [item.get("type") for item in items])
+            self.assertIn("agent_message", [item.get("type") for item in items])
 
     def test_shared_executor_skill_registry_can_be_selected_and_installed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

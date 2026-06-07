@@ -11,13 +11,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from .codex_process import (
+    append_opencode_compat_events,
     build_claude_print_command,
     build_codex_exec_command,
+    build_opencode_run_command,
     prepare_claude_env,
+    prepare_opencode_env,
     prepare_auth_home,
     run_codex_process,
     run_codex_process_in_docker,
     write_claude_final_output,
+    write_opencode_final_output,
 )
 from .evaluation import aggregate_results, normalize_parallel_results, normalize_single_result, write_aggregate
 from .models import Rubric, TaskRunSpec, TaskSpec
@@ -107,6 +111,23 @@ def append_claude_thinking_instruction(prompt: str, effort: str) -> str:
     if not instruction:
         return prompt
     return f"{prompt.rstrip()}\n\nClaude thinking effort instruction:\n{instruction}\n"
+
+
+def append_json_schema_instruction(prompt: str, schema_path: Path) -> str:
+    schema = schema_path.read_text(encoding="utf-8")
+    return f"""{prompt.rstrip()}
+
+Return only one JSON value that matches this JSON schema. Do not wrap it in Markdown fences or add commentary.
+
+JSON schema:
+{schema}
+"""
+
+
+def opencode_model_name(model: str | None, provider: str | None) -> str | None:
+    if not model or not provider or "/" in model:
+        return model
+    return f"{provider}/{model}"
 
 
 def build_single_judge_prompt(task: TaskSpec) -> str:
@@ -382,6 +403,10 @@ async def run_executor(
     agent: str,
     codex_bin: str,
     claude_bin: str,
+    opencode_bin: str,
+    opencode_provider: str | None,
+    opencode_base_url: str | None,
+    opencode_api_key_env: str | None,
     claude_thinking_effort: str,
     auth_mode: str,
     model: str | None,
@@ -391,8 +416,8 @@ async def run_executor(
 ) -> Dict[str, Any]:
     task = task_run.task
     logs = paths["logs"]
-    if agent == "claude" and executor_backend != "local":
-        raise ValueError("Claude executor currently supports --executor-backend local")
+    if agent in {"claude", "opencode"} and executor_backend != "local":
+        raise ValueError(f"{agent} executor currently supports --executor-backend local")
 
     if agent == "claude":
         command = build_claude_print_command(
@@ -431,6 +456,53 @@ async def run_executor(
                 )
                 (logs / "stderr.log").open("a", encoding="utf-8").write(
                     f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
+    elif agent == "opencode":
+        model_name = opencode_model_name(model, opencode_provider)
+        command = build_opencode_run_command(
+            opencode_bin,
+            cwd=paths["workspace"],
+            model=model_name,
+            agent="build",
+        )
+        env = prepare_opencode_env(
+            paths["codex_home"] / "opencode_executor",
+            auth_mode,
+            provider=opencode_provider,
+            base_url=opencode_base_url,
+            model=model_name,
+            api_key_env=opencode_api_key_env,
+        )
+        result = await run_codex_process(
+            command,
+            cwd=paths["workspace"],
+            prompt=build_executor_prompt(task_run),
+            env=env,
+            stdout_path=logs / "events.jsonl",
+            stderr_path=logs / "stderr.log",
+            timeout_seconds=task.timeout_seconds,
+        )
+        if result.status == "success":
+            try:
+                append_opencode_compat_events(logs / "events.jsonl")
+                write_opencode_final_output(
+                    logs / "events.jsonl",
+                    logs / "final.md",
+                    opencode_bin=opencode_bin,
+                    env=env,
+                )
+            except Exception as exc:
+                result = result.__class__(
+                    command=result.command,
+                    exit_code=result.exit_code,
+                    status="failed",
+                    timed_out=result.timed_out,
+                    started_at=result.started_at,
+                    ended_at=result.ended_at,
+                    duration_seconds=result.duration_seconds,
+                )
+                (logs / "stderr.log").open("a", encoding="utf-8").write(
+                    f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
                 )
     elif executor_backend == "local":
         command = build_codex_exec_command(
@@ -494,6 +566,10 @@ async def run_single_judge(
     agent: str,
     codex_bin: str,
     claude_bin: str,
+    opencode_bin: str,
+    opencode_provider: str | None,
+    opencode_base_url: str | None,
+    opencode_api_key_env: str | None,
     claude_thinking_effort: str,
     auth_mode: str,
     model: str | None,
@@ -507,6 +583,7 @@ async def run_single_judge(
     async def run() -> Dict[str, Any]:
         judge_workspace = prepare_evaluator_workspace(paths, "single")
         judge_final_path = judge_workspace / "single_result.json"
+        prompt = build_single_judge_prompt(task)
         if agent == "claude":
             command = build_claude_print_command(
                 claude_bin,
@@ -517,6 +594,23 @@ async def run_single_judge(
                 max_turns=20,
             )
             env = prepare_claude_env(paths["codex_home"] / "judge_single_claude", auth_mode)
+        elif agent == "opencode":
+            model_name = opencode_model_name(model, opencode_provider)
+            command = build_opencode_run_command(
+                opencode_bin,
+                cwd=judge_workspace,
+                model=model_name,
+                agent="build",
+            )
+            env = prepare_opencode_env(
+                paths["codex_home"] / "judge_single_opencode",
+                auth_mode,
+                provider=opencode_provider,
+                base_url=opencode_base_url,
+                model=model_name,
+                api_key_env=opencode_api_key_env,
+            )
+            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
         else:
             command = build_codex_exec_command(
                 codex_bin,
@@ -532,7 +626,7 @@ async def run_single_judge(
             command,
             cwd=judge_workspace,
             prompt=append_claude_thinking_instruction(
-                build_single_judge_prompt(task),
+                prompt,
                 claude_thinking_effort if agent == "claude" else "none",
             ),
             env=env,
@@ -559,6 +653,29 @@ async def run_single_judge(
                 )
                 (judges / "single_stderr.log").open("a", encoding="utf-8").write(
                     f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
+        )
+        if agent == "opencode" and process_result.status == "success":
+            try:
+                append_opencode_compat_events(judges / "single_events.jsonl")
+                write_opencode_final_output(
+                    judges / "single_events.jsonl",
+                    judge_final_path,
+                    opencode_bin=opencode_bin,
+                    env=env,
+                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
+                )
+            except Exception as exc:
+                process_result = process_result.__class__(
+                    command=process_result.command,
+                    exit_code=process_result.exit_code,
+                    status="failed",
+                    timed_out=process_result.timed_out,
+                    started_at=process_result.started_at,
+                    ended_at=process_result.ended_at,
+                    duration_seconds=process_result.duration_seconds,
+                )
+                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
+                    f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
                 )
         if judge_final_path.exists():
             shutil.copy2(judge_final_path, final_path)
@@ -597,6 +714,10 @@ async def run_parallel_judges(
     agent: str,
     codex_bin: str,
     claude_bin: str,
+    opencode_bin: str,
+    opencode_provider: str | None,
+    opencode_base_url: str | None,
+    opencode_api_key_env: str | None,
     claude_thinking_effort: str,
     auth_mode: str,
     model: str | None,
@@ -615,6 +736,7 @@ async def run_parallel_judges(
             rubric_dir.mkdir(parents=True, exist_ok=True)
             judge_workspace = prepare_evaluator_workspace(paths, f"parallel_{rubric.id}")
             judge_final_path = judge_workspace / "result.json"
+            prompt = build_parallel_judge_prompt(task, rubric)
             if agent == "claude":
                 command = build_claude_print_command(
                     claude_bin,
@@ -625,6 +747,23 @@ async def run_parallel_judges(
                     max_turns=10,
                 )
                 env = prepare_claude_env(paths["codex_home"] / f"judge_{rubric.id}_claude", auth_mode)
+            elif agent == "opencode":
+                model_name = opencode_model_name(model, opencode_provider)
+                command = build_opencode_run_command(
+                    opencode_bin,
+                    cwd=judge_workspace,
+                    model=model_name,
+                    agent="build",
+                )
+                env = prepare_opencode_env(
+                    paths["codex_home"] / f"judge_{rubric.id}_opencode",
+                    auth_mode,
+                    provider=opencode_provider,
+                    base_url=opencode_base_url,
+                    model=model_name,
+                    api_key_env=opencode_api_key_env,
+                )
+                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
             else:
                 command = build_codex_exec_command(
                     codex_bin,
@@ -640,7 +779,7 @@ async def run_parallel_judges(
                 command,
                 cwd=judge_workspace,
                 prompt=append_claude_thinking_instruction(
-                    build_parallel_judge_prompt(task, rubric),
+                    prompt,
                     claude_thinking_effort if agent == "claude" else "none",
                 ),
                 env=env,
@@ -667,6 +806,29 @@ async def run_parallel_judges(
                     )
                     (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
                         f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
+            )
+            if agent == "opencode" and process_result.status == "success":
+                try:
+                    append_opencode_compat_events(rubric_dir / "events.jsonl")
+                    write_opencode_final_output(
+                        rubric_dir / "events.jsonl",
+                        judge_final_path,
+                        opencode_bin=opencode_bin,
+                        env=env,
+                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
+                    )
+                except Exception as exc:
+                    process_result = process_result.__class__(
+                        command=process_result.command,
+                        exit_code=process_result.exit_code,
+                        status="failed",
+                        timed_out=process_result.timed_out,
+                        started_at=process_result.started_at,
+                        ended_at=process_result.ended_at,
+                        duration_seconds=process_result.duration_seconds,
+                    )
+                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
+                        f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
                     )
             if judge_final_path.exists():
                 shutil.copy2(judge_final_path, rubric_dir / "result.json")
@@ -979,9 +1141,14 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "judge_mode": args.judge_mode,
         "max_evaluator_parallel": args.max_evaluator_parallel,
         "auth_mode": args.auth_mode,
+        "executor_auth_mode": args.executor_auth_mode,
+        "evaluator_auth_mode": args.evaluator_auth_mode,
         "executor_agent": args.executor_agent,
         "evaluator_agent": args.evaluator_agent,
         "claude_thinking_effort": args.claude_thinking_effort,
+        "opencode_provider": args.opencode_provider,
+        "opencode_base_url": args.opencode_base_url,
+        "opencode_api_key_env": args.opencode_api_key_env,
         "executor_model": args.executor_model,
         "evaluator_model": args.evaluator_model,
         "executor_backend": args.executor_backend,
@@ -1000,6 +1167,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "task_order": run_task_ids,
         "codex_bin": args.codex_bin,
         "claude_bin": args.claude_bin,
+        "opencode_bin": args.opencode_bin,
     }
     json_dump(run_root / "run_config.json", run_config)
 
@@ -1049,8 +1217,12 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     agent=args.executor_agent,
                     codex_bin=args.codex_bin,
                     claude_bin=args.claude_bin,
+                    opencode_bin=args.opencode_bin,
+                    opencode_provider=args.opencode_provider,
+                    opencode_base_url=args.opencode_base_url,
+                    opencode_api_key_env=args.opencode_api_key_env,
                     claude_thinking_effort=args.claude_thinking_effort,
-                    auth_mode=args.auth_mode,
+                    auth_mode=args.executor_auth_mode,
                     model=args.executor_model,
                     executor_backend=args.executor_backend,
                     docker_bin=args.docker_bin,
@@ -1080,8 +1252,12 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         agent=args.evaluator_agent,
                         codex_bin=args.codex_bin,
                         claude_bin=args.claude_bin,
+                        opencode_bin=args.opencode_bin,
+                        opencode_provider=args.opencode_provider,
+                        opencode_base_url=args.opencode_base_url,
+                        opencode_api_key_env=args.opencode_api_key_env,
                         claude_thinking_effort=args.claude_thinking_effort,
-                        auth_mode=args.auth_mode,
+                        auth_mode=args.evaluator_auth_mode,
                         model=args.evaluator_model,
                         timeout_seconds=args.evaluator_timeout_seconds,
                         executor_timing=executor_timing,
@@ -1102,8 +1278,12 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         agent=args.evaluator_agent,
                         codex_bin=args.codex_bin,
                         claude_bin=args.claude_bin,
+                        opencode_bin=args.opencode_bin,
+                        opencode_provider=args.opencode_provider,
+                        opencode_base_url=args.opencode_base_url,
+                        opencode_api_key_env=args.opencode_api_key_env,
                         claude_thinking_effort=args.claude_thinking_effort,
-                        auth_mode=args.auth_mode,
+                        auth_mode=args.evaluator_auth_mode,
                         model=args.evaluator_model,
                         timeout_seconds=args.evaluator_timeout_seconds,
                         executor_timing=executor_timing,
@@ -1159,7 +1339,15 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run Codex benchmark tasks and rubric judges.")
+    parser = argparse.ArgumentParser(
+        description="Run StarBench benchmark tasks and rubric judges.",
+        epilog=(
+            "Runtime convention: use Claude Code (`--*-agent claude`) for Claude-family models, "
+            "Codex (`--*-agent codex`) for GPT/OpenAI-family models, and OpenCode "
+            "(`--*-agent opencode`) for other OpenAI-compatible models such as Doubao or Qwen. "
+            "When mixing runtimes, split auth with --executor-auth-mode and --evaluator-auth-mode."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--judge-mode", choices=["both", "single", "parallel"], default="both")
@@ -1169,10 +1357,33 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
     parser.add_argument("--task", action="append", help="Task id or task directory name to include. Repeatable.")
     parser.add_argument("--repeat", type=int, default=1, help="Repeat the selected task list N times.")
-    parser.add_argument("--codex-bin", default="codex", help="Codex executable, or a shell-like command prefix.")
-    parser.add_argument("--claude-bin", default="claude", help="Claude Code executable, or a shell-like command prefix.")
-    parser.add_argument("--executor-agent", choices=["codex", "claude"], default="codex")
-    parser.add_argument("--evaluator-agent", choices=["codex", "claude"], default="codex")
+    parser.add_argument(
+        "--codex-bin",
+        default="codex",
+        help="Codex executable, or a shell-like command prefix. Use for GPT/OpenAI-family models.",
+    )
+    parser.add_argument(
+        "--claude-bin",
+        default="claude",
+        help="Claude Code executable, or a shell-like command prefix. Use for Claude-family models.",
+    )
+    parser.add_argument(
+        "--opencode-bin",
+        default="opencode",
+        help="OpenCode executable, or a shell-like command prefix. Use for other OpenAI-compatible models.",
+    )
+    parser.add_argument(
+        "--executor-agent",
+        choices=["codex", "claude", "opencode"],
+        default="codex",
+        help="Executor runtime: codex for GPT/OpenAI-family, claude for Claude-family, opencode for other OpenAI-compatible models.",
+    )
+    parser.add_argument(
+        "--evaluator-agent",
+        choices=["codex", "claude", "opencode"],
+        default="codex",
+        help="Evaluator runtime: codex for GPT/OpenAI-family, claude for Claude-family, opencode for other OpenAI-compatible models.",
+    )
     parser.add_argument(
         "--claude-thinking-effort",
         choices=["none", "low", "medium", "high"],
@@ -1182,9 +1393,32 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "native reasoning-effort flag, so this maps to explicit think/deep-think instructions."
         ),
     )
+    parser.add_argument(
+        "--opencode-provider",
+        help="OpenCode provider id for generated OpenAI-compatible config, e.g. yunwu.",
+    )
+    parser.add_argument(
+        "--opencode-base-url",
+        help="OpenCode OpenAI-compatible base URL, e.g. https://yunwu.ai/v1.",
+    )
+    parser.add_argument(
+        "--opencode-api-key-env",
+        default="OPENAI_API_KEY",
+        help="Environment variable name that OpenCode should read as the provider API key.",
+    )
     parser.add_argument("--auth-mode", choices=["env", "global", "copy-auth"], default="env")
-    parser.add_argument("--executor-model", help="Exact model id passed to executor `codex exec -m`.")
-    parser.add_argument("--evaluator-model", help="Exact model id passed to evaluator `codex exec -m`.")
+    parser.add_argument(
+        "--executor-auth-mode",
+        choices=["env", "global", "copy-auth"],
+        help="Auth mode for the executor runtime. Defaults to --auth-mode.",
+    )
+    parser.add_argument(
+        "--evaluator-auth-mode",
+        choices=["env", "global", "copy-auth"],
+        help="Auth mode for the evaluator runtime. Defaults to --auth-mode.",
+    )
+    parser.add_argument("--executor-model", help="Exact model id passed to the selected executor runtime.")
+    parser.add_argument("--evaluator-model", help="Exact model id passed to the selected evaluator runtime.")
     parser.add_argument(
         "--executor-backend",
         choices=["local", "docker"],
@@ -1253,6 +1487,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.rigor_mode = "select"
     if args.rigor_mode == "select" and not args.rigor:
         parser.error("--rigor-mode select requires at least one --rigor")
+    args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
+    args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
     args.tasks_dir = args.tasks_dir.resolve()
     args.runs_dir = args.runs_dir.resolve()
     args.executor_skill_root = args.executor_skill_root.resolve()

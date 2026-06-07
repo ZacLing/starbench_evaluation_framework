@@ -9,7 +9,10 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - Batch execution with `--seed`, `--batch-size`, and deterministic task ordering.
 - Docker-backed executor isolation by default.
 - Independent executor and evaluator model selection.
-- Runtime selection for Codex or Claude Code executors/evaluators.
+- Runtime selection for Codex, Claude Code, or OpenCode executors/evaluators.
+  - Use Claude Code for Claude-family models.
+  - Use Codex for GPT/OpenAI-family models.
+  - Use OpenCode for other OpenAI-compatible models, such as Doubao or Qwen.
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
 - Rule-based instruction ablation: baseline, one variant per expert instruction, and an all-instructions variant, with repeat runs and uplift summaries.
@@ -59,6 +62,16 @@ starbench-run \
   --seed 123
 ```
 
+Runtime convention:
+
+```text
+Claude-family models          -> --executor-agent/--evaluator-agent claude
+GPT/OpenAI-family models      -> --executor-agent/--evaluator-agent codex
+Other OpenAI-compatible models -> --executor-agent/--evaluator-agent opencode
+```
+
+When mixing runtimes, split auth modes. For example, use `--executor-auth-mode env` for an OpenCode executor that reads an API key from the environment, and `--evaluator-auth-mode global` for a Codex evaluator that should read local Codex login credentials.
+
 Run the sample task with Claude Code through an Anthropic-compatible gateway:
 
 ```bash
@@ -77,6 +90,31 @@ PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
   --executor-backend local \
   --executor-model claude-opus-4-8 \
   --evaluator-model claude-opus-4-8 \
+  --judge-mode single
+```
+
+Run the sample task with OpenCode through an OpenAI-compatible gateway:
+
+```bash
+export ANTHROPIC_AUTH_TOKEN=...
+
+PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
+  --tasks-dir examples/tasks \
+  --task demo_python_cli \
+  --runs-dir runs \
+  --run-id smoke_opencode \
+  --executor-agent opencode \
+  --evaluator-agent codex \
+  --opencode-bin "$HOME/.opencode/bin/opencode" \
+  --opencode-provider yunwu \
+  --opencode-base-url https://yunwu.ai/v1 \
+  --opencode-api-key-env ANTHROPIC_AUTH_TOKEN \
+  --auth-mode env \
+  --executor-auth-mode env \
+  --evaluator-auth-mode global \
+  --executor-backend local \
+  --executor-model doubao-seed-2-0-pro-260215 \
+  --evaluator-model gpt-5.5 \
   --judge-mode single
 ```
 

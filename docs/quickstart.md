@@ -25,6 +25,10 @@ Check the CLI:
 starbench-run --help
 ```
 
+## Pick the Runtime
+
+Use Claude Code for Claude-family models, Codex for GPT/OpenAI-family models, and OpenCode for other OpenAI-compatible models such as Doubao or Qwen. See [Runner Reference](runner_reference.md#agent-runtimes) for provider-specific flags and mixed-auth examples.
+
 ## Build the Docker Image
 
 ```bash
