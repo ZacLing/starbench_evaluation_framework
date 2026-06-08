@@ -1,12 +1,12 @@
-# Executor Codex Skills
+# Executor Skills
 
-StarBench can install task-registered Codex Skills into the executor's isolated `CODEX_HOME`.
+StarBench can install task-registered executor skills into the selected executor runtime's isolated workspace.
 
 This is different from human-reference instruction injection or rigor injection:
 
 - Human-reference and rigor modes append text to the task prompt.
-- Executor skills are copied as real Codex Skill directories into `$CODEX_HOME/skills/`.
-- The executor prompt only names the selected installed skills and tells Codex to use them as private execution guidance.
+- Executor skills are copied as real skill directories into the runtime-specific install path.
+- The executor prompt only names the selected installed skills and tells the executor where to read them as private execution guidance.
 
 Baseline runs are unchanged unless `--executor-skill` is passed.
 
@@ -85,9 +85,9 @@ runs/<run_id>/<task_run_id>/manifest.json
 runs/<run_id>/<task_run_id>/task_summary.json
 ```
 
-## Docker Install Path
+## Install Paths
 
-For Docker executors, StarBench installs selected skills on the host at:
+For Codex Docker executors, StarBench installs selected skills on the host at:
 
 ```text
 runs/<run_id>/<task_run_id>/codex_home/docker/skills/<skill_id>/
@@ -112,17 +112,26 @@ For local executors, selected skills are installed at:
 runs/<run_id>/<task_run_id>/codex_home/skills/<skill_id>/
 ```
 
+Other local runtimes use task-workspace paths:
+
+```text
+Grok Build  -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill_id>/
+Gemini CLI  -> runs/<run_id>/<task_run_id>/workspace/.gemini/skills/<skill_id>/
+Claude Code -> runs/<run_id>/<task_run_id>/workspace/.claude/skills/<skill_id>/
+OpenCode    -> runs/<run_id>/<task_run_id>/workspace/.starbench/executor_skills/<skill_id>/
+```
+
 ## Prompt Behavior
 
 The executor receives a short activation block:
 
 ```text
-Installed executor Codex skills:
+Installed executor skills:
 - `quant-finance-research-platform-expert`: Use `quant-finance-research-platform-expert` as private quant finance research platform expert guidance...
 
 Skill usage rules:
 - Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
-- You may read installed skill files under $CODEX_HOME/skills/<skill-id>/.
+- You may read installed skill files under the runtime-specific path, such as `$CODEX_HOME/skills/<skill-id>/`, `./.grok/skills/<skill-id>/`, or `./.gemini/skills/<skill-id>/`.
 - The task prompt and materials remain authoritative if they conflict with a skill.
 - Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables.
 ```

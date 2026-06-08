@@ -4,7 +4,7 @@ from setuptools import find_packages, setup
 setup(
     name="starbench-evaluation-framework",
     version="0.1.0",
-    description="A Docker-backed Codex execution and GPT rubric judging framework.",
+    description="A multi-runtime agent execution and rubric judging framework.",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     package_dir={"": "src"},

@@ -145,6 +145,59 @@ def build_opencode_run_command(
     return command
 
 
+def build_grok_headless_command(
+    grok_bin: str,
+    *,
+    cwd: Path,
+    prompt: str,
+    model: str | None = None,
+    permission_mode: str = "bypassPermissions",
+    sandbox: str = "workspace",
+    output_format: str = "json",
+) -> List[str]:
+    command = split_command(grok_bin)
+    command.extend(
+        [
+            "--no-auto-update",
+            "--no-alt-screen",
+            "--cwd",
+            str(cwd),
+            "--output-format",
+            output_format,
+            "--permission-mode",
+            permission_mode,
+            "--sandbox",
+            sandbox,
+        ]
+    )
+    if permission_mode == "bypassPermissions":
+        command.append("--always-approve")
+    if model:
+        command.extend(["-m", model])
+    command.extend(["-p", prompt])
+    return command
+
+
+def build_gemini_headless_command(
+    gemini_bin: str,
+    *,
+    prompt: str = "",
+    model: str | None = None,
+    approval_mode: str = "yolo",
+    output_format: str = "json",
+) -> List[str]:
+    command = split_command(gemini_bin)
+    command.extend(["--output-format", output_format, "--skip-trust"])
+    if model:
+        command.extend(["-m", model])
+    if approval_mode == "yolo":
+        command.append("--yolo")
+    elif approval_mode:
+        command.extend(["--approval-mode", approval_mode])
+    command.extend(["-p", prompt])
+    return command
+
+
 def prepare_claude_env(claude_home: Path, auth_mode: str) -> Dict[str, str]:
     if auth_mode not in {"env", "global"}:
         raise ValueError("Claude agent currently supports --auth-mode env or global")
@@ -152,6 +205,22 @@ def prepare_claude_env(claude_home: Path, auth_mode: str) -> Dict[str, str]:
     claude_home.mkdir(parents=True, exist_ok=True)
     env["CLAUDE_CONFIG_DIR"] = str(claude_home)
     env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+    return env
+
+
+def prepare_grok_env(grok_home: Path, auth_mode: str) -> Dict[str, str]:
+    if auth_mode not in {"env", "global"}:
+        raise ValueError("Grok agent currently supports --auth-mode env or global")
+    env = os.environ.copy()
+    grok_home.mkdir(parents=True, exist_ok=True)
+    return env
+
+
+def prepare_gemini_env(gemini_home: Path, auth_mode: str) -> Dict[str, str]:
+    if auth_mode not in {"env", "global"}:
+        raise ValueError("Gemini agent currently supports --auth-mode env or global")
+    env = os.environ.copy()
+    gemini_home.mkdir(parents=True, exist_ok=True)
     return env
 
 
@@ -408,6 +477,105 @@ def write_opencode_final_output(
         return
     structured = _extract_json_object(text)
     final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _load_headless_json(stdout_path: Path) -> Dict[str, Any]:
+    text = stdout_path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise ValueError("Headless agent produced no JSON output")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        data = None
+
+    if isinstance(data, dict):
+        return data
+
+    last_object: Dict[str, Any] | None = None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            last_object = event
+    if last_object is not None:
+        return last_object
+    raise ValueError("Headless agent output did not contain a JSON object")
+
+
+def _extract_headless_response_text(data: Dict[str, Any]) -> str:
+    for key in ("response", "text", "output_text", "result", "message", "content"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
+
+    output = data.get("output")
+    if isinstance(output, str) and output.strip():
+        return output.strip()
+    if isinstance(output, list):
+        text_parts: List[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if isinstance(content, str):
+                text_parts.append(content)
+            elif isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        text = part.get("text")
+                        if isinstance(text, str):
+                            text_parts.append(text)
+        if text_parts:
+            return "".join(text_parts).strip()
+
+    assistant = data.get("assistant")
+    if isinstance(assistant, dict):
+        return _extract_headless_response_text(assistant)
+    raise ValueError("Headless agent JSON output did not include assistant text")
+
+
+def write_headless_final_output(
+    stdout_path: Path,
+    final_path: Path,
+    *,
+    output_schema: Path | None = None,
+) -> None:
+    data = _load_headless_json(stdout_path)
+    text = _extract_headless_response_text(data)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_schema is None:
+        final_path.write_text(text, encoding="utf-8")
+        return
+    structured = _extract_json_object(text)
+    final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def normalize_headless_events(stdout_path: Path, *, provider: str) -> None:
+    data = _load_headless_json(stdout_path)
+    text = _extract_headless_response_text(data)
+    usage = data.get("usage") or data.get("stats")
+    events = [
+        {"type": f"{provider}.raw", "payload": data},
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "agent_message",
+                "id": f"{provider}-final",
+                "text": text,
+            },
+        },
+        {"type": "turn.completed", "usage": usage},
+    ]
+    stdout_path.write_text(
+        "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
+        encoding="utf-8",
+    )
 
 
 def build_docker_codex_command(

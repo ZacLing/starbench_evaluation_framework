@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "starbench-evaluation-framework"
 version = "0.1.0"
-description = "A Docker-backed Codex execution and GPT rubric judging framework."
+description = "A multi-runtime agent execution and rubric judging framework."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }

@@ -1,6 +1,6 @@
 # Starbench Evaluation Framework
 
-Starbench is a small benchmark runner for evaluating Codex-style agents with GPT-based rubric judges.
+Starbench is a small benchmark runner for evaluating coding-agent CLIs with rubric judges.
 
 It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Executors can run in a Docker workspace by default, while evaluators inspect only the delivered package, trace summaries, and rubrics.
 
@@ -9,10 +9,12 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - Batch execution with `--seed`, `--batch-size`, and deterministic task ordering.
 - Docker-backed executor isolation by default.
 - Independent executor and evaluator model selection.
-- Runtime selection for Codex, Claude Code, or OpenCode executors/evaluators.
+- Runtime selection for Codex, Claude Code, OpenCode, Grok Build, or Gemini CLI executors/evaluators.
   - Use Claude Code for Claude-family models.
   - Use Codex for GPT/OpenAI-family models.
   - Use OpenCode for other OpenAI-compatible models, such as Doubao or Qwen.
+  - Use Grok Build for xAI Grok Build runs.
+  - Use Gemini CLI for existing Gemini CLI environments.
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
 - Rule-based instruction ablation: baseline, one variant per expert instruction, and an all-instructions variant, with repeat runs and uplift summaries.
@@ -68,6 +70,8 @@ Runtime convention:
 Claude-family models          -> --executor-agent/--evaluator-agent claude
 GPT/OpenAI-family models      -> --executor-agent/--evaluator-agent codex
 Other OpenAI-compatible models -> --executor-agent/--evaluator-agent opencode
+xAI Grok Build models         -> --executor-agent/--evaluator-agent grok
+Gemini CLI models             -> --executor-agent/--evaluator-agent gemini
 ```
 
 To switch the evaluator, set both the evaluator model and evaluator runtime:
@@ -76,6 +80,8 @@ To switch the evaluator, set both the evaluator model and evaluator runtime:
 --evaluator-agent codex    --evaluator-model gpt-5.5
 --evaluator-agent claude   --evaluator-model claude-opus-4-8
 --evaluator-agent opencode --evaluator-model yunwu/doubao-seed-2-0-pro-260215
+--evaluator-agent grok     --evaluator-model your-grok-model
+--evaluator-agent gemini   --evaluator-model gemini-2.5-pro
 ```
 
 When mixing runtimes, split auth modes. For example, use `--executor-auth-mode env` for an OpenCode executor that reads an API key from the environment, and `--evaluator-auth-mode global` for a Codex evaluator that should read local Codex login credentials.
@@ -126,6 +132,42 @@ PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
   --judge-mode single
 ```
 
+Run the sample task with Grok Build:
+
+```bash
+starbench-run \
+  --tasks-dir examples/tasks \
+  --task demo_python_cli \
+  --runs-dir runs \
+  --run-id smoke_grok \
+  --executor-agent grok \
+  --evaluator-agent grok \
+  --executor-backend local \
+  --auth-mode global \
+  --executor-model your-grok-model \
+  --evaluator-model your-grok-model \
+  --judge-mode single
+```
+
+Run the sample task with Gemini CLI:
+
+```bash
+starbench-run \
+  --tasks-dir examples/tasks \
+  --task demo_python_cli \
+  --runs-dir runs \
+  --run-id smoke_gemini \
+  --executor-agent gemini \
+  --evaluator-agent gemini \
+  --executor-backend local \
+  --auth-mode global \
+  --executor-model gemini-2.5-pro \
+  --evaluator-model gemini-2.5-pro \
+  --judge-mode single
+```
+
+Grok Build and Gemini CLI support currently run host-local only. Authenticate those CLIs before invoking StarBench, or use `--auth-mode env` when the CLI reads its API key from the environment.
+
 For a no-cost local framework smoke test:
 
 ```bash
@@ -138,7 +180,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Task Package Structure](docs/task_package.md)
 - [Runner Reference](docs/runner_reference.md)
 - [Docker Isolation](docs/docker.md)
-- [Executor Codex Skills](docs/executor_skills.md)
+- [Executor Skills](docs/executor_skills.md)
 - [Trace-to-Skill Distillation](docs/skill_distillation.md)
 - [Distill Tasks Into Executor Skills](docs/distill_task_to_skill.md)
 - [Use Executor Skills In Evaluation Runs](docs/use_skills_in_eval.md)

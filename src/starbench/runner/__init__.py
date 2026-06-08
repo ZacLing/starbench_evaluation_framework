@@ -1,2 +1,1 @@
-"""Utilities for running Codex benchmark tasks."""
-
+"""Utilities for running StarBench benchmark tasks."""
