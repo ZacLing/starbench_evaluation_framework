@@ -179,6 +179,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Quickstart](docs/quickstart.md)
 - [Task Package Structure](docs/task_package.md)
 - [Runner Reference](docs/runner_reference.md)
+- [Model Runtime Matrix](docs/model_runtime_matrix.md)
 - [Docker Isolation](docs/docker.md)
 - [Executor Skills](docs/executor_skills.md)
 - [Trace-to-Skill Distillation](docs/skill_distillation.md)
