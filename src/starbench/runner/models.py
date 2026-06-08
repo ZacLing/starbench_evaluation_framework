@@ -112,7 +112,7 @@ class ExecutorSkill:
             source_path=source_path,
             activation=str(
                 data.get("activation")
-                or f"Use the installed Codex skill `{skill_id}` as private execution guidance for this task."
+                or f"Use the installed executor skill `{skill_id}` as private execution guidance for this task."
             ),
             description=str(data.get("description", "")),
             leakage_level=str(data["leakage_level"]) if data.get("leakage_level") is not None else None,

@@ -14,13 +14,19 @@ from .codex_process import (
     append_opencode_compat_events,
     build_claude_print_command,
     build_codex_exec_command,
+    build_gemini_headless_command,
+    build_grok_headless_command,
     build_opencode_run_command,
+    normalize_headless_events,
     prepare_claude_env,
+    prepare_gemini_env,
+    prepare_grok_env,
     prepare_opencode_env,
     prepare_auth_home,
     run_codex_process,
     run_codex_process_in_docker,
     write_claude_final_output,
+    write_headless_final_output,
     write_opencode_final_output,
 )
 from .evaluation import aggregate_results, normalize_parallel_results, normalize_single_result, write_aggregate
@@ -73,7 +79,11 @@ def build_augmented_prompt_text(task_run: TaskRunSpec) -> str:
     return f"{prompt_text.rstrip()}\n\n" + "\n\n".join(sections) + "\n"
 
 
-def build_executor_prompt(task_run: TaskRunSpec) -> str:
+def build_executor_prompt(
+    task_run: TaskRunSpec,
+    *,
+    executor_skill_location: str = "$CODEX_HOME/skills/<skill-id>/",
+) -> str:
     executor_skill_section = ""
     if task_run.selected_executor_skills:
         skills = "\n".join(
@@ -81,12 +91,12 @@ def build_executor_prompt(task_run: TaskRunSpec) -> str:
         )
         executor_skill_section = f"""
 
-Installed executor Codex skills:
+Installed executor skills:
 {skills}
 
 Skill usage rules:
 - Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
-- You may read installed skill files under $CODEX_HOME/skills/<skill-id>/.
+- You may read installed skill files under {executor_skill_location}.
 - The task prompt and materials remain authoritative if they conflict with a skill.
 - Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables."""
 
@@ -132,7 +142,7 @@ def opencode_model_name(model: str | None, provider: str | None) -> str | None:
 
 def build_single_judge_prompt(task: TaskSpec) -> str:
     rubrics = [rubric.to_dict() for rubric in task.rubrics]
-    return f"""You are an evaluator for a Codex benchmark task.
+    return f"""You are an evaluator for a StarBench benchmark task.
 
 Inspect this task run directory. The executor deliverables are under ./workspace/outputs/.
 The executor trace is available in ./logs/events.jsonl, ./logs/trace_summary.json, ./logs/artifact_manifest.json, and ./logs/final.md.
@@ -169,7 +179,7 @@ Rubrics:
 
 
 def build_parallel_judge_prompt(task: TaskSpec, rubric: Rubric) -> str:
-    return f"""You are an evaluator for one Codex benchmark rubric.
+    return f"""You are an evaluator for one StarBench benchmark rubric.
 
 Inspect this task run directory. The executor deliverables are under ./workspace/outputs/.
 The executor trace is available in ./logs/events.jsonl, ./logs/trace_summary.json, ./logs/artifact_manifest.json, and ./logs/final.md.
@@ -237,20 +247,49 @@ def hash_executor_skill_directory(source: Path) -> str:
     return hasher.hexdigest()
 
 
-def executor_skill_install_root(codex_home: Path, executor_backend: str) -> Path:
-    if executor_backend == "docker":
-        return codex_home / "docker" / "skills"
-    if executor_backend == "local":
-        return codex_home / "skills"
+def executor_skill_install_root(paths: Dict[str, Path], executor_backend: str, executor_agent: str) -> Path:
+    if executor_agent == "codex":
+        if executor_backend == "docker":
+            return paths["codex_home"] / "docker" / "skills"
+        if executor_backend == "local":
+            return paths["codex_home"] / "skills"
+    if executor_agent == "grok":
+        return paths["workspace"] / ".grok" / "skills"
+    if executor_agent == "gemini":
+        return paths["workspace"] / ".gemini" / "skills"
+    if executor_agent == "claude":
+        return paths["workspace"] / ".claude" / "skills"
+    if executor_agent == "opencode":
+        return paths["workspace"] / ".starbench" / "executor_skills"
     raise ValueError(f"Unknown executor backend: {executor_backend}")
 
 
-def install_executor_skills(task_run: TaskRunSpec, paths: Dict[str, Path], *, executor_backend: str) -> List[Dict[str, Any]]:
+def executor_skill_prompt_location(executor_agent: str) -> str:
+    if executor_agent == "codex":
+        return "$CODEX_HOME/skills/<skill-id>/"
+    if executor_agent == "grok":
+        return "./.grok/skills/<skill-id>/"
+    if executor_agent == "gemini":
+        return "./.gemini/skills/<skill-id>/"
+    if executor_agent == "claude":
+        return "./.claude/skills/<skill-id>/"
+    if executor_agent == "opencode":
+        return "./.starbench/executor_skills/<skill-id>/"
+    return "./<skill-id>/"
+
+
+def install_executor_skills(
+    task_run: TaskRunSpec,
+    paths: Dict[str, Path],
+    *,
+    executor_backend: str,
+    executor_agent: str = "codex",
+) -> List[Dict[str, Any]]:
     installed: List[Dict[str, Any]] = []
     if not task_run.selected_executor_skills:
         return installed
 
-    install_root = executor_skill_install_root(paths["codex_home"], executor_backend)
+    install_root = executor_skill_install_root(paths, executor_backend, executor_agent)
     install_root.mkdir(parents=True, exist_ok=True)
     for skill in task_run.selected_executor_skills:
         digest = hash_executor_skill_directory(skill.source_path)
@@ -333,6 +372,7 @@ def materialize_task(
     run_task_id: str,
     *,
     executor_backend: str = "docker",
+    executor_agent: str = "codex",
 ) -> Dict[str, Path]:
     task = task_run.task
     task_root = run_root / run_task_id
@@ -376,6 +416,7 @@ def materialize_task(
         task_run,
         paths,
         executor_backend=executor_backend,
+        executor_agent=executor_agent,
     )
 
     json_dump(
@@ -403,6 +444,8 @@ async def run_executor(
     agent: str,
     codex_bin: str,
     claude_bin: str,
+    grok_bin: str,
+    gemini_bin: str,
     opencode_bin: str,
     opencode_provider: str | None,
     opencode_base_url: str | None,
@@ -416,7 +459,7 @@ async def run_executor(
 ) -> Dict[str, Any]:
     task = task_run.task
     logs = paths["logs"]
-    if agent in {"claude", "opencode"} and executor_backend != "local":
+    if agent in {"claude", "opencode", "grok", "gemini"} and executor_backend != "local":
         raise ValueError(f"{agent} executor currently supports --executor-backend local")
 
     if agent == "claude":
@@ -433,7 +476,10 @@ async def run_executor(
             command,
             cwd=paths["workspace"],
             prompt=append_claude_thinking_instruction(
-                build_executor_prompt(task_run),
+                build_executor_prompt(
+                    task_run,
+                    executor_skill_location=executor_skill_prompt_location(agent),
+                ),
                 claude_thinking_effort,
             ),
             env=env,
@@ -476,7 +522,10 @@ async def run_executor(
         result = await run_codex_process(
             command,
             cwd=paths["workspace"],
-            prompt=build_executor_prompt(task_run),
+            prompt=build_executor_prompt(
+                task_run,
+                executor_skill_location=executor_skill_prompt_location(agent),
+            ),
             env=env,
             stdout_path=logs / "events.jsonl",
             stderr_path=logs / "stderr.log",
@@ -503,6 +552,82 @@ async def run_executor(
                 )
                 (logs / "stderr.log").open("a", encoding="utf-8").write(
                     f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
+    elif agent == "grok":
+        prompt = build_executor_prompt(
+            task_run,
+            executor_skill_location=executor_skill_prompt_location(agent),
+        )
+        command = build_grok_headless_command(
+            grok_bin,
+            cwd=paths["workspace"],
+            prompt=prompt,
+            model=model,
+            permission_mode="bypassPermissions",
+            sandbox="workspace",
+        )
+        env = prepare_grok_env(paths["codex_home"] / "grok_executor", auth_mode)
+        result = await run_codex_process(
+            command,
+            cwd=paths["workspace"],
+            prompt="",
+            env=env,
+            stdout_path=logs / "events.jsonl",
+            stderr_path=logs / "stderr.log",
+            timeout_seconds=task.timeout_seconds,
+        )
+        if result.status == "success":
+            try:
+                write_headless_final_output(logs / "events.jsonl", logs / "final.md")
+                normalize_headless_events(logs / "events.jsonl", provider="grok")
+            except Exception as exc:
+                result = result.__class__(
+                    command=result.command,
+                    exit_code=result.exit_code,
+                    status="failed",
+                    timed_out=result.timed_out,
+                    started_at=result.started_at,
+                    ended_at=result.ended_at,
+                    duration_seconds=result.duration_seconds,
+                )
+                (logs / "stderr.log").open("a", encoding="utf-8").write(
+                    f"\nGrok output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
+    elif agent == "gemini":
+        command = build_gemini_headless_command(
+            gemini_bin,
+            model=model,
+            approval_mode="yolo",
+        )
+        env = prepare_gemini_env(paths["codex_home"] / "gemini_executor", auth_mode)
+        result = await run_codex_process(
+            command,
+            cwd=paths["workspace"],
+            prompt=build_executor_prompt(
+                task_run,
+                executor_skill_location=executor_skill_prompt_location(agent),
+            ),
+            env=env,
+            stdout_path=logs / "events.jsonl",
+            stderr_path=logs / "stderr.log",
+            timeout_seconds=task.timeout_seconds,
+        )
+        if result.status == "success":
+            try:
+                write_headless_final_output(logs / "events.jsonl", logs / "final.md")
+                normalize_headless_events(logs / "events.jsonl", provider="gemini")
+            except Exception as exc:
+                result = result.__class__(
+                    command=result.command,
+                    exit_code=result.exit_code,
+                    status="failed",
+                    timed_out=result.timed_out,
+                    started_at=result.started_at,
+                    ended_at=result.ended_at,
+                    duration_seconds=result.duration_seconds,
+                )
+                (logs / "stderr.log").open("a", encoding="utf-8").write(
+                    f"\nGemini output post-processing failed: {type(exc).__name__}: {exc}\n"
                 )
     elif executor_backend == "local":
         command = build_codex_exec_command(
@@ -566,6 +691,8 @@ async def run_single_judge(
     agent: str,
     codex_bin: str,
     claude_bin: str,
+    grok_bin: str,
+    gemini_bin: str,
     opencode_bin: str,
     opencode_provider: str | None,
     opencode_base_url: str | None,
@@ -611,6 +738,25 @@ async def run_single_judge(
                 api_key_env=opencode_api_key_env,
             )
             prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
+        elif agent == "grok":
+            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
+            command = build_grok_headless_command(
+                grok_bin,
+                cwd=judge_workspace,
+                prompt=prompt,
+                model=model,
+                permission_mode="dontAsk",
+                sandbox="read-only",
+            )
+            env = prepare_grok_env(paths["codex_home"] / "judge_single_grok", auth_mode)
+        elif agent == "gemini":
+            command = build_gemini_headless_command(
+                gemini_bin,
+                model=model,
+                approval_mode="plan",
+            )
+            env = prepare_gemini_env(paths["codex_home"] / "judge_single_gemini", auth_mode)
+            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
         else:
             command = build_codex_exec_command(
                 codex_bin,
@@ -625,7 +771,7 @@ async def run_single_judge(
         process_result = await run_codex_process(
             command,
             cwd=judge_workspace,
-            prompt=append_claude_thinking_instruction(
+            prompt="" if agent == "grok" else append_claude_thinking_instruction(
                 prompt,
                 claude_thinking_effort if agent == "claude" else "none",
             ),
@@ -677,6 +823,27 @@ async def run_single_judge(
                 (judges / "single_stderr.log").open("a", encoding="utf-8").write(
                     f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
                 )
+        if agent in {"grok", "gemini"} and process_result.status == "success":
+            try:
+                write_headless_final_output(
+                    judges / "single_events.jsonl",
+                    judge_final_path,
+                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
+                )
+                normalize_headless_events(judges / "single_events.jsonl", provider=agent)
+            except Exception as exc:
+                process_result = process_result.__class__(
+                    command=process_result.command,
+                    exit_code=process_result.exit_code,
+                    status="failed",
+                    timed_out=process_result.timed_out,
+                    started_at=process_result.started_at,
+                    ended_at=process_result.ended_at,
+                    duration_seconds=process_result.duration_seconds,
+                )
+                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
+                    f"\n{agent.title()} output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
         if judge_final_path.exists():
             shutil.copy2(judge_final_path, final_path)
         return process_result.to_dict()
@@ -714,6 +881,8 @@ async def run_parallel_judges(
     agent: str,
     codex_bin: str,
     claude_bin: str,
+    grok_bin: str,
+    gemini_bin: str,
     opencode_bin: str,
     opencode_provider: str | None,
     opencode_base_url: str | None,
@@ -764,6 +933,25 @@ async def run_parallel_judges(
                     api_key_env=opencode_api_key_env,
                 )
                 prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
+            elif agent == "grok":
+                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
+                command = build_grok_headless_command(
+                    grok_bin,
+                    cwd=judge_workspace,
+                    prompt=prompt,
+                    model=model,
+                    permission_mode="dontAsk",
+                    sandbox="read-only",
+                )
+                env = prepare_grok_env(paths["codex_home"] / f"judge_{rubric.id}_grok", auth_mode)
+            elif agent == "gemini":
+                command = build_gemini_headless_command(
+                    gemini_bin,
+                    model=model,
+                    approval_mode="plan",
+                )
+                env = prepare_gemini_env(paths["codex_home"] / f"judge_{rubric.id}_gemini", auth_mode)
+                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
             else:
                 command = build_codex_exec_command(
                     codex_bin,
@@ -778,7 +966,7 @@ async def run_parallel_judges(
             process_result = await run_codex_process(
                 command,
                 cwd=judge_workspace,
-                prompt=append_claude_thinking_instruction(
+                prompt="" if agent == "grok" else append_claude_thinking_instruction(
                     prompt,
                     claude_thinking_effort if agent == "claude" else "none",
                 ),
@@ -829,6 +1017,27 @@ async def run_parallel_judges(
                     )
                     (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
                         f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
+                    )
+            if agent in {"grok", "gemini"} and process_result.status == "success":
+                try:
+                    write_headless_final_output(
+                        rubric_dir / "events.jsonl",
+                        judge_final_path,
+                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
+                    )
+                    normalize_headless_events(rubric_dir / "events.jsonl", provider=agent)
+                except Exception as exc:
+                    process_result = process_result.__class__(
+                        command=process_result.command,
+                        exit_code=process_result.exit_code,
+                        status="failed",
+                        timed_out=process_result.timed_out,
+                        started_at=process_result.started_at,
+                        ended_at=process_result.ended_at,
+                        duration_seconds=process_result.duration_seconds,
+                    )
+                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
+                        f"\n{agent.title()} output post-processing failed: {type(exc).__name__}: {exc}\n"
                     )
             if judge_final_path.exists():
                 shutil.copy2(judge_final_path, rubric_dir / "result.json")
@@ -1167,6 +1376,8 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "task_order": run_task_ids,
         "codex_bin": args.codex_bin,
         "claude_bin": args.claude_bin,
+        "grok_bin": args.grok_bin,
+        "gemini_bin": args.gemini_bin,
         "opencode_bin": args.opencode_bin,
     }
     json_dump(run_root / "run_config.json", run_config)
@@ -1183,6 +1394,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     run_root,
                     run_task_id,
                     executor_backend=args.executor_backend,
+                    executor_agent=args.executor_agent,
                 ),
             }
         )
@@ -1217,6 +1429,8 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     agent=args.executor_agent,
                     codex_bin=args.codex_bin,
                     claude_bin=args.claude_bin,
+                    grok_bin=args.grok_bin,
+                    gemini_bin=args.gemini_bin,
                     opencode_bin=args.opencode_bin,
                     opencode_provider=args.opencode_provider,
                     opencode_base_url=args.opencode_base_url,
@@ -1252,6 +1466,8 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         agent=args.evaluator_agent,
                         codex_bin=args.codex_bin,
                         claude_bin=args.claude_bin,
+                        grok_bin=args.grok_bin,
+                        gemini_bin=args.gemini_bin,
                         opencode_bin=args.opencode_bin,
                         opencode_provider=args.opencode_provider,
                         opencode_base_url=args.opencode_base_url,
@@ -1278,6 +1494,8 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         agent=args.evaluator_agent,
                         codex_bin=args.codex_bin,
                         claude_bin=args.claude_bin,
+                        grok_bin=args.grok_bin,
+                        gemini_bin=args.gemini_bin,
                         opencode_bin=args.opencode_bin,
                         opencode_provider=args.opencode_provider,
                         opencode_base_url=args.opencode_base_url,
@@ -1345,6 +1563,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Runtime convention: use Claude Code (`--*-agent claude`) for Claude-family models, "
             "Codex (`--*-agent codex`) for GPT/OpenAI-family models, and OpenCode "
             "(`--*-agent opencode`) for other OpenAI-compatible models such as Doubao or Qwen. "
+            "Use Grok Build (`--*-agent grok`) or Gemini CLI (`--*-agent gemini`) when those "
+            "host CLIs are installed and authenticated. "
             "When mixing runtimes, split auth with --executor-auth-mode and --evaluator-auth-mode."
         ),
     )
@@ -1368,21 +1588,37 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Claude Code executable, or a shell-like command prefix. Use for Claude-family models.",
     )
     parser.add_argument(
+        "--grok-bin",
+        default="grok",
+        help="Grok Build executable, or a shell-like command prefix. Use for xAI Grok Build models.",
+    )
+    parser.add_argument(
+        "--gemini-bin",
+        default="gemini",
+        help="Gemini CLI executable, or a shell-like command prefix. Use for Gemini CLI models.",
+    )
+    parser.add_argument(
         "--opencode-bin",
         default="opencode",
         help="OpenCode executable, or a shell-like command prefix. Use for other OpenAI-compatible models.",
     )
     parser.add_argument(
         "--executor-agent",
-        choices=["codex", "claude", "opencode"],
+        choices=["codex", "claude", "opencode", "grok", "gemini"],
         default="codex",
-        help="Executor runtime: codex for GPT/OpenAI-family, claude for Claude-family, opencode for other OpenAI-compatible models.",
+        help=(
+            "Executor runtime: codex for GPT/OpenAI-family, claude for Claude-family, "
+            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI."
+        ),
     )
     parser.add_argument(
         "--evaluator-agent",
-        choices=["codex", "claude", "opencode"],
+        choices=["codex", "claude", "opencode", "grok", "gemini"],
         default="codex",
-        help="Evaluator runtime: codex for GPT/OpenAI-family, claude for Claude-family, opencode for other OpenAI-compatible models.",
+        help=(
+            "Evaluator runtime: codex for GPT/OpenAI-family, claude for Claude-family, "
+            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI."
+        ),
     )
     parser.add_argument(
         "--claude-thinking-effort",
@@ -1458,14 +1694,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--executor-skill",
         action="append",
         help=(
-            "Executor Codex skill id to install from task executor_skills.json or the shared "
+            "Executor skill id to install from task executor_skills.json or the shared "
             "executor skill registry. Repeatable."
         ),
     )
     parser.add_argument(
         "--executor-skill-group",
         action="append",
-        help="Executor Codex skill group id to expand from the shared executor skill registry. Repeatable.",
+        help="Executor skill group id to expand from the shared executor skill registry. Repeatable.",
     )
     parser.add_argument(
         "--executor-skill-root",

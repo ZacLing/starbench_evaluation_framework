@@ -51,6 +51,16 @@ Evaluator-only switch examples:
 --opencode-base-url https://yunwu.ai/v1 \
 --opencode-api-key-env ANTHROPIC_AUTH_TOKEN \
 --evaluator-model yunwu/doubao-seed-2-0-pro-260215
+
+# Grok Build evaluator.
+--evaluator-agent grok \
+--grok-bin grok \
+--evaluator-model your-grok-model
+
+# Gemini CLI evaluator.
+--evaluator-agent gemini \
+--gemini-bin gemini \
+--evaluator-model gemini-2.5-pro
 ```
 
 ## Agent Runtimes
@@ -62,6 +72,8 @@ Use this runtime convention:
 | Claude-family models | Claude Code, `--executor-agent claude` / `--evaluator-agent claude` |
 | GPT/OpenAI-family models | Codex, `--executor-agent codex` / `--evaluator-agent codex` |
 | Other OpenAI-compatible models, such as Doubao or Qwen | OpenCode, `--executor-agent opencode` / `--evaluator-agent opencode` |
+| xAI Grok Build models | Grok Build, `--executor-agent grok` / `--evaluator-agent grok` |
+| Gemini CLI models | Gemini CLI, `--executor-agent gemini` / `--evaluator-agent gemini` |
 
 Codex is the default executor and evaluator runtime, and is the expected runtime for GPT/OpenAI-family models:
 
@@ -146,6 +158,38 @@ When a run mixes runtimes, split auth modes if needed. For example, an OpenCode 
 --executor-auth-mode env \
 --evaluator-auth-mode global
 ```
+
+Grok Build support uses the host `grok` CLI in headless mode:
+
+```bash
+starbench-run \
+  --executor-agent grok \
+  --evaluator-agent grok \
+  --grok-bin grok \
+  --executor-backend local \
+  --auth-mode global \
+  --executor-model your-grok-model \
+  --evaluator-model your-grok-model
+```
+
+StarBench invokes Grok with `-p`, `--output-format json`, `--no-auto-update`, `--no-alt-screen`, and `--always-approve` for executor runs. Evaluators use read-only sandbox settings and prompt-level JSON schema instructions. Selected executor skills are installed under `./.grok/skills/<skill-id>/` inside the isolated task workspace.
+
+Gemini CLI support uses the host `gemini` CLI in non-interactive JSON output mode:
+
+```bash
+starbench-run \
+  --executor-agent gemini \
+  --evaluator-agent gemini \
+  --gemini-bin gemini \
+  --executor-backend local \
+  --auth-mode global \
+  --executor-model gemini-2.5-pro \
+  --evaluator-model gemini-2.5-pro
+```
+
+StarBench invokes Gemini with `--output-format json`, `--skip-trust`, and `-p ""` so the long StarBench prompt can still be sent on stdin. Executor runs use `--yolo`; evaluator runs use `--approval-mode plan`. Evaluators receive the JSON schema in the prompt, and StarBench extracts the final assistant response into `result.json`. Selected executor skills are installed under `./.gemini/skills/<skill-id>/` inside the isolated task workspace.
+
+Grok Build and Gemini CLI executor support currently requires `--executor-backend local`. Docker support is still Codex-only because the bundled Docker image installs Codex and mounts a `CODEX_HOME`.
 
 ## Judge Modes
 

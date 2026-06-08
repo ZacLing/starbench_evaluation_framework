@@ -1,6 +1,6 @@
 # Distill Tasks Into Senior Expert Skills
 
-This guide shows how to turn completed task packages into reusable executor Codex Skills. The goal is not to produce one skill per task object. The goal is to distill the senior expert operating model behind those tasks.
+This guide shows how to turn completed task packages into reusable executor skills. The goal is not to produce one skill per task object. The goal is to distill the senior expert operating model behind those tasks.
 
 ## Inputs
 

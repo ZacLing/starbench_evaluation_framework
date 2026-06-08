@@ -1,6 +1,6 @@
 # Use Executor Skills In Evaluation Runs
 
-This guide shows how to load executor Codex Skills during `starbench-run`.
+This guide shows how to load executor skills during `starbench-run`.
 
 Baseline behavior is unchanged unless you pass `--executor-skill` or `--executor-skill-group`.
 
@@ -99,12 +99,12 @@ starbench-run --executor-skill-root executor_skills --executor-skill-group senio
 The executor prompt receives only a short activation block, for example:
 
 ```text
-Installed executor Codex skills:
+Installed executor skills:
 - `quant-finance-research-platform-expert`: Use `quant-finance-research-platform-expert` as private quant finance research platform expert guidance for this task.
 
 Skill usage rules:
 - Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
-- You may read installed skill files under $CODEX_HOME/skills/<skill-id>/.
+- You may read installed skill files under the selected runtime's skill path.
 - The task prompt and materials remain authoritative if they conflict with a skill.
 - Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables.
 ```
@@ -113,7 +113,7 @@ The full skill body is not appended to `workspace/inputs/prompt.md`.
 
 ## Install Paths
 
-Docker executor:
+Codex Docker executor:
 
 ```text
 runs/<run_id>/<task_run_id>/codex_home/docker/skills/<skill-id>/
@@ -125,10 +125,19 @@ Inside the container:
 /codex-home/skills/<skill-id>/
 ```
 
-Local executor:
+Codex local executor:
 
 ```text
 runs/<run_id>/<task_run_id>/codex_home/skills/<skill-id>/
+```
+
+Other local runtime paths:
+
+```text
+Grok Build  -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill-id>/
+Gemini CLI  -> runs/<run_id>/<task_run_id>/workspace/.gemini/skills/<skill-id>/
+Claude Code -> runs/<run_id>/<task_run_id>/workspace/.claude/skills/<skill-id>/
+OpenCode    -> runs/<run_id>/<task_run_id>/workspace/.starbench/executor_skills/<skill-id>/
 ```
 
 ## Run Metadata

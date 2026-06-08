@@ -1,6 +1,6 @@
 # Trace-to-Senior-Expert Skill Distillation
 
-StarBench can distill completed HSW traces, human references, and rubrics into reusable executor Codex Skills. The distiller now targets senior expert archetypes, not task names.
+StarBench can distill completed HSW traces, human references, and rubrics into reusable executor skills. The distiller now targets senior expert archetypes, not task names.
 
 The important separation is:
 

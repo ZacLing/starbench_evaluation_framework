@@ -15,8 +15,12 @@ from starbench.runner.codex_process import (
     _extract_opencode_text,
     _extract_opencode_text_from_events,
     append_opencode_compat_events,
+    build_gemini_headless_command,
+    build_grok_headless_command,
     build_opencode_run_command,
+    normalize_headless_events,
     prepare_opencode_env,
+    write_headless_final_output,
 )
 from starbench.runner.evaluation import aggregate_results
 from starbench.runner.models import Rubric, RubricResult
@@ -224,7 +228,7 @@ class ExecutorSkillTests(unittest.TestCase):
             self.assertNotIn("demo-executor-skill", augmented_prompt)
 
             executor_prompt = build_executor_prompt(task_run)
-            self.assertIn("Installed executor Codex skills:", executor_prompt)
+            self.assertIn("Installed executor skills:", executor_prompt)
             self.assertIn("`demo-executor-skill`", executor_prompt)
             self.assertIn("$CODEX_HOME/skills/<skill-id>/", executor_prompt)
 
@@ -249,11 +253,45 @@ class ExecutorSkillTests(unittest.TestCase):
             self.assertEqual(manifest["installed_executor_skills"][0]["id"], "demo-executor-skill")
             self.assertIn("sha256", manifest["installed_executor_skills"][0])
 
+            grok_paths = materialize_task(
+                task_run,
+                tmp_path / "runs" / "skill_run_grok",
+                "demo_python_cli__skill_demo-executor-skill",
+                executor_backend="local",
+                executor_agent="grok",
+            )
+            self.assertTrue(
+                (
+                    grok_paths["workspace"]
+                    / ".grok"
+                    / "skills"
+                    / "demo-executor-skill"
+                    / "SKILL.md"
+                ).exists()
+            )
+
+            gemini_paths = materialize_task(
+                task_run,
+                tmp_path / "runs" / "skill_run_gemini",
+                "demo_python_cli__skill_demo-executor-skill",
+                executor_backend="local",
+                executor_agent="gemini",
+            )
+            self.assertTrue(
+                (
+                    gemini_paths["workspace"]
+                    / ".gemini"
+                    / "skills"
+                    / "demo-executor-skill"
+                    / "SKILL.md"
+                ).exists()
+            )
+
     def test_executor_prompt_has_no_skill_section_when_no_skill_selected(self) -> None:
         task = load_task(DEMO_TASK)
         task_run = build_task_runs([task], instruction_mode="none")[0]
         prompt = build_executor_prompt(task_run)
-        self.assertNotIn("Installed executor Codex skills:", prompt)
+        self.assertNotIn("Installed executor skills:", prompt)
         self.assertNotIn("$CODEX_HOME/skills", prompt)
 
     def test_executor_skill_cli_argument_is_repeatable(self) -> None:
@@ -330,6 +368,33 @@ class ExecutorSkillTests(unittest.TestCase):
             self.assertEqual(args.executor_auth_mode, "env")
             self.assertEqual(args.evaluator_auth_mode, "global")
 
+    def test_agent_runtime_cli_arguments_can_select_grok_and_gemini(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(
+                [
+                    "--tasks-dir",
+                    tmp,
+                    "--runs-dir",
+                    tmp,
+                    "--executor-agent",
+                    "grok",
+                    "--evaluator-agent",
+                    "gemini",
+                    "--grok-bin",
+                    "/tmp/grok",
+                    "--gemini-bin",
+                    "/tmp/gemini",
+                    "--auth-mode",
+                    "global",
+                ]
+            )
+            self.assertEqual(args.executor_agent, "grok")
+            self.assertEqual(args.evaluator_agent, "gemini")
+            self.assertEqual(args.grok_bin, "/tmp/grok")
+            self.assertEqual(args.gemini_bin, "/tmp/gemini")
+            self.assertEqual(args.executor_auth_mode, "global")
+            self.assertEqual(args.evaluator_auth_mode, "global")
+
     def test_split_auth_modes_default_to_shared_auth_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp, "--auth-mode", "global"])
@@ -382,6 +447,49 @@ class ExecutorSkillTests(unittest.TestCase):
                 }
             )
             self.assertEqual(_extract_json_object(export_text), {"results": []})
+
+    def test_grok_and_gemini_helpers_build_commands_and_normalize_json_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            grok_command = build_grok_headless_command(
+                "grok",
+                cwd=tmp_path,
+                prompt="Write outputs.",
+                model="grok-build-0.1",
+            )
+            self.assertIn("--no-auto-update", grok_command)
+            self.assertIn("--always-approve", grok_command)
+            self.assertEqual(grok_command[-2:], ["-p", "Write outputs."])
+
+            gemini_command = build_gemini_headless_command(
+                "gemini",
+                model="gemini-2.5-pro",
+                approval_mode="yolo",
+            )
+            self.assertEqual(gemini_command[:2], ["gemini", "--output-format"])
+            self.assertIn("--yolo", gemini_command)
+            self.assertIn("--skip-trust", gemini_command)
+            self.assertEqual(gemini_command[-2:], ["-p", ""])
+            self.assertIn("gemini-2.5-pro", gemini_command)
+
+            stdout_path = tmp_path / "gemini.json"
+            final_path = tmp_path / "final.md"
+            stdout_path.write_text(
+                json.dumps(
+                    {
+                        "response": "Created outputs/demo.",
+                        "stats": {"models": {"gemini-2.5-pro": {"tokens": {"total": 42}}}},
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            write_headless_final_output(stdout_path, final_path)
+            self.assertEqual(final_path.read_text(encoding="utf-8"), "Created outputs/demo.")
+            normalize_headless_events(stdout_path, provider="gemini")
+            summary = summarize_events(read_jsonl(stdout_path))
+            self.assertEqual(summary["agent_messages"][0]["text"], "Created outputs/demo.")
+            self.assertEqual(summary["usage"]["models"]["gemini-2.5-pro"]["tokens"]["total"], 42)
 
     def test_opencode_compat_events_add_codex_style_trace_items(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -664,6 +772,58 @@ class ClosedLoopTests(unittest.TestCase):
         )
         return script
 
+    def make_fake_gemini(self, directory: Path) -> Path:
+        script = directory / "fake_gemini.py"
+        script.write_text(
+            textwrap.dedent(
+                r'''
+                import json
+                import os
+                import re
+                import sys
+                from pathlib import Path
+
+                def write_executor_outputs(cwd):
+                    root = Path(cwd) / "outputs" / "stellar_measure"
+                    pkg = root / "stellar_measure"
+                    pkg.mkdir(parents=True, exist_ok=True)
+                    (pkg / "__init__.py").write_text("def parse_segments(v):\n    return [float(x) for x in v.split(',')]\n\ndef summarize_segments(v):\n    return {'total_meters': sum(v)}\n")
+                    (pkg / "__main__.py").write_text("print('fake cli')\n")
+                    (root / "README.md").write_text("Sample: 12.5,34.75,74.85\n")
+                    (root / "test_stellar_measure.py").write_text("\n".join([f"def test_{i}():\n    assert True" for i in range(4)]))
+
+                def rubric_ids(prompt):
+                    ids = re.findall(r'"id":\s*"(R\d+)"', prompt)
+                    return ids or ["R001"]
+
+                prompt = sys.stdin.read()
+                if "Return only one JSON value" in prompt:
+                    ids = rubric_ids(prompt)
+                    response = json.dumps({
+                        "mode": "single",
+                        "results": [
+                            {
+                                "rubric_id": rid,
+                                "answer": False if rid in ("R015", "R016") else True,
+                                "expected": False if rid in ("R015", "R016") else True,
+                                "passed": True,
+                                "fail_fast": rid in ("R001", "R002", "R003", "R004", "R005", "R015", "R016"),
+                                "evidence": f"fake evidence for {rid}"
+                            }
+                            for rid in ids
+                        ],
+                        "overall_notes": "fake ok"
+                    })
+                else:
+                    write_executor_outputs(os.getcwd())
+                    response = "Created outputs/stellar_measure and sample verification passed."
+                print(json.dumps({"response": response, "stats": {"tokens": {"total": 30}}}))
+                '''
+            ),
+            encoding="utf-8",
+        )
+        return script
+
     def test_closed_loop_with_fake_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -699,6 +859,49 @@ class ClosedLoopTests(unittest.TestCase):
             self.assertTrue((task_root / "logs" / "events.jsonl").exists())
             self.assertTrue((task_root / "logs" / "status.json").exists())
             self.assertTrue((task_root / "judges" / "single_aggregate.json").exists())
+            aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
+            self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
+
+    def test_closed_loop_with_fake_gemini(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tasks_dir = tmp_path / "tasks"
+            runs_dir = tmp_path / "runs"
+            shutil.copytree(DEMO_TASK, tasks_dir / "demo_python_cli")
+            fake_gemini = self.make_fake_gemini(tmp_path)
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "starbench.runner.run_benchmark",
+                "--tasks-dir",
+                str(tasks_dir),
+                "--runs-dir",
+                str(runs_dir),
+                "--run-id",
+                "test_gemini_run",
+                "--seed",
+                "123",
+                "--judge-mode",
+                "single",
+                "--auth-mode",
+                "global",
+                "--executor-backend",
+                "local",
+                "--executor-agent",
+                "gemini",
+                "--evaluator-agent",
+                "gemini",
+                "--gemini-bin",
+                f"{sys.executable} {fake_gemini}",
+                "--no-progress",
+            ]
+            subprocess.run(cmd, cwd=ROOT, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            task_root = runs_dir / "test_gemini_run" / "demo_python_cli"
+            final = (task_root / "logs" / "final.md").read_text(encoding="utf-8")
+            self.assertIn("Created outputs/stellar_measure", final)
+            summary = json.loads((task_root / "logs" / "trace_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["agent_messages"][0]["text"], final)
             aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
             self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
 
