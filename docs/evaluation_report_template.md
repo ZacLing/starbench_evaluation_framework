@@ -1,12 +1,14 @@
-# StarBench Task Evaluation Report Template
+# StarBench Evaluation Report Template
 
-本文档提供一份固定结构，用于汇总某个 task 的多轮运行统计结果，并按 reader-fairness 原则分析 rubrics 公平性。
+本文档是一份 StarBench 测试报告模板，用于记录某个 task 或 task package 的多轮评测结果，并分析结果是否构成稳定、读者公平的 HSW signal。
 
-本报告的主要读者是 task 标注专家和 rubric 维护者。它不是普通模型排行榜意义上的成绩单，而是用于判断一个 HSW task 是否在“读者公平”的前提下稳定暴露 Senior-Junior Gap。
+本报告的主要读者是 task 标注专家、rubric 维护者和 benchmark 维护者。它不是普通排行榜成绩单，而是用于回答三个问题：
 
-项目期望的理想信号不是单纯高分，而是“公平下的低分”：如果 rubrics reader-fair，且 agent 稳定低分，说明 task 能有效区分普通可交付答案和 senior-grade 答案。
+- 这次运行是否有效、可复现、没有明显 runner/evaluator 异常。
+- 结果是否在 reader-fairness 前提下稳定暴露 Senior-Junior Gap。
+- 是否需要修改 prompt、rubrics、runtime 配置或补测失败样本。
 
-复制本模板时，建议将最终报告放入对应 run 目录下的 `reports/` 子目录，文件名使用：
+复制本模板时，建议将最终报告放入对应 run 目录下的 `reports/` 子目录：
 
 ```text
 runs/<run_id>/reports/evaluation_report.md
@@ -14,68 +16,104 @@ runs/<run_id>/reports/evaluation_report.md
 
 ## 1. 基本信息
 
-- Task id:
-- Task package:
-- Run id:
-- Run root:
-- 日期:
-- Executor:
-- Evaluator:
-- Backend:
-- Instruction mode:
-- Repeat:
-- Judge mode:
-- Web search:
+- Task id: `<task_id>`
+- Task package: `<tasks/.../task_package>`
+- Run id: `<run_id>`
+- Run root: `<runs/<run_id> 或绝对路径>`
+- 日期: `<YYYY-MM-DD>`
+- Executor: `<agent/runtime>`, model `<model>`, reasoning/thinking `<effort>`
+- Evaluator: `<agent/runtime>`, model `<model>`, reasoning `<effort>`
+- Backend: `<local/docker>`, image `<image or n/a>`, auth mode `<env/copy-auth/global>`
+- API route/provider: `<direct/openrouter/yunwu/etc.>`
+- Instruction mode: `<none/traverse/select/ablation>`
+- Repeat: `<N>`
+- Judge mode: `<single/parallel/both>`
+- Web search: `<enabled/disabled by task configuration>`
+- Seed: `<seed>`
+- Max turns / timeout: `<executor max turns>`, `<task/evaluator timeout>`
+- QC note: `<evidence 文件是否真实存在、是否有 evaluator hallucination、是否有 runner 异常>`
 
 填写指南：
 
-- `Task package` 写 task 包路径。
-- `Run root` 写本次 run 的完整路径或相对路径。
-- Executor/Evaluator 写模型、reasoning effort、关键运行配置。
-- 如果使用 Docker、固定 seed、instruction ablation、固定 executor 输出等特殊设置，也写在这里。
+- Executor/Evaluator 写清楚 runtime 和模型，不只写模型名。例如 `Claude Code + OpenRouter anthropic/claude-opus-4.8`。
+- 如果失败样本不跑 judge，明确写 `skip judge on executor failure: true`。
+- 如果有补测、重跑、半成品 run 或 invalid run，在本节说明纳入/排除规则。
+- QC note 要检查 evaluator evidence 是否引用真实存在的文件，避免把评估异常当成模型失败。
 
-## 2. 运行统计
+## 2. 运行有效性与稳定性
 
-### 2.1 Summary
+### 2.1 Execution Summary
 
-| passed rubrics | total rubrics | 5 runs std | score |
+| Metric | Count | Notes |
+| --- | ---: | --- |
+| Expected executor runs | `<N>` |  |
+| Executor success | `<x>/<N>` |  |
+| Executor failed | `<x>/<N>` |  |
+| Executor timeout | `<x>/<N>` |  |
+| Judge success | `<x>/<N>` |  |
+| Judge failed | `<x>/<N>` |  |
+| Judge skipped | `<x>/<N>` | Usually due to executor failure |
+| Invalid/excluded runs | `<x>/<N>` | Explain exclusion rule |
+
+### 2.2 Runtime Failure Types
+
+| Failure type | Count | Affected runs | Interpretation |
+| --- | ---: | --- | --- |
+| `api_error_socket_closed` |  |  | API/transport/provider route may be unstable |
+| `max_turns` |  |  | Agent may need higher turn budget or task may be too tool-heavy |
+| `timeout` |  |  | Distinguish true slow task from idle/stalled process |
+| `evaluator_error` |  |  | Judge run invalid or needs rerun |
+| Other |  |  |  |
+
+填写指南：
+
+- executor 失败的样本不要混入 rubric score 统计，除非报告明确说明它们按 0 分处理。
+- `socket closed`、`ECONNRESET`、HTTP `429/502/503` 等要和模型能力失败分开。
+- `max_turns` 是运行预算失败，不等同于 task 解题失败。
+
+## 3. 运行统计
+
+### 3.1 Rubric Score Summary
+
+| passed rubrics | total rubrics | runs std | score |
 | ---: | ---: | ---: | ---: |
-|  |  |  |  |
+| `<mean passed_count>` | `<total_count>` | `<sample stdev>` | `<mean / total>` |
+
+本次平均 score 为 `<xx.xx%>`，落在项目定义的 `<perfect/good/weaker>` HSW zone。`<N>` 轮标准差为 `<std>`，说明 `<结果稳定/有明显抖动>`。
 
 填写指南：
 
-- `passed rubrics` 填 5 轮平均 `passed_count`，保留 1 位或 2 位小数。
-- `total rubrics` 填 rubric 总数。
-- `5 runs std` 填 5 轮 `passed_count` 的样本标准差。
-- `score` 填 `passed rubrics / total rubrics` 的百分比。
+- `passed rubrics` 填有效 judge 轮次的平均 `passed_count`，保留 1-2 位小数。
+- `runs std` 使用样本标准差。
+- 如果有效 judge 少于预期 repeat，必须说明统计分母。
 
-### 2.2 Per-Run Details
+### 3.2 Per-Run Details
 
-| Run | Passed rubrics | Total rubrics | Overall pass | Failed rubrics |
-| --- | ---: | ---: | --- | --- |
-| 1 |  |  |  |  |
-| 2 |  |  |  |  |
-| 3 |  |  |  |  |
-| 4 |  |  |  |  |
-| 5 |  |  |  |  |
+| Run | Executor | Turns | Exec sec | Judge | Passed rubrics | Total rubrics | Overall pass | Failed rubrics |
+| --- | --- | ---: | ---: | --- | ---: | ---: | --- | --- |
+| 1 | `<success/failed>` |  |  | `<success/skipped/failed>` |  |  |  |  |
+| 2 |  |  |  |  |  |  |  |  |
+| 3 |  |  |  |  |  |  |  |  |
+| 4 |  |  |  |  |  |  |  |  |
+| 5 |  |  |  |  |  |  |  |  |
 
 汇总：
 
-- Passed rubrics per run:
+- Passed rubrics per valid judge run:
 - Mean passed rubrics:
 - Sample stdev:
 - Range:
 - Overall pass rate:
+- Executor success rate:
+- Judge success rate:
 
 填写指南：
 
-- `Passed rubrics` 使用 evaluator 的 `passed_count`。
-- `Total rubrics` 使用 evaluator 的 `total_count`。
-- `Sample stdev` 用样本标准差。
-- `Overall pass rate` 统计 `overall_pass=true` 的比例。
-- 如果某轮 evaluator 明显 hallucinate 或未真实读取输出，应单独标注为 invalid run，不要混入主统计。
+- `Turns` 可从 runtime event 中提取，例如 Claude Code `num_turns`。
+- `Exec sec` 用真实 wall time，避免只看 runtime 内部误报字段。
+- 若某轮 executor 失败且 judge skipped，`Passed rubrics` 留空并在失败类型表解释。
 
-## 3. Rubric 失败频次
+## 4. Rubric 失败频次
 
 | Frequency | Rubrics |
 | ---: | --- |
@@ -88,11 +126,12 @@ runs/<run_id>/reports/evaluation_report.md
 
 填写指南：
 
-- 优先突出 `5/5` 和 `4/5` 稳定失败项。
-- `0/5` 可列出稳定通过项，帮助判断主干是否达成。
-- 如果失败项高度集中，说明 task 主要在考系统性能力缺口；如果同一 rubric 忽过忽不过，则可能需要检查 evaluator 稳定性或 rubric wording。
+- `5/5` 和 `4/5` 稳定失败项通常最能解释 senior gap。
+- `0/5` 可列出稳定通过项，帮助判断主干交付是否达成。
+- 如果失败项高度集中，说明 task 主要在考系统性能力缺口。
+- 如果同一 rubric 忽过忽不过，优先检查 evaluator 稳定性、rubric wording 或输出证据是否模糊。
 
-## 4. HSW 分数区间判断
+## 5. HSW 分数区间判断
 
 | Score range | Interpretation |
 | --- | --- |
@@ -100,29 +139,27 @@ runs/<run_id>/reports/evaluation_report.md
 | `55%-65%` | Good HSW zone: 仍然有明确区分度，但可能需要检查是否有部分 rubrics 太容易或 agent 已能覆盖主干 senior 点 |
 | `> 65%` | Weaker HSW signal: task 可能偏容易，或 rubrics 未充分覆盖专家级差距 |
 
-填写指南：
+填写：
 
-- 这里的 score 指 summary table 中的百分比分数：`mean passed rubrics / total rubrics`。
-- 低分必须和 reader-fairness 一起解释。低分如果来自隐藏信息或不相关 rubrics，不是好信号。
-- 理想报告结论应回答：这个 task 是否属于“公平下的低分”。
+- 本 task 得分 `<xx.xx%>`，属于 `<zone>`。
+- 方差 `<高/低>`，说明 `<稳定/不稳定>`。
+- 低分主要来自 `<format/fail-fast/senior make-better/runtime failures>`。
+- 该结果是否可以解释为“公平下的低分”。
 
-## 5. 初步结果解读
+## 6. 初步结果解读
 
 填写：
 
-- 分数整体高/中/低。
-- 是否落在 HSW perfect/good zone。
-- 方差是否高。
-- 失败项是集中在格式/主干，还是集中在 senior make-better rubrics。
-- 结果更像 executor 能力缺口、rubric 过严、evaluator 抖动，还是 task 本身信息不公平。
+- executor 是否完成了显性主干要求。
+- 稳定失败项集中在哪些高级能力上。
+- 失败更像 executor 能力缺口、rubric 过严、evaluator 抖动、runtime/API 问题，还是 task 信息不公平。
+- 和上一版 task、上一轮模型或补测结果相比有什么变化。
 
-填写指南：
+示例句式：
 
-- 不要只看均值。结合标准差、失败频次和 fail-fast 失败情况一起判断。
-- 如果 fail-fast 稳定通过而 make-better 大量失败，通常说明 agent 完成了主干，但没达到 senior production-grade。
-- 如果 fail-fast 大量失败，优先检查 prompt 遵循、输出路径、文件格式和核心交付要求。
+> 本次结果很适合作为“公平下低分”的样本。executor 能完成完整、可读的主干交付，但稳定无法把 `<senior mechanism>` 落实成可执行机制。失败项不是随机散落，而是集中在 `<capability cluster>`，这更像 senior-grade gap，而不是单轮偶然失败。
 
-## 6. Reader-Fairness 标准
+## 7. Reader-Fairness 标准
 
 本报告使用 `docs/rubric_reader_fairness.md` 中定义的 reader-fairness 原则：
 
@@ -135,47 +172,106 @@ runs/<run_id>/reports/evaluation_report.md
 - 灰区：可解释为高级要求，但 wording 可能过窄、过满或过 checklist。
 - 不公平：依赖隐藏信息、无关要求、私有偏好，或独立 agent 无法合理推导。
 
-## 7. Rubrics 公平性分组
+## 8. Rubrics 公平性分组
 
-### 7.1 明确公平
+### 8.1 明确公平
 
-列出 rubric ids，并说明为什么公平。
-
-### 7.2 高级但读者公平
-
-列出 rubric ids，并说明它们如何从 prompt/materials 和行业逻辑推出。
-
-### 7.3 灰区或建议微调
-
-列出 rubric ids，并说明：
-
-- 问题是信息不公平，还是 wording 过窄。
-- 是否应改为条件式。
-- 是否应把完整 checklist 改成“实质覆盖关键维度”。
-- 是否应从 fail-fast 降为 make-better。
-
-### 7.4 明显不公平
-
-列出 rubric ids。如果没有，写“未发现明显信息不公平 rubric”。
-
-## 8. 给标注专家的建议修改
-
-| Rubric | Current issue | Suggested action |
-| --- | --- | --- |
-|  |  |  |
+- `<Rubric ids>`: `<为什么可以从 prompt/materials 直接推出>`
 
 填写指南：
 
-- 如果 rubric 公平但太硬，建议改 wording，而不是删除。
-- 如果 rubric 考的是隐藏信息或无关项，建议删除或迁移为非评分参考。
-- 如果 rubric 只应在 agent 引入某个主题后适用，改成 conditional wording。
+- 这里通常包括格式、文件路径、显性章节、明确禁止事项、明确比较对象等。
+- 失败时基本可解释为 agent 没遵循显性要求。
 
-## 9. 结论
+### 8.2 高级但读者公平
+
+- `<Rubric ids>`: `<它们如何从任务目标、领域逻辑、生产约束、审计/治理/安全要求推出>`
+
+填写指南：
+
+- 这些项可以偏 senior，但不能依赖隐藏答案。
+- 重点说明“为什么独立 agent 有理由想到它”，而不是只说“专家觉得重要”。
+
+### 8.3 灰区或建议微调
+
+- `<Rubric ids>`: `<wording/权重/条件适用/重复计分问题>`
+
+填写指南：
+
+- 问题是信息不公平，还是 wording 太窄。
+- 是否应改为条件式。
+- 是否应把完整 checklist 改成“实质覆盖关键维度”。
+- 是否应从 fail-fast 降为 make-better。
+- 是否与另一个 rubric 重复惩罚。
+
+### 8.4 明显不公平
+
+- `<Rubric ids>`: `<为什么独立 agent 无法合理推导>`
+
+如果没有，写：
+
+> 未发现明显信息不公平 rubric。当前 rubrics 整体可以从 prompt、materials、领域逻辑和 reader-fairness 原则中推出。
+
+## 9. 给标注专家的建议修改
+
+| Rubric | Current issue | Suggested action |
+| --- | --- | --- |
+| `<id>` | `<问题>` | `<保留/删除/降权/改 wording/改 conditional>` |
+
+填写指南：
+
+- 如果 rubric 公平但太硬，优先建议改 wording，而不是删除。
+- 如果 rubric 依赖隐藏信息或无关项，建议删除或迁移为非评分参考。
+- 如果 rubric 只应在 agent 引入某个主题后适用，改成 conditional wording。
+- 如果两个 rubrics 高度重叠，说明应如何区分报告制度、系统机制、自动检测或 fail-fast 权重。
+
+## 10. 复现信息与产物索引
+
+### 10.1 Commands
+
+```bash
+# Fill in the exact command or script used for the run.
+starbench-run \
+  --task <task> \
+  --repeat 5 \
+  --judge-mode single \
+  --run-id <run_id>
+```
+
+### 10.2 Important Artifacts
+
+| Artifact | Path |
+| --- | --- |
+| Run summary | `<run_root>/summary.json` |
+| Progress events | `<run_root>/progress_events.jsonl` |
+| Per-run task summary | `<run_root>/<task_run_id>/task_summary.json` |
+| Executor events | `<run_root>/<task_run_id>/logs/events.jsonl` |
+| Executor final output | `<run_root>/<task_run_id>/workspace/outputs/...` |
+| Judge result | `<run_root>/<task_run_id>/judges/single_workspace/single_result.json` |
+
+### 10.3 Exclusions / Backfill Queue
+
+| Run | Reason | Backfill needed |
+| --- | --- | --- |
+| `<task_run_id>` | `<executor failed / judge invalid / timeout / API error>` | `<yes/no>` |
+
+填写指南：
+
+- 失败样本如果没有 judge，应进入 backfill queue，而不是静默消失。
+- 如果补测使用不同 runtime/provider/max-turns，要单独写明。
+
+## 11. 结论
 
 用 3-6 句话总结：
 
 - 这次跑测的主要统计结论。
+- 运行是否有效，是否有 API/runtime 异常。
 - Rubrics 是否整体 reader-fair。
-- 是否属于“公平下的低分”，以及落在 perfect/good zone 哪一档。
+- 是否属于“公平下的低分”，以及落在 perfect/good/weaker 哪一档。
 - 低分主要反映什么 senior gap。
 - 是否建议保留、微调或删除某些 rubrics。
+- 是否需要补测失败样本或调整 runtime 参数。
+
+示例：
+
+> 本次 `<task>` 5 轮结果为 `<passed_counts>`，平均通过 `<mean>/<total>`，score 为 `<score>`，标准差 `<std>`，属于 `<zone>`。有效 judge evidence 均指向真实输出文件，未发现明显 evaluator 异常。Rubrics 整体 reader-fair，低分主要反映 agent 在 `<senior gap cluster>` 上的系统性遗漏。因此该 task `<建议保留/微调/重写>`，并建议 `<specific follow-up>`。
