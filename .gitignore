@@ -30,3 +30,7 @@ tmp/
 *.zip
 *.tar
 *.tar.gz
+
+# GUI frontend toolchain (build output is committed under src/starbench/gui/static)
+gui-frontend/node_modules/
+gui-frontend/.tmp/

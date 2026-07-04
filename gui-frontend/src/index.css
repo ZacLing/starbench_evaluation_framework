@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* StarBench Console theme. Light instrument-panel: pure white surface, one
+   considered indigo, verdict colors do the semantic work. See docs/DESIGN.md. */
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.235 0.018 285);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.235 0.018 285);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.235 0.018 285);
+  --primary: oklch(0.5 0.16 280);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.958 0.005 280);
+  --secondary-foreground: oklch(0.235 0.018 285);
+  --muted: oklch(0.958 0.005 280);
+  --muted-foreground: oklch(0.49 0.022 285);
+  --accent: oklch(0.955 0.025 280);
+  --accent-foreground: oklch(0.435 0.16 280);
+  --destructive: oklch(0.545 0.185 27);
+  --destructive-foreground: oklch(1 0 0);
+  --border: oklch(0.906 0.007 280);
+  --input: oklch(0.845 0.01 280);
+  --ring: oklch(0.5 0.16 280);
+
+  --chart-1: oklch(0.5 0.16 280);
+  --chart-2: oklch(0.545 0.135 152);
+  --chart-3: oklch(0.7 0.115 200);
+  --chart-4: oklch(0.6 0.125 80);
+  --chart-5: oklch(0.545 0.185 27);
+
+  --sidebar: oklch(0.977 0.003 280);
+  --sidebar-foreground: oklch(0.235 0.018 285);
+  --sidebar-primary: oklch(0.5 0.16 280);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.94 0.012 280);
+  --sidebar-accent-foreground: oklch(0.235 0.018 285);
+  --sidebar-border: oklch(0.906 0.007 280);
+  --sidebar-ring: oklch(0.5 0.16 280);
+
+  /* Verdict vocabulary: glyph + word + color, never color alone. */
+  --pass: oklch(0.545 0.135 152);
+  --pass-ink: oklch(0.4 0.11 152);
+  --pass-soft: oklch(0.955 0.045 152);
+  --fail: oklch(0.545 0.185 27);
+  --fail-ink: oklch(0.42 0.155 27);
+  --fail-soft: oklch(0.95 0.032 27);
+  --warn: oklch(0.6 0.125 80);
+  --warn-ink: oklch(0.425 0.095 80);
+  --warn-soft: oklch(0.955 0.055 90);
+  --live: oklch(0.7 0.115 200);
+  --live-ink: oklch(0.4 0.09 210);
+  --live-soft: oklch(0.95 0.035 200);
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-pass: var(--pass);
+  --color-pass-ink: var(--pass-ink);
+  --color-pass-soft: var(--pass-soft);
+  --color-fail: var(--fail);
+  --color-fail-ink: var(--fail-ink);
+  --color-fail-soft: var(--fail-soft);
+  --color-warn: var(--warn);
+  --color-warn-ink: var(--warn-ink);
+  --color-warn-soft: var(--warn-soft);
+  --color-live: var(--live);
+  --color-live-ink: var(--live-ink);
+  --color-live-soft: var(--live-soft);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
+
+/* Prose styles for the executor final message pane. */
+.prose-starbench {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+}
+.prose-starbench h1,
+.prose-starbench h2,
+.prose-starbench h3 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.3em 0 0.5em;
+  text-wrap: balance;
+}
+.prose-starbench > :first-child { margin-top: 0; }
+.prose-starbench h1 { font-size: 1.25rem; }
+.prose-starbench h2 { font-size: 1.0625rem; }
+.prose-starbench h3 { font-size: 0.9375rem; }
+.prose-starbench p { margin: 0.6em 0; text-wrap: pretty; }
+.prose-starbench ul,
+.prose-starbench ol { padding-left: 1.4em; margin: 0.6em 0; list-style: revert; }
+.prose-starbench li { margin: 0.2em 0; }
+.prose-starbench pre {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.8rem;
+  overflow-x: auto;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  margin: 0.7em 0;
+}
+.prose-starbench code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--muted);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.prose-starbench pre code { background: none; padding: 0; }
+.prose-starbench a { color: var(--primary); text-decoration: underline; }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
