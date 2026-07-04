@@ -699,6 +699,14 @@ class ProviderTest(unittest.TestCase):
         self.assertIn("anthropic", ids)
         self.assertIn("anthropic-cli", ids)
         self.assertIn("vercel-ai-gateway", ids)
+        self.assertIn("openrouter", ids)
+        by_id = {provider["id"]: provider for provider in loaded["providers"]}
+        self.assertEqual(
+            by_id["deepseek"]["anthropic_base_url"], "https://api.deepseek.com/anthropic"
+        )
+        self.assertEqual(
+            by_id["vercel-ai-gateway"]["anthropic_base_url"], "https://ai-gateway.vercel.sh"
+        )
         for provider in loaded["providers"]:
             self.assertIn("agent", provider)
             self.assertIn("key_present", provider)
@@ -715,6 +723,7 @@ class ProviderTest(unittest.TestCase):
                         "kind": "openai-compatible",
                         "base_url": "https://yunwu.ai/v1",
                         "api_key_env": "YUNWU_KEY",
+                        "anthropic_base_url": "https://yunwu.ai/anthropic",
                         "models": ["doubao-seed-2-0-pro-260215", " "],
                     }
                 ]
@@ -724,6 +733,9 @@ class ProviderTest(unittest.TestCase):
         reloaded = providers.load_providers(self.runs_dir)
         self.assertEqual(reloaded["providers"][0]["agent"], "opencode")
         self.assertEqual(reloaded["providers"][0]["models"], ["doubao-seed-2-0-pro-260215"])
+        self.assertEqual(
+            reloaded["providers"][0]["anthropic_base_url"], "https://yunwu.ai/anthropic"
+        )
 
     def test_save_validation(self) -> None:
         with self.assertRaises(ProviderError):
@@ -826,44 +838,6 @@ class ProviderTest(unittest.TestCase):
         provider = result["providers"][0]
         self.assertEqual(provider["models"], ["claude-opus-4.8"])
         self.assertEqual(provider["models_source"], "catalog")
-
-    def test_contender_settings_openai_compatible(self) -> None:
-        settings = providers.contender_settings(
-            {
-                "id": "yunwu",
-                "kind": "openai-compatible",
-                "base_url": "https://yunwu.ai/v1",
-                "api_key_env": "YUNWU_KEY",
-            },
-            "doubao",
-        )
-        self.assertEqual(settings["agent"], "opencode")
-        self.assertEqual(settings["gateway"]["opencode_base_url"], "https://yunwu.ai/v1")
-        self.assertEqual(settings["gateway"]["opencode_api_key_env"], "YUNWU_KEY")
-        self.assertEqual(settings["env"], {})
-
-    def test_contender_settings_anthropic_gateway(self) -> None:
-        settings = providers.contender_settings(
-            {
-                "id": "gw",
-                "kind": "anthropic",
-                "base_url": "https://gw.example",
-                "api_key_env": "GW_TOKEN",
-            },
-            "claude-opus-4-8",
-        )
-        self.assertEqual(settings["agent"], "claude")
-        self.assertEqual(settings["auth_mode"], "env")
-        self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], {"value": "https://gw.example"})
-        self.assertEqual(settings["env"]["ANTHROPIC_AUTH_TOKEN"], {"from_env": "GW_TOKEN"})
-
-    def test_contender_settings_cli_login_maps_to_global_auth(self) -> None:
-        settings = providers.contender_settings(
-            {"id": "anthropic-cli", "kind": "anthropic", "auth": "cli_login"},
-            "claude-opus-4-8",
-        )
-        self.assertEqual(settings["auth_mode"], "global")
-        self.assertEqual(settings["env"], {})
 
     def test_judge_gateway_conflict_detected(self) -> None:
         tasks_dir = self.tmp / "tasks"

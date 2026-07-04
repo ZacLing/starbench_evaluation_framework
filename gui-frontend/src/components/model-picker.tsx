@@ -7,7 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ProviderIcon } from "@/components/brand"
+import { compatibleProviders, ProviderIcon } from "@/components/brand"
 import { api, type AiProvider } from "@/lib/api"
 
 const RUNTIME_DEFAULT = "__runtime_default__"
@@ -23,13 +23,12 @@ export function ProviderModelPicker({
   providerId?: string
   model: string
   onChange: (value: { provider: AiProvider; model: string }) => void
-  /** Restrict the provider list to providers compatible with this runtime. */
+  /** Restrict the provider list to providers protocol-compatible with this runtime. */
   agent?: string
 }) {
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
-  const providers = (providersQuery.data?.providers ?? []).filter(
-    (item) => !agent || item.agent === agent,
-  )
+  const all = providersQuery.data?.providers ?? []
+  const providers = agent ? compatibleProviders(agent, all) : all
   const provider = providers.find((item) => item.id === providerId)
 
   return (

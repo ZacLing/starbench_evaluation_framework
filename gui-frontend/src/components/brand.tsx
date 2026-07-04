@@ -82,18 +82,51 @@ export const AGENT_NOTES: Record<string, string> = {
 export function AgentIcon({ agent, size = 20 }: { agent: string; size?: number }) {
   switch (agent) {
     case "claude":
-      return <ClaudeCode size={size} />
+      return <ClaudeCode.Avatar size={size} />
     case "codex":
-      return <Codex size={size} />
+      return <Codex.Avatar size={size} />
     case "gemini":
-      return <GeminiCLI.Color size={size} />
+      return <GeminiCLI.Avatar size={size} />
     case "grok":
-      return <Grok size={size} />
+      return <Grok.Avatar size={size} />
     case "opencode":
-      return <OpenCode size={size} />
+      return <OpenCode.Avatar size={size} />
     default:
       return <Plug size={size} className="text-muted-foreground" />
   }
+}
+
+/* Runtime <-> provider compatibility is decided by wire protocol, not vendor:
+   Claude Code speaks the Anthropic protocol (official API or any provider
+   exposing an Anthropic-compatible endpoint); OpenCode speaks the OpenAI
+   protocol; Codex / Gemini CLI / Grok Build only support their own vendor. */
+const OPENAI_PROTOCOL_KINDS = new Set(["openai-compatible", "openai", "xai"])
+
+export function compatibleProviders<T extends { kind: string; anthropic_base_url?: string | null }>(
+  runtime: string,
+  providers: T[],
+): T[] {
+  switch (runtime) {
+    case "claude":
+      return providers.filter(
+        (provider) => provider.kind === "anthropic" || Boolean(provider.anthropic_base_url),
+      )
+    case "opencode":
+      return providers.filter((provider) => OPENAI_PROTOCOL_KINDS.has(provider.kind))
+    case "codex":
+      return providers.filter((provider) => provider.kind === "openai")
+    case "gemini":
+      return providers.filter((provider) => provider.kind === "google")
+    case "grok":
+      return providers.filter((provider) => provider.kind === "xai")
+    default:
+      return providers
+  }
+}
+
+export const DEFAULT_OPENAI_BASE_URLS: Record<string, string> = {
+  openai: "https://api.openai.com/v1",
+  xai: "https://api.x.ai/v1",
 }
 
 export const AGENT_TO_FAMILY: Record<string, FamilyId> = {

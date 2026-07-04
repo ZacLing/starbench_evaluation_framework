@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
-import { AGENT_LABELS, AGENT_NOTES, AgentIcon } from "@/components/brand"
+import { AGENT_LABELS, AGENT_NOTES, AgentIcon, compatibleProviders, DEFAULT_OPENAI_BASE_URLS } from "@/components/brand"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/pages/Dashboard"
 import {
@@ -85,29 +85,36 @@ function timestampName(prefix: string): string {
   )}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 
-/* Front-end mirror of providers.contender_settings: a provider reference
-   fully determines runtime, auth mode, gateway flags, and env overrides. */
-function providerSettings(provider: AiProvider) {
+/* A (runtime, provider) pair fully determines auth mode, gateway flags, and
+   env overrides. Protocol rules: Claude Code reaches non-Anthropic providers
+   through their Anthropic-compatible endpoint; OpenCode reaches any
+   OpenAI-protocol provider. */
+function providerSettings(runtime: string, provider: AiProvider) {
   const authMode = provider.auth === "cli_login" ? "global" : "env"
-  if (provider.kind === "openai-compatible") {
+  if (runtime === "opencode") {
     return {
       auth_mode: authMode,
       gateway: {
         opencode_provider: provider.id,
-        opencode_base_url: provider.base_url || undefined,
+        opencode_base_url:
+          provider.base_url || DEFAULT_OPENAI_BASE_URLS[provider.kind] || undefined,
         opencode_api_key_env: provider.api_key_env || undefined,
       },
       env: undefined,
     }
   }
-  if (provider.kind === "anthropic" && provider.base_url) {
-    return {
-      auth_mode: authMode,
-      gateway: {},
-      env: {
-        ANTHROPIC_BASE_URL: { value: provider.base_url },
-        ANTHROPIC_AUTH_TOKEN: { from_env: provider.api_key_env || "ANTHROPIC_AUTH_TOKEN" },
-      },
+  if (runtime === "claude") {
+    const gatewayUrl =
+      provider.kind === "anthropic" ? provider.base_url : provider.anthropic_base_url
+    if (gatewayUrl) {
+      return {
+        auth_mode: authMode,
+        gateway: {},
+        env: {
+          ANTHROPIC_BASE_URL: { value: gatewayUrl },
+          ANTHROPIC_AUTH_TOKEN: { from_env: provider.api_key_env || "ANTHROPIC_AUTH_TOKEN" },
+        },
+      }
     }
   }
   return { auth_mode: authMode, gateway: {}, env: undefined }
@@ -169,7 +176,7 @@ export default function NewRun() {
 
   const addContender = (runtime: string) => {
     contenderCounter += 1
-    const compatible = providers.filter((item) => item.agent === runtime)
+    const compatible = compatibleProviders(runtime, providers)
     const provider = compatible.find((item) => item.models.length) ?? compatible[0]
     setContenders((current) => [
       ...current,
@@ -192,7 +199,7 @@ export default function NewRun() {
     return contenders.flatMap((draft) => {
       const provider = providers.find((item) => item.id === draft.provider_id)
       if (!provider) return []
-      const settings = providerSettings(provider)
+      const settings = providerSettings(draft.runtime, provider)
       return [
         {
           label: `${AGENT_LABELS[draft.runtime] ?? draft.runtime} ${draft.model || "default"}`.trim(),
@@ -570,7 +577,7 @@ function StepContenders({
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             {RUNTIMES.map((runtime) => {
-              const compatible = providers.filter((item) => item.agent === runtime)
+              const compatible = compatibleProviders(runtime, providers)
               const modelCount = compatible.reduce((sum, item) => sum + item.models.length, 0)
               return (
                 <button
@@ -642,7 +649,7 @@ function ContenderCard({
 }) {
   const provider = providers.find((item) => item.id === draft.provider_id)
   const dockerDowngraded = backend === "docker" && draft.runtime !== "codex"
-  const hasCompatibleProvider = providers.some((item) => item.agent === draft.runtime)
+  const hasCompatibleProvider = compatibleProviders(draft.runtime, providers).length > 0
   return (
     <Card className="py-4">
       <CardContent className="grid gap-3 px-4">

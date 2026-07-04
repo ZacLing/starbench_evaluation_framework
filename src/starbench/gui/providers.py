@@ -112,7 +112,17 @@ BUILTIN_PROVIDERS: List[Dict[str, Any]] = [
         "kind": "openai-compatible",
         "auth": "api_key",
         "base_url": "https://ai-gateway.vercel.sh/v1",
+        "anthropic_base_url": "https://ai-gateway.vercel.sh",
         "api_key_env": "AI_GATEWAY_API_KEY",
+        "models": [],
+    },
+    {
+        "id": "openrouter",
+        "name": "OpenRouter",
+        "kind": "openai-compatible",
+        "auth": "api_key",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
         "models": [],
     },
     {
@@ -121,6 +131,7 @@ BUILTIN_PROVIDERS: List[Dict[str, Any]] = [
         "kind": "openai-compatible",
         "auth": "api_key",
         "base_url": "https://api.deepseek.com/v1",
+        "anthropic_base_url": "https://api.deepseek.com/anthropic",
         "api_key_env": "DEEPSEEK_API_KEY",
         "models": ["deepseek-chat", "deepseek-reasoner"],
     },
@@ -139,6 +150,7 @@ def _decorate(provider: Dict[str, Any]) -> Dict[str, Any]:
     api_key_env = str(provider.get("api_key_env") or "")
     return {
         "auth": "api_key",
+        "anthropic_base_url": "",
         "models_fetched_at": None,
         "models_source": None,
         **provider,
@@ -203,6 +215,7 @@ def save_providers(runs_dir: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "kind": kind,
                 "auth": auth,
                 "base_url": str(provider.get("base_url") or "").strip(),
+                "anthropic_base_url": str(provider.get("anthropic_base_url") or "").strip(),
                 "api_key_env": str(provider.get("api_key_env") or "").strip(),
                 "models": [model.strip() for model in models if model.strip()],
                 "models_fetched_at": provider.get("models_fetched_at"),
@@ -337,31 +350,3 @@ def refresh_provider_models(runs_dir: Path, provider_id: str) -> Dict[str, Any]:
         for provider in providers
     ]
     return save_providers(runs_dir, {"providers": stripped})
-
-
-def contender_settings(provider: Dict[str, Any], model: str) -> Dict[str, Any]:
-    """Translate a provider + model choice into launch settings.
-
-    Returns the agent runtime, the CLI auth mode, gateway flags (OpenCode),
-    and environment overrides (Anthropic-compatible gateways). Secrets are
-    expressed as env-var *names*; the launcher resolves them at spawn time.
-    """
-    kind = str(provider.get("kind") or "")
-    agent = KIND_TO_AGENT.get(kind, "opencode")
-    base_url = str(provider.get("base_url") or "").strip()
-    api_key_env = str(provider.get("api_key_env") or "").strip()
-    auth_mode = "global" if provider.get("auth") == "cli_login" else "env"
-    settings: Dict[str, Any] = {"agent": agent, "auth_mode": auth_mode, "gateway": {}, "env": {}}
-    if kind == "openai-compatible":
-        settings["gateway"] = {
-            "opencode_provider": str(provider.get("id") or ""),
-            "opencode_base_url": base_url,
-            "opencode_api_key_env": api_key_env or "OPENAI_API_KEY",
-        }
-    elif kind == "anthropic" and base_url:
-        settings["env"] = {
-            "ANTHROPIC_BASE_URL": {"value": base_url},
-            "ANTHROPIC_AUTH_TOKEN": {"from_env": api_key_env or "ANTHROPIC_AUTH_TOKEN"},
-        }
-    _ = model
-    return settings

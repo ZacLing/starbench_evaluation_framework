@@ -76,6 +76,7 @@ export default function Providers() {
     kind: provider.kind,
     auth: provider.auth,
     base_url: provider.base_url,
+    anthropic_base_url: provider.anthropic_base_url ?? "",
     api_key_env: provider.api_key_env,
     models: provider.models,
     models_fetched_at: provider.models_fetched_at,
@@ -115,6 +116,7 @@ export default function Providers() {
               kind: "openai-compatible",
               auth: "api_key",
               base_url: "",
+              anthropic_base_url: "",
               api_key_env: "OPENAI_API_KEY",
               models: [],
               models_fetched_at: null,
@@ -154,6 +156,12 @@ export default function Providers() {
                 {provider.base_url && (
                   <span className="truncate font-mono" title={provider.base_url}>
                     {provider.base_url}
+                  </span>
+                )}
+                {provider.anthropic_base_url && (
+                  <span className="truncate" title={provider.anthropic_base_url}>
+                    Claude Code ready ·{" "}
+                    <span className="font-mono">{provider.anthropic_base_url}</span>
                   </span>
                 )}
                 {provider.auth === "api_key" && (
@@ -369,6 +377,21 @@ function ProviderEditor({
                 </p>
               )}
             </div>
+            {value.kind !== "anthropic" && (
+              <div className="grid gap-1.5">
+                <Label>Anthropic-compatible endpoint (optional)</Label>
+                <Input
+                  className="font-mono"
+                  placeholder="https://api.deepseek.com/anthropic"
+                  value={value.anthropic_base_url ?? ""}
+                  onChange={(event) => set({ anthropic_base_url: event.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  If this provider exposes an Anthropic Messages endpoint, Claude Code can run
+                  its models through it (injected as ANTHROPIC_BASE_URL).
+                </p>
+              </div>
+            )}
             {value.auth === "api_key" && (
               <div className="grid gap-1.5">
                 <Label>API key environment variable</Label>

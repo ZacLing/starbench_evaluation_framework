@@ -311,6 +311,7 @@ export interface AiProvider {
   kind: ProviderKind
   auth: "api_key" | "cli_login"
   base_url: string
+  anthropic_base_url?: string | null
   api_key_env: string
   models: string[]
   models_fetched_at: string | null
