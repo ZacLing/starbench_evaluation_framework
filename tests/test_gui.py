@@ -9,10 +9,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from starbench.gui import data, experiments, library  # noqa: E402
+from starbench.gui import data, experiments, library, providers  # noqa: E402
 from starbench.gui.experiments import ExperimentError  # noqa: E402
-from starbench.gui.launcher import LaunchError, build_run_argv  # noqa: E402
+from starbench.gui.launcher import LaunchError, build_run_argv, resolve_env_spec  # noqa: E402
 from starbench.gui.library import LibraryError  # noqa: E402
+from starbench.gui.providers import ProviderError  # noqa: E402
 
 
 def write_json(path: Path, payload) -> None:
@@ -680,6 +681,138 @@ class ExperimentTest(unittest.TestCase):
                     ]
                 },
             )
+
+
+class ProviderTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_prov_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_builtin_presets_until_saved(self) -> None:
+        loaded = providers.load_providers(self.runs_dir)
+        self.assertFalse(loaded["persisted"])
+        ids = {provider["id"] for provider in loaded["providers"]}
+        self.assertIn("anthropic", ids)
+        self.assertIn("vercel-ai-gateway", ids)
+        for provider in loaded["providers"]:
+            self.assertIn("agent", provider)
+            self.assertIn("key_present", provider)
+
+    def test_save_and_reload(self) -> None:
+        saved = providers.save_providers(
+            self.runs_dir,
+            {
+                "providers": [
+                    {
+                        "id": "yunwu",
+                        "name": "Yunwu",
+                        "kind": "openai-compatible",
+                        "base_url": "https://yunwu.ai/v1",
+                        "api_key_env": "YUNWU_KEY",
+                        "models": ["doubao-seed-2-0-pro-260215", " "],
+                    }
+                ]
+            },
+        )
+        self.assertTrue(saved["persisted"])
+        reloaded = providers.load_providers(self.runs_dir)
+        self.assertEqual(reloaded["providers"][0]["agent"], "opencode")
+        self.assertEqual(reloaded["providers"][0]["models"], ["doubao-seed-2-0-pro-260215"])
+
+    def test_save_validation(self) -> None:
+        with self.assertRaises(ProviderError):
+            providers.save_providers(
+                self.runs_dir, {"providers": [{"id": "x", "kind": "nope", "models": []}]}
+            )
+        with self.assertRaises(ProviderError):
+            providers.save_providers(
+                self.runs_dir,
+                {
+                    "providers": [
+                        {"id": "a", "kind": "openai", "models": []},
+                        {"id": "a", "kind": "openai", "models": []},
+                    ]
+                },
+            )
+
+    def test_contender_settings_openai_compatible(self) -> None:
+        settings = providers.contender_settings(
+            {
+                "id": "yunwu",
+                "kind": "openai-compatible",
+                "base_url": "https://yunwu.ai/v1",
+                "api_key_env": "YUNWU_KEY",
+            },
+            "doubao",
+        )
+        self.assertEqual(settings["agent"], "opencode")
+        self.assertEqual(settings["gateway"]["opencode_base_url"], "https://yunwu.ai/v1")
+        self.assertEqual(settings["gateway"]["opencode_api_key_env"], "YUNWU_KEY")
+        self.assertEqual(settings["env"], {})
+
+    def test_contender_settings_anthropic_gateway(self) -> None:
+        settings = providers.contender_settings(
+            {
+                "id": "gw",
+                "kind": "anthropic",
+                "base_url": "https://gw.example",
+                "api_key_env": "GW_TOKEN",
+            },
+            "claude-opus-4-8",
+        )
+        self.assertEqual(settings["agent"], "claude")
+        self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], {"value": "https://gw.example"})
+        self.assertEqual(settings["env"]["ANTHROPIC_AUTH_TOKEN"], {"from_env": "GW_TOKEN"})
+
+    def test_resolve_env_spec(self) -> None:
+        import os
+
+        os.environ["STARBENCH_TEST_TOKEN"] = "sekrit"
+        try:
+            resolved = resolve_env_spec(
+                {
+                    "ANTHROPIC_BASE_URL": {"value": "https://gw.example"},
+                    "ANTHROPIC_AUTH_TOKEN": {"from_env": "STARBENCH_TEST_TOKEN"},
+                    "MISSING": {"from_env": "STARBENCH_TEST_ABSENT"},
+                }
+            )
+        finally:
+            del os.environ["STARBENCH_TEST_TOKEN"]
+        self.assertEqual(resolved["ANTHROPIC_BASE_URL"], "https://gw.example")
+        self.assertEqual(resolved["ANTHROPIC_AUTH_TOKEN"], "sekrit")
+        self.assertNotIn("MISSING", resolved)
+
+    def test_experiment_plan_carries_env_spec(self) -> None:
+        tasks_dir = self.tmp / "tasks"
+        tasks_dir.mkdir()
+        plan = experiments.plan_experiment(
+            {
+                "name": "exp_env",
+                "tasks_dir": str(tasks_dir),
+                "tasks": [],
+                "shared": {"evaluator_agent": "codex", "judge_mode": "single"},
+                "contenders": [
+                    {
+                        "label": "claude via gateway",
+                        "agent": "claude",
+                        "model": "claude-opus-4-8",
+                        "auth_mode": "env",
+                        "env": {
+                            "ANTHROPIC_BASE_URL": {"value": "https://gw.example"},
+                            "ANTHROPIC_AUTH_TOKEN": {"from_env": "GW_TOKEN"},
+                        },
+                    }
+                ],
+            },
+            runs_dir=self.runs_dir,
+        )
+        item = plan["plans"][0]
+        self.assertEqual(item["env_keys"], ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"])
+        self.assertEqual(item["env_spec"]["ANTHROPIC_BASE_URL"], {"value": "https://gw.example"})
 
 
 class PreflightTest(unittest.TestCase):

@@ -1,15 +1,19 @@
 import {
+  Anthropic,
   Claude,
   ClaudeCode,
   DeepSeek,
   Doubao,
   Gemini,
   GeminiCLI,
+  Google,
   Grok,
   Kimi,
   OpenAI,
   OpenCode,
+  OpenRouter,
   Qwen,
+  Vercel,
 } from "@lobehub/icons"
 import { Plug } from "lucide-react"
 
@@ -79,4 +83,30 @@ export const AGENT_TO_FAMILY: Record<string, FamilyId> = {
   gemini: "gemini",
   grok: "grok",
   opencode: "compat",
+}
+
+export function ProviderIcon({
+  provider,
+  size = 20,
+}: {
+  provider: { id: string; name: string; kind: string }
+  size?: number
+}) {
+  const id = `${provider.id} ${provider.name}`.toLowerCase()
+  if (id.includes("vercel")) return <Vercel size={size} />
+  if (id.includes("openrouter")) return <OpenRouter size={size} />
+  const vendor = modelVendorIcon(id, size)
+  if (vendor) return vendor
+  switch (provider.kind) {
+    case "anthropic":
+      return <Anthropic size={size} />
+    case "openai":
+      return <OpenAI size={size} />
+    case "google":
+      return <Google.Color size={size} />
+    case "xai":
+      return <Grok size={size} />
+    default:
+      return <OpenCode size={size} />
+  }
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import sys
@@ -138,6 +139,26 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
     return argv
 
 
+def resolve_env_spec(spec: Any) -> Dict[str, str]:
+    """Resolve {"VAR": {"value": "..."} | {"from_env": "SRC"}} into concrete
+    values from the console's environment. Secrets never travel through the
+    browser; only env-var names do."""
+    resolved: Dict[str, str] = {}
+    if not isinstance(spec, dict):
+        return resolved
+    for name, entry in spec.items():
+        if not isinstance(name, str) or not name or not isinstance(entry, dict):
+            continue
+        if "value" in entry:
+            resolved[name] = str(entry["value"])
+        elif "from_env" in entry:
+            source = str(entry["from_env"] or "")
+            value = os.environ.get(source, "")
+            if value:
+                resolved[name] = value
+    return resolved
+
+
 class LaunchRegistry:
     """Tracks starbench-run subprocesses started from this console process."""
 
@@ -145,7 +166,15 @@ class LaunchRegistry:
         self._lock = threading.Lock()
         self._launches: Dict[str, Dict[str, Any]] = {}
 
-    def launch(self, run_id: str, argv: List[str], *, cwd: Path, log_path: Path) -> Dict[str, Any]:
+    def launch(
+        self,
+        run_id: str,
+        argv: List[str],
+        *,
+        cwd: Path,
+        log_path: Path,
+        env_extra: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         with self._lock:
             existing = self._launches.get(run_id)
             if existing and existing["process"].poll() is None:
@@ -159,6 +188,7 @@ class LaunchRegistry:
                     stdout=log_handle,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
+                    env={**os.environ, **env_extra} if env_extra else None,
                 )
             finally:
                 log_handle.close()

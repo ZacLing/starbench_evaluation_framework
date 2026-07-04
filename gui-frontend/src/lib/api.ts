@@ -294,6 +294,25 @@ export interface Contender {
   opencode_provider?: string
   opencode_base_url?: string
   opencode_api_key_env?: string
+  env?: Record<string, { value?: string; from_env?: string }>
+}
+
+export type ProviderKind = "anthropic" | "openai" | "google" | "xai" | "openai-compatible"
+
+export interface AiProvider {
+  id: string
+  name: string
+  kind: ProviderKind
+  base_url: string
+  api_key_env: string
+  models: string[]
+  agent: string
+  key_present: boolean
+}
+
+export interface ProvidersPayload {
+  providers: AiProvider[]
+  persisted?: boolean
 }
 
 export interface ExperimentPlanItem {
@@ -404,6 +423,15 @@ export const api = {
     request<{ checks: PreflightCheck[] }>(
       `/api/preflight?${new URLSearchParams(params).toString()}`,
     ),
+  providers: () => request<ProvidersPayload>("/api/providers"),
+  saveProviders: (payload: { providers: Omit<AiProvider, "agent" | "key_present">[] }) =>
+    request<ProvidersPayload>("/api/providers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  vercelCatalog: () =>
+    request<{ models: string[]; count: number; source: string }>("/api/catalog/vercel"),
   profiles: () => request<ProfilesPayload>("/api/profiles"),
   saveProfiles: (payload: ProfilesPayload) =>
     request<ProfilesPayload>("/api/profiles", {

@@ -39,6 +39,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
 import { FamilyIcon, type FamilyId } from "@/components/brand"
+import { ModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/pages/Dashboard"
 import {
   api,
@@ -89,6 +90,7 @@ interface ContenderDraft {
   key: string
   family: FamilyId
   model: string
+  provider_id?: string
   auth_mode: string
   thinking_effort: string
   opencode_provider: string
@@ -118,6 +120,7 @@ export default function NewRun() {
 
   const tasklib = useQuery({ queryKey: ["tasklib"], queryFn: api.tasklib })
   const profilesQuery = useQuery({ queryKey: ["profiles"], queryFn: api.profiles })
+  const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const libraries = useMemo(
     () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
     [tasklib.data],
@@ -185,8 +188,33 @@ export default function NewRun() {
     )
 
   const apiContenders = useCallback((): Contender[] => {
+    const allProviders = providersQuery.data?.providers ?? []
     return contenders.map((draft) => {
       const spec = familyOf(draft.family)
+      const provider = draft.provider_id
+        ? allProviders.find((item) => item.id === draft.provider_id)
+        : undefined
+      /* A chosen provider supplies gateway flags (OpenAI-compatible) or an
+         Anthropic-gateway env override; secrets travel as env-var names only. */
+      const gateway =
+        provider && provider.kind === "openai-compatible"
+          ? {
+              opencode_provider: provider.id,
+              opencode_base_url: provider.base_url || undefined,
+              opencode_api_key_env: provider.api_key_env || undefined,
+            }
+          : {
+              opencode_provider: draft.opencode_provider.trim() || undefined,
+              opencode_base_url: draft.opencode_base_url.trim() || undefined,
+              opencode_api_key_env: draft.opencode_api_key_env.trim() || undefined,
+            }
+      const env =
+        provider && provider.kind === "anthropic" && provider.base_url
+          ? {
+              ANTHROPIC_BASE_URL: { value: provider.base_url },
+              ANTHROPIC_AUTH_TOKEN: { from_env: provider.api_key_env || "ANTHROPIC_AUTH_TOKEN" },
+            }
+          : undefined
       return {
         label: `${spec.label} ${draft.model || "default"}`.trim(),
         agent: spec.agent,
@@ -195,12 +223,11 @@ export default function NewRun() {
           ? draft.auth_mode
           : String(shared.executor_auth_mode ?? "env"),
         thinking_effort: perFields.includes("thinking_effort") ? draft.thinking_effort : "none",
-        opencode_provider: draft.opencode_provider.trim() || undefined,
-        opencode_base_url: draft.opencode_base_url.trim() || undefined,
-        opencode_api_key_env: draft.opencode_api_key_env.trim() || undefined,
+        ...gateway,
+        env,
       }
     })
-  }, [contenders, perFields, shared.executor_auth_mode])
+  }, [contenders, perFields, shared.executor_auth_mode, providersQuery.data])
 
   /* Authoritative plan preview on the review step. */
   const [plan, setPlan] = useState<{ plans: ExperimentPlanItem[] | null; error: string | null }>({
@@ -644,20 +671,16 @@ function ContenderCard({
         </div>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="grid gap-1.5">
-            <Label htmlFor={`model-${draft.key}`}>Model id</Label>
-            <Input
-              id={`model-${draft.key}`}
-              list={`model-${draft.key}-suggestions`}
-              className="font-mono"
-              placeholder={spec.suggestions[0] ?? "runtime default"}
-              value={draft.model}
-              onChange={(event) => onUpdate({ model: event.target.value })}
+            <Label>Model</Label>
+            <ModelPicker
+              agent={spec.agent}
+              providerId={draft.provider_id}
+              model={draft.model}
+              placeholder={spec.suggestions[0] ?? "model id (empty = runtime default)"}
+              onChange={({ providerId, model }) =>
+                onUpdate({ provider_id: providerId, model })
+              }
             />
-            <datalist id={`model-${draft.key}-suggestions`}>
-              {spec.suggestions.map((suggestion) => (
-                <option key={suggestion} value={suggestion} />
-              ))}
-            </datalist>
           </div>
           {perFields.includes("credentials") && (
             <div className="grid gap-1.5">
@@ -702,7 +725,13 @@ function ContenderCard({
             </div>
           )}
         </div>
-        {perFields.includes("gateway") && spec.agent === "opencode" && (
+        {draft.provider_id && (
+          <p className="text-xs text-muted-foreground">
+            Endpoint and credentials come from the{" "}
+            <span className="font-medium">{draft.provider_id}</span> provider (AI Providers page).
+          </p>
+        )}
+        {!draft.provider_id && perFields.includes("gateway") && spec.agent === "opencode" && (
           <div className="grid gap-3 rounded-md border bg-muted/30 p-3 sm:grid-cols-3">
             <div className="grid gap-1.5">
               <Label>Provider id</Label>
@@ -859,11 +888,12 @@ function StepShared({
             </div>
             <div className="grid gap-1.5">
               <Label>Judge model</Label>
-              <Input
-                className="font-mono"
+              <ModelPicker
+                agent={String(shared.evaluator_agent ?? "codex")}
+                model={String(shared.evaluator_model ?? "")}
+                providerId={undefined}
                 placeholder="gpt-5.5"
-                value={String(shared.evaluator_model ?? "")}
-                onChange={(event) => setSharedField("evaluator_model", event.target.value)}
+                onChange={({ model }) => setSharedField("evaluator_model", model)}
               />
             </div>
             <div className="grid gap-1.5">

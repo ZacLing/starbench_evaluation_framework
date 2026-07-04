@@ -16,10 +16,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from . import data, experiments, library
+from . import data, experiments, library, providers
 from .experiments import ExperimentError
-from .launcher import LaunchError, LaunchRegistry, build_run_argv
+from .launcher import LaunchError, LaunchRegistry, build_run_argv, resolve_env_spec
 from .library import LibraryError
+from .providers import ProviderError
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -110,7 +111,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._route_api_get(segments[1:], query)
         except data.NotFound as error:
             self._send_error_json(str(error), HTTPStatus.NOT_FOUND)
-        except (LibraryError, ExperimentError) as error:
+        except (LibraryError, ExperimentError, ProviderError) as error:
             self._send_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except BrokenPipeError:
             pass
@@ -137,9 +138,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 self._handle_create_experiment()
             elif segments == ["api", "profiles"]:
                 self._handle_save_profiles()
+            elif segments == ["api", "providers"]:
+                self._handle_save_providers()
             else:
                 self._send_error_json("Not found.", HTTPStatus.NOT_FOUND)
-        except (LaunchError, LibraryError, ExperimentError) as error:
+        except (LaunchError, LibraryError, ExperimentError, ProviderError) as error:
             self._send_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except BrokenPipeError:
             pass
@@ -198,6 +201,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json({"launches": state.registry.list()})
         elif segments == ["profiles"]:
             self._send_json(experiments.load_profiles(state.runs_dir))
+        elif segments == ["providers"]:
+            self._send_json(providers.load_providers(state.runs_dir))
+        elif segments == ["catalog", "vercel"]:
+            self._send_json(providers.fetch_vercel_catalog())
         elif segments == ["experiments"]:
             self._send_json({"experiments": experiments.list_experiments(state.runs_dir, active)})
         elif len(segments) == 2 and segments[0] == "experiments":
@@ -293,7 +300,13 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             state.runs_dir.mkdir(parents=True, exist_ok=True)
             log_path = state.runs_dir / f"{item['run_id']}.launch.log"
             launched.append(
-                state.registry.launch(item["run_id"], item["argv"], cwd=state.cwd, log_path=log_path)
+                state.registry.launch(
+                    item["run_id"],
+                    item["argv"],
+                    cwd=state.cwd,
+                    log_path=log_path,
+                    env_extra=resolve_env_spec(item.get("env_spec")),
+                )
             )
         record = experiments.record_experiment(
             state.runs_dir, name=plan["name"], payload=payload, plans=plan["plans"]
@@ -305,6 +318,12 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         if payload is None:
             raise ExperimentError("Request body must be a JSON object.")
         self._send_json(experiments.save_profiles(self.state.runs_dir, payload))
+
+    def _handle_save_providers(self) -> None:
+        payload = self._read_body()
+        if payload is None:
+            raise ProviderError("Request body must be a JSON object.")
+        self._send_json(providers.save_providers(self.state.runs_dir, payload))
 
     def _handle_register_tasks_dir(self) -> None:
         payload = self._read_body()

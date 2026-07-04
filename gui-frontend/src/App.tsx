@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom"
 import { Shell } from "@/components/shell"
 import Dashboard from "@/pages/Dashboard"
 import Tasks from "@/pages/Tasks"
+import Providers from "@/pages/Providers"
 import Runs from "@/pages/Runs"
 import RunDetail from "@/pages/RunDetail"
 import TaskDetail from "@/pages/TaskDetail"
@@ -14,6 +15,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/tasks" element={<Tasks />} />
+        <Route path="/providers" element={<Providers />} />
         <Route path="/runs" element={<Runs />} />
         <Route path="/runs/:runId" element={<RunDetail />} />
         <Route path="/runs/:runId/tasks/:taskRunId" element={<TaskDetail />} />

@@ -192,6 +192,7 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
             argv = build_run_argv(launch_payload, runs_dir=runs_dir)
         except LaunchError as error:
             raise ExperimentError(f"Contender {label}: {error}")
+        env_spec = contender.get("env") if isinstance(contender.get("env"), dict) else {}
         plans.append(
             {
                 "label": label,
@@ -200,6 +201,8 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
                 "run_id": run_id,
                 "backend": effective_backend,
                 "backend_downgraded": backend == "docker" and effective_backend == "local",
+                "env_spec": env_spec,
+                "env_keys": sorted(env_spec.keys()),
                 "argv": argv,
             }
         )
