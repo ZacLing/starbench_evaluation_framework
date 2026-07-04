@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import random
 import shutil
 from datetime import datetime, timezone
@@ -15,6 +16,9 @@ from .codex_process import (
     append_opencode_compat_events,
     build_claude_print_command,
     build_codex_exec_command,
+    build_custom_command,
+    normalize_custom_events,
+    write_custom_final_output,
     build_gemini_headless_command,
     build_grok_headless_command,
     build_opencode_run_command,
@@ -282,7 +286,7 @@ def executor_skill_install_root(paths: Dict[str, Path], executor_backend: str, e
         return paths["workspace"] / ".gemini" / "skills"
     if executor_agent == "claude":
         return paths["workspace"] / ".claude" / "skills"
-    if executor_agent == "opencode":
+    if executor_agent == "opencode" or executor_agent.startswith("custom:"):
         return paths["workspace"] / ".starbench" / "executor_skills"
     raise ValueError(f"Unknown executor backend: {executor_backend}")
 
@@ -296,7 +300,7 @@ def executor_skill_prompt_location(executor_agent: str) -> str:
         return "./.gemini/skills/<skill-id>/"
     if executor_agent == "claude":
         return "./.claude/skills/<skill-id>/"
-    if executor_agent == "opencode":
+    if executor_agent == "opencode" or executor_agent.startswith("custom:"):
         return "./.starbench/executor_skills/<skill-id>/"
     return "./<skill-id>/"
 
@@ -480,13 +484,51 @@ async def run_executor(
     executor_backend: str,
     docker_bin: str,
     docker_image: str,
+    custom_spec: CustomRuntimeSpec | None = None,
 ) -> Dict[str, Any]:
     task = task_run.task
     logs = paths["logs"]
-    if agent in {"claude", "opencode", "grok", "gemini"} and executor_backend != "local":
+    if (
+        agent in {"claude", "opencode", "grok", "gemini"} or agent.startswith("custom:")
+    ) and executor_backend != "local":
         raise ValueError(f"{agent} executor currently supports --executor-backend local")
 
-    if agent == "claude":
+    if agent.startswith("custom:"):
+        if custom_spec is None:
+            raise ValueError(f"Custom runtime spec missing for {agent}")
+        prompt_text = build_executor_prompt(
+            task_run, executor_skill_location=executor_skill_prompt_location(agent)
+        )
+        command = build_custom_command(custom_spec, role="executor", model=model, prompt=prompt_text)
+        env = os.environ.copy()
+        env.update(custom_spec.env)
+        result = await run_codex_process(
+            command,
+            cwd=paths["workspace"],
+            prompt=prompt_text if custom_spec.prompt_via == "stdin" else "",
+            env=env,
+            stdout_path=logs / "events.jsonl",
+            stderr_path=logs / "stderr.log",
+            timeout_seconds=task.timeout_seconds,
+        )
+        if result.status == "success":
+            try:
+                write_custom_final_output(logs / "events.jsonl", logs / "final.md", parser=custom_spec.parser)
+                normalize_custom_events(logs / "events.jsonl", parser=custom_spec.parser, provider=custom_spec.id)
+            except Exception as exc:
+                result = result.__class__(
+                    command=result.command,
+                    exit_code=result.exit_code,
+                    status="failed",
+                    timed_out=result.timed_out,
+                    started_at=result.started_at,
+                    ended_at=result.ended_at,
+                    duration_seconds=result.duration_seconds,
+                )
+                (logs / "stderr.log").open("a", encoding="utf-8").write(
+                    f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
+    elif agent == "claude":
         command = build_claude_print_command(
             claude_bin,
             cwd=paths["workspace"],
@@ -729,6 +771,7 @@ async def run_single_judge(
     timeout_seconds: int,
     executor_timing: Dict[str, Any] | None = None,
     semaphore: asyncio.Semaphore | None = None,
+    custom_spec: CustomRuntimeSpec | None = None,
 ) -> Dict[str, Any]:
     judges = paths["judges"]
     final_path = judges / "single_result.json"
@@ -737,7 +780,14 @@ async def run_single_judge(
         judge_workspace = prepare_evaluator_workspace(paths, "single")
         judge_final_path = judge_workspace / "single_result.json"
         prompt = build_single_judge_prompt(task)
-        if agent == "claude":
+        if agent.startswith("custom:"):
+            if custom_spec is None:
+                raise ValueError(f"Custom runtime spec missing for {agent}")
+            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
+            command = build_custom_command(custom_spec, role="judge", model=model, prompt=prompt)
+            env = os.environ.copy()
+            env.update(custom_spec.env)
+        elif agent == "claude":
             command = build_claude_print_command(
                 claude_bin,
                 cwd=judge_workspace,
@@ -793,18 +843,46 @@ async def run_single_judge(
                 include_trace_config=False,
             )
             env = prepare_auth_home(paths["codex_home"] / "judge_single", auth_mode)
+        prompt_over_stdin = not (
+            agent == "grok"
+            or (agent.startswith("custom:") and custom_spec is not None and custom_spec.prompt_via == "arg")
+        )
         process_result = await run_codex_process(
             command,
             cwd=judge_workspace,
-            prompt="" if agent == "grok" else append_claude_thinking_instruction(
+            prompt=append_claude_thinking_instruction(
                 prompt,
                 claude_thinking_effort if agent == "claude" else "none",
-            ),
+            ) if prompt_over_stdin else "",
             env=env,
             stdout_path=judges / "single_events.jsonl",
             stderr_path=judges / "single_stderr.log",
             timeout_seconds=timeout_seconds,
         )
+        if agent.startswith("custom:") and process_result.status == "success":
+            try:
+                write_custom_final_output(
+                    judges / "single_events.jsonl",
+                    judge_final_path,
+                    parser=custom_spec.parser,
+                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
+                )
+                normalize_custom_events(
+                    judges / "single_events.jsonl", parser=custom_spec.parser, provider=custom_spec.id
+                )
+            except Exception as exc:
+                process_result = process_result.__class__(
+                    command=process_result.command,
+                    exit_code=process_result.exit_code,
+                    status="failed",
+                    timed_out=process_result.timed_out,
+                    started_at=process_result.started_at,
+                    ended_at=process_result.ended_at,
+                    duration_seconds=process_result.duration_seconds,
+                )
+                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
+                    f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
         if agent == "claude" and process_result.status == "success":
             try:
                 write_claude_final_output(
@@ -921,6 +999,7 @@ async def run_parallel_judges(
     launch_order: Sequence[Rubric],
     progress: BenchmarkProgress | None = None,
     run_task_id: str | None = None,
+    custom_spec: CustomRuntimeSpec | None = None,
 ) -> Dict[str, Any]:
     async def run_one(rubric: Rubric) -> None:
         async with semaphore:
@@ -931,7 +1010,14 @@ async def run_parallel_judges(
             judge_workspace = prepare_evaluator_workspace(paths, f"parallel_{rubric.id}")
             judge_final_path = judge_workspace / "result.json"
             prompt = build_parallel_judge_prompt(task, rubric)
-            if agent == "claude":
+            if agent.startswith("custom:"):
+                if custom_spec is None:
+                    raise ValueError(f"Custom runtime spec missing for {agent}")
+                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
+                command = build_custom_command(custom_spec, role="judge", model=model, prompt=prompt)
+                env = os.environ.copy()
+                env.update(custom_spec.env)
+            elif agent == "claude":
                 command = build_claude_print_command(
                     claude_bin,
                     cwd=judge_workspace,
@@ -987,18 +1073,46 @@ async def run_parallel_judges(
                     include_trace_config=False,
                 )
                 env = prepare_auth_home(paths["codex_home"] / f"judge_{rubric.id}", auth_mode)
+            prompt_over_stdin = not (
+                agent == "grok"
+                or (agent.startswith("custom:") and custom_spec is not None and custom_spec.prompt_via == "arg")
+            )
             process_result = await run_codex_process(
                 command,
                 cwd=judge_workspace,
-                prompt="" if agent == "grok" else append_claude_thinking_instruction(
+                prompt=append_claude_thinking_instruction(
                     prompt,
                     claude_thinking_effort if agent == "claude" else "none",
-                ),
+                ) if prompt_over_stdin else "",
                 env=env,
                 stdout_path=rubric_dir / "events.jsonl",
                 stderr_path=rubric_dir / "stderr.log",
                 timeout_seconds=timeout_seconds,
             )
+            if agent.startswith("custom:") and process_result.status == "success":
+                try:
+                    write_custom_final_output(
+                        rubric_dir / "events.jsonl",
+                        judge_final_path,
+                        parser=custom_spec.parser,
+                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
+                    )
+                    normalize_custom_events(
+                        rubric_dir / "events.jsonl", parser=custom_spec.parser, provider=custom_spec.id
+                    )
+                except Exception as exc:
+                    process_result = process_result.__class__(
+                        command=process_result.command,
+                        exit_code=process_result.exit_code,
+                        status="failed",
+                        timed_out=process_result.timed_out,
+                        started_at=process_result.started_at,
+                        ended_at=process_result.ended_at,
+                        duration_seconds=process_result.duration_seconds,
+                    )
+                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
+                        f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
+                    )
             if agent == "claude" and process_result.status == "success":
                 try:
                     write_claude_final_output(
@@ -1383,6 +1497,9 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "evaluator_auth_mode": args.evaluator_auth_mode,
         "executor_agent": args.executor_agent,
         "evaluator_agent": args.evaluator_agent,
+        "runtimes_dir": str(args.runtimes_dir),
+        "executor_runtime": args.executor_runtime_spec.public_metadata() if args.executor_runtime_spec else None,
+        "evaluator_runtime": args.evaluator_runtime_spec.public_metadata() if args.evaluator_runtime_spec else None,
         "claude_thinking_effort": args.claude_thinking_effort,
         "claude_max_turns": args.claude_max_turns,
         "opencode_provider": args.opencode_provider,
@@ -1473,6 +1590,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         executor_backend=args.executor_backend,
                         docker_bin=args.docker_bin,
                         docker_image=args.docker_image,
+                        custom_spec=args.executor_runtime_spec,
                     )
                 except Exception as exc:
                     # One crashing task must not abort the whole run.
@@ -1531,6 +1649,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                             timeout_seconds=args.evaluator_timeout_seconds,
                             executor_timing=executor_timing,
                             semaphore=evaluator_semaphore,
+                            custom_spec=args.evaluator_runtime_spec,
                         )
                     except Exception as exc:
                         modes["single"] = {
@@ -1575,6 +1694,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                             launch_order=rubric_order,
                             progress=progress,
                             run_task_id=record["run_task_id"],
+                            custom_spec=args.evaluator_runtime_spec,
                         )
                     except Exception as exc:
                         modes["parallel"] = {

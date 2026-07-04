@@ -1438,6 +1438,48 @@ class ClosedLoopTests(unittest.TestCase):
             executor_status = summary["batches"][0]["tasks"][0]["executor"]
             self.assertEqual(executor_status["status"], "failed")
 
+    def test_closed_loop_with_custom_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tasks_dir = tmp_path / "tasks"
+            runs_dir = tmp_path / "runs"
+            runtimes_dir = tmp_path / "runtimes"
+            runtimes_dir.mkdir()
+            shutil.copytree(DEMO_TASK, tasks_dir / "demo_python_cli")
+            fake_cli = self.make_fake_gemini(tmp_path)
+            (runtimes_dir / "fakecli.json").write_text(
+                json.dumps(
+                    {
+                        "id": "fakecli",
+                        "command": f"{sys.executable} {fake_cli}",
+                        "parser": "headless-json",
+                        "prompt_via": "stdin",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cmd = [
+                sys.executable, "-m", "starbench.runner.run_benchmark",
+                "--tasks-dir", str(tasks_dir), "--runs-dir", str(runs_dir),
+                "--runtimes-dir", str(runtimes_dir),
+                "--run-id", "custom_run", "--seed", "123",
+                "--judge-mode", "single", "--auth-mode", "global",
+                "--executor-agent", "custom:fakecli",
+                "--evaluator-agent", "custom:fakecli",
+                "--no-progress",
+            ]
+            completed = subprocess.run(cmd, cwd=ROOT, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+            task_root = runs_dir / "custom_run" / "demo_python_cli"
+            final = (task_root / "logs" / "final.md").read_text(encoding="utf-8")
+            self.assertIn("Created outputs/stellar_measure", final)
+            summary = json.loads((task_root / "logs" / "trace_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["agent_messages"][0]["text"], final)
+            aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
+            self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
+            run_config = json.loads((runs_dir / "custom_run" / "run_config.json").read_text(encoding="utf-8"))
+            self.assertEqual(run_config["executor_runtime"]["id"], "fakecli")
+
     def test_closed_loop_with_fake_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
