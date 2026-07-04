@@ -72,7 +72,12 @@ GPT/OpenAI-family models      -> --executor-agent/--evaluator-agent codex
 Other OpenAI-compatible models -> --executor-agent/--evaluator-agent opencode
 xAI Grok Build models         -> --executor-agent/--evaluator-agent grok
 Gemini CLI models             -> --executor-agent/--evaluator-agent gemini
+Any other headless agent CLI  -> --executor-agent/--evaluator-agent custom:<id>
 ```
+
+Custom runtimes are declarative: drop a `<id>.json` file in `runtimes/`
+(command, prompt delivery, output parser, env, optional docker image) and no
+Python changes are needed. See [runtimes/README.md](runtimes/README.md).
 
 To switch the evaluator, set both the evaluator model and evaluator runtime:
 

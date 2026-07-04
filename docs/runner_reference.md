@@ -74,6 +74,7 @@ Use this runtime convention:
 | Other OpenAI-compatible models, such as Doubao or Qwen | OpenCode, `--executor-agent opencode` / `--evaluator-agent opencode` |
 | xAI Grok Build models | Grok Build, `--executor-agent grok` / `--evaluator-agent grok` |
 | Gemini CLI models | Gemini CLI, `--executor-agent gemini` / `--evaluator-agent gemini` |
+| Any other headless agent CLI | Custom runtime, `--executor-agent custom:<id>` / `--evaluator-agent custom:<id>` |
 
 Codex is the default executor and evaluator runtime, and is the expected runtime for GPT/OpenAI-family models:
 
@@ -194,6 +195,24 @@ starbench-run \
 StarBench invokes Gemini with `--output-format json`, `--skip-trust`, and `-p ""` so the long StarBench prompt can still be sent on stdin. Executor runs use `--yolo`; evaluator runs use `--approval-mode plan`. Evaluators receive the JSON schema in the prompt, and StarBench extracts the final assistant response into `result.json`. Selected executor skills are installed under `./.gemini/skills/<skill-id>/` inside the isolated task workspace.
 
 Grok Build and Gemini CLI executor support currently requires `--executor-backend local`. Docker support is still Codex-only because the bundled Docker image installs Codex and mounts a `CODEX_HOME`.
+
+Custom runtimes plug in any other headless agent CLI through a declarative
+config file — no Python adapter:
+
+```bash
+starbench-run \
+  --executor-agent custom:qwen-code \
+  --evaluator-agent custom:qwen-code \
+  --runtimes-dir runtimes \
+  --executor-model qwen3-coder \
+  --evaluator-model qwen3-coder
+```
+
+`--runtimes-dir` (default `runtimes/`) holds one `<id>.json` per runtime
+declaring the command, prompt delivery (`stdin` or argv), one of three output
+parsers (`headless-json`, `jsonl-events`, `text`), static env, and an
+optional docker image. Configs are validated at argument parsing. Field
+reference and parser contracts: [runtimes/README.md](../runtimes/README.md).
 
 ## Judge Modes
 
