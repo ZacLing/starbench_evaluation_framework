@@ -767,6 +767,53 @@ class CustomRuntimeSpecTests(unittest.TestCase):
             command = build_custom_command(stdin_spec, role="executor", model="m2", prompt="ignored on argv")
             self.assertEqual(command, ["othercli"])
 
+    def test_custom_text_parser_writes_final_and_synthetic_events(self) -> None:
+        from starbench.runner.codex_process import normalize_custom_events, write_custom_final_output
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            stdout_path = tmp_path / "events.jsonl"
+            stdout_path.write_text("Built the deliverable.\nAll checks passed.\n", encoding="utf-8")
+            final_path = tmp_path / "final.md"
+            write_custom_final_output(stdout_path, final_path, parser="text")
+            self.assertEqual(final_path.read_text(encoding="utf-8"), "Built the deliverable.\nAll checks passed.")
+            normalize_custom_events(stdout_path, parser="text", provider="mycli")
+            summary = summarize_events(read_jsonl(stdout_path))
+            self.assertEqual(summary["agent_messages"][0]["text"], "Built the deliverable.\nAll checks passed.")
+
+    def test_custom_jsonl_events_parser_extracts_last_agent_message(self) -> None:
+        from starbench.runner.codex_process import write_custom_final_output
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            stdout_path = tmp_path / "events.jsonl"
+            stdout_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "item.completed", "item": {"type": "agent_message", "id": "m1", "text": "draft"}}),
+                        json.dumps({"type": "item.completed", "item": {"type": "agent_message", "id": "m2", "text": "final answer"}}),
+                        json.dumps({"type": "turn.completed", "usage": {"output_tokens": 3}}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            final_path = tmp_path / "final.md"
+            write_custom_final_output(stdout_path, final_path, parser="jsonl-events")
+            self.assertEqual(final_path.read_text(encoding="utf-8"), "final answer")
+
+    def test_custom_headless_json_parser_supports_schema_output(self) -> None:
+        from starbench.runner.codex_process import write_custom_final_output
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            stdout_path = tmp_path / "events.jsonl"
+            stdout_path.write_text(json.dumps({"response": "{\"results\": []}"}), encoding="utf-8")
+            final_path = tmp_path / "result.json"
+            schema_path = ROOT / "src" / "starbench" / "runner" / "schemas" / "single_result.schema.json"
+            write_custom_final_output(stdout_path, final_path, parser="headless-json", output_schema=schema_path)
+            self.assertEqual(json.loads(final_path.read_text(encoding="utf-8")), {"results": []})
+
     def test_load_custom_runtime_rejects_bad_configs(self) -> None:
         from starbench.runner.custom_runtime import load_custom_runtime
 

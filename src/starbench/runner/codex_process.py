@@ -772,6 +772,68 @@ def normalize_headless_events(stdout_path: Path, *, provider: str) -> None:
     )
 
 
+def _extract_last_agent_message_text(events_path: Path) -> str:
+    text: str | None = None
+    for event in _read_jsonl_events(events_path):
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            candidate = item.get("text")
+            if isinstance(candidate, str) and candidate.strip():
+                text = candidate
+    if text is None:
+        raise ValueError("JSONL events output did not include an agent_message with text")
+    return text
+
+
+def write_custom_final_output(
+    stdout_path: Path,
+    final_path: Path,
+    *,
+    parser: str,
+    output_schema: Path | None = None,
+) -> None:
+    if parser == "headless-json":
+        write_headless_final_output(stdout_path, final_path, output_schema=output_schema)
+        return
+    if parser == "jsonl-events":
+        text = _extract_last_agent_message_text(stdout_path)
+    elif parser == "text":
+        text = stdout_path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise ValueError("Custom text runtime produced empty stdout")
+    else:
+        raise ValueError(f"Unknown custom runtime parser: {parser}")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_schema is None:
+        final_path.write_text(text, encoding="utf-8")
+        return
+    structured = _extract_json_object(text)
+    final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def normalize_custom_events(stdout_path: Path, *, parser: str, provider: str) -> None:
+    if parser == "headless-json":
+        normalize_headless_events(stdout_path, provider=provider)
+        return
+    if parser == "jsonl-events":
+        return
+    if parser != "text":
+        raise ValueError(f"Unknown custom runtime parser: {parser}")
+    raw = stdout_path.read_text(encoding="utf-8")
+    events = [
+        {"type": f"{provider}.raw", "payload": {"stdout": raw}},
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "id": f"{provider}-final", "text": raw.strip()},
+        },
+        {"type": "turn.completed", "usage": None},
+    ]
+    stdout_path.write_text(
+        "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+
 def build_docker_codex_command(
     *,
     docker_bin: str,
