@@ -734,6 +734,39 @@ class CustomRuntimeSpecTests(unittest.TestCase):
             self.assertEqual(spec.docker_image, "starbench-qwen:latest")
             self.assertEqual(spec.docker_env_passthrough, ["OPENAI_API_KEY"])
 
+    def test_build_custom_command_covers_prompt_modes_and_judge_args(self) -> None:
+        from starbench.runner.codex_process import build_custom_command
+        from starbench.runner.custom_runtime import load_custom_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "runtimes"
+            self.write_runtime(
+                root,
+                "argy",
+                {
+                    "id": "argy",
+                    "command": "mycli run",
+                    "args": ["--json"],
+                    "judge_args": ["--json", "--read-only"],
+                    "model_flag": "--model",
+                    "prompt_via": "arg",
+                    "prompt_flag": "-p",
+                    "parser": "text",
+                },
+            )
+            spec = load_custom_runtime(root, "argy")
+            executor = build_custom_command(spec, role="executor", model="m1", prompt="do the task")
+            self.assertEqual(executor, ["mycli", "run", "--json", "--model", "m1", "-p", "do the task"])
+            judge = build_custom_command(spec, role="judge", model=None, prompt="judge it")
+            self.assertEqual(judge, ["mycli", "run", "--json", "--read-only", "-p", "judge it"])
+
+            self.write_runtime(
+                root, "stdiny", {"id": "stdiny", "command": "othercli", "parser": "text"}
+            )
+            stdin_spec = load_custom_runtime(root, "stdiny")
+            command = build_custom_command(stdin_spec, role="executor", model="m2", prompt="ignored on argv")
+            self.assertEqual(command, ["othercli"])
+
     def test_load_custom_runtime_rejects_bad_configs(self) -> None:
         from starbench.runner.custom_runtime import load_custom_runtime
 

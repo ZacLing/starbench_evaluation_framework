@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from .custom_runtime import CustomRuntimeSpec
 from .models import ProcessResult
 
 
@@ -200,6 +201,24 @@ def build_gemini_headless_command(
     elif approval_mode:
         command.extend(["--approval-mode", approval_mode])
     command.extend(["-p", prompt])
+    return command
+
+
+def build_custom_command(
+    spec: CustomRuntimeSpec,
+    *,
+    role: str,
+    model: str | None,
+    prompt: str,
+) -> List[str]:
+    if role not in {"executor", "judge"}:
+        raise ValueError(f"Unknown custom runtime role: {role}")
+    command = split_command(spec.command)
+    command.extend(spec.judge_args if role == "judge" else spec.args)
+    if model and spec.model_flag:
+        command.extend([spec.model_flag, model])
+    if spec.prompt_via == "arg":
+        command.extend([spec.prompt_flag, prompt])
     return command
 
 
