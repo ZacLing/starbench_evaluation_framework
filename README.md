@@ -2,7 +2,7 @@
 
 Starbench is a small benchmark runner for evaluating coding-agent CLIs with rubric judges.
 
-It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Codex executors run in a Docker workspace by default (Docker isolation is currently Codex-only; other runtimes run host-local), while evaluators inspect only the delivered package, trace summaries, and rubrics.
+It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Codex executors run in a Docker workspace by default; Claude Code and docker-enabled custom runtimes can opt into Docker, other runtimes run host-local. Evaluators inspect only the delivered package, trace summaries, and rubrics.
 
 ## What Is Included
 

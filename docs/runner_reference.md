@@ -230,7 +230,17 @@ Control evaluator concurrency:
 
 ## Executor Backend
 
-The default follows the executor runtime: `docker` for Codex, `local` for Claude Code, OpenCode, Grok Build, and Gemini CLI (Docker isolation is currently Codex-only, and selecting `--executor-backend docker` with a non-Codex runtime is rejected at argument parsing).
+The default follows the executor runtime: `docker` for Codex, `local` for all other runtimes. Docker can be selected explicitly for Codex, Claude Code, and custom runtimes that declare a `docker` section; other combinations are rejected at argument parsing.
+
+```bash
+# Claude Code in Docker (auth via environment):
+docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
+starbench-run \
+  --executor-agent claude \
+  --executor-backend docker \
+  --docker-image starbench-claude-code:latest \
+  --executor-auth-mode env
+```
 
 ```bash
 --executor-backend docker   # codex default
