@@ -30,6 +30,7 @@ from .codex_process import (
     prepare_auth_home,
     run_codex_process,
     run_codex_process_in_docker,
+    run_custom_process_in_docker,
     write_claude_final_output,
     write_claude_stream_final_output,
     write_headless_final_output,
@@ -488,10 +489,11 @@ async def run_executor(
 ) -> Dict[str, Any]:
     task = task_run.task
     logs = paths["logs"]
-    if (
-        agent in {"claude", "opencode", "grok", "gemini"} or agent.startswith("custom:")
-    ) and executor_backend != "local":
+    if agent in {"claude", "opencode", "grok", "gemini"} and executor_backend != "local":
         raise ValueError(f"{agent} executor currently supports --executor-backend local")
+    if agent.startswith("custom:") and executor_backend != "local":
+        if custom_spec is None or custom_spec.docker_image is None:
+            raise ValueError(f"{agent} executor requires a docker section for --executor-backend docker")
 
     if agent.startswith("custom:"):
         if custom_spec is None:
@@ -499,18 +501,30 @@ async def run_executor(
         prompt_text = build_executor_prompt(
             task_run, executor_skill_location=executor_skill_prompt_location(agent)
         )
-        command = build_custom_command(custom_spec, role="executor", model=model, prompt=prompt_text)
-        env = os.environ.copy()
-        env.update(custom_spec.env)
-        result = await run_codex_process(
-            command,
-            cwd=paths["workspace"],
-            prompt=prompt_text if custom_spec.prompt_via == "stdin" else "",
-            env=env,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            timeout_seconds=task.timeout_seconds,
-        )
+        if executor_backend == "docker":
+            result = await run_custom_process_in_docker(
+                custom_spec,
+                docker_bin=docker_bin,
+                workspace=paths["workspace"],
+                prompt=prompt_text,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+                model=model,
+            )
+        else:
+            command = build_custom_command(custom_spec, role="executor", model=model, prompt=prompt_text)
+            env = os.environ.copy()
+            env.update(custom_spec.env)
+            result = await run_codex_process(
+                command,
+                cwd=paths["workspace"],
+                prompt=prompt_text if custom_spec.prompt_via == "stdin" else "",
+                env=env,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+            )
         if result.status == "success":
             try:
                 write_custom_final_output(logs / "events.jsonl", logs / "final.md", parser=custom_spec.parser)
@@ -1953,12 +1967,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     args.executor_runtime_spec = resolve_runtime_spec(args.executor_agent, "--executor-agent")
     args.evaluator_runtime_spec = resolve_runtime_spec(args.evaluator_agent, "--evaluator-agent")
+    def backend_supports_docker(agent: str, spec: CustomRuntimeSpec | None) -> bool:
+        if agent == "codex":
+            return True
+        return agent.startswith("custom:") and spec is not None and spec.docker_image is not None
+
     if args.executor_backend is None:
         args.executor_backend = "docker" if args.executor_agent == "codex" else "local"
-    elif args.executor_backend == "docker" and args.executor_agent != "codex":
+    elif args.executor_backend == "docker" and not backend_supports_docker(
+        args.executor_agent, args.executor_runtime_spec
+    ):
         parser.error(
             f"--executor-agent {args.executor_agent} currently requires --executor-backend local; "
-            "Docker isolation is Codex-only for now."
+            "Docker isolation supports codex or a custom runtime with a docker section."
         )
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode

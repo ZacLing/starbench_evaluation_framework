@@ -834,18 +834,19 @@ def normalize_custom_events(stdout_path: Path, *, parser: str, provider: str) ->
     )
 
 
-def build_docker_codex_command(
+def build_docker_agent_command(
     *,
     docker_bin: str,
     docker_image: str,
     workspace: Path,
-    codex_home: Path,
     inner_command: Iterable[str],
+    env_whitelist: List[str],
     auth_env: Dict[str, str],
     container_name: str | None = None,
+    extra_mounts: Dict[str, str] | None = None,
+    extra_env: Dict[str, str] | None = None,
 ) -> List[str]:
     workspace = workspace.resolve()
-    codex_home = codex_home.resolve()
     command = split_command(docker_bin)
     command.append("run")
     if container_name:
@@ -868,20 +869,42 @@ def build_docker_codex_command(
             "/tmp:rw,nosuid,nodev,size=1g",
             "--mount",
             f"type=bind,src={workspace},dst=/workspace",
-            "--mount",
-            f"type=bind,src={codex_home},dst=/codex-home",
-            "-w",
-            "/workspace",
-            "-e",
-            "CODEX_HOME=/codex-home",
         ]
     )
-    for key in ("CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"):
+    for host_path, container_path in (extra_mounts or {}).items():
+        command.extend(["--mount", f"type=bind,src={Path(host_path).resolve()},dst={container_path}"])
+    command.extend(["-w", "/workspace"])
+    for key, value in (extra_env or {}).items():
+        command.extend(["-e", f"{key}={value}"])
+    for key in env_whitelist:
         if auth_env.get(key):
             command.extend(["-e", key])
     command.append(docker_image)
     command.extend(inner_command)
     return command
+
+
+def build_docker_codex_command(
+    *,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    codex_home: Path,
+    inner_command: Iterable[str],
+    auth_env: Dict[str, str],
+    container_name: str | None = None,
+) -> List[str]:
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"],
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_mounts={str(codex_home.resolve()): "/codex-home"},
+        extra_env={"CODEX_HOME": "/codex-home"},
+    )
 
 
 async def _pump_stream(stream: asyncio.StreamReader, path: Path) -> None:
@@ -1025,4 +1048,49 @@ async def run_codex_process_in_docker(
     if container_final_on_host.exists():
         host_final_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(container_final_on_host, host_final_path)
+    return result
+
+
+async def run_custom_process_in_docker(
+    spec: CustomRuntimeSpec,
+    *,
+    docker_bin: str,
+    workspace: Path,
+    prompt: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    model: str | None = None,
+) -> ProcessResult:
+    if not spec.docker_image:
+        raise ValueError(f"Custom runtime {spec.id} has no docker image configured")
+    inner_command = build_custom_command(spec, role="executor", model=model, prompt=prompt)
+    auth_env = os.environ.copy()
+    auth_env.update(spec.env)
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
+    command = build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=spec.docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=list(spec.docker_env_passthrough),
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_env=dict(spec.env),
+    )
+    result = await run_codex_process(
+        command,
+        cwd=workspace,
+        prompt=prompt if spec.prompt_via == "stdin" else "",
+        env=auth_env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+    if result.timed_out:
+        subprocess.run(
+            split_command(docker_bin) + ["kill", container_name],
+            check=False,
+            capture_output=True,
+        )
     return result

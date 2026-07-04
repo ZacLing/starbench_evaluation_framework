@@ -846,6 +846,70 @@ class CustomRuntimeSpecTests(unittest.TestCase):
                      "--executor-agent", "franken-cli"]
                 )
 
+    def test_generic_docker_command_uses_whitelist_and_mounts(self) -> None:
+        from starbench.runner.codex_process import build_docker_agent_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            command = build_docker_agent_command(
+                docker_bin="docker",
+                docker_image="starbench-qwen:latest",
+                workspace=tmp_path,
+                inner_command=["qwen", "--yolo"],
+                env_whitelist=["OPENAI_API_KEY", "UNSET_VAR"],
+                auth_env={"OPENAI_API_KEY": "x"},
+                container_name="starbench-custom-1",
+                extra_env={"HOME": "/tmp"},
+            )
+            self.assertIn("starbench-qwen:latest", command)
+            self.assertIn("OPENAI_API_KEY", command)
+            self.assertNotIn("UNSET_VAR", command)
+            self.assertIn("HOME=/tmp", command)
+            name_index = command.index("--name")
+            self.assertEqual(command[name_index + 1], "starbench-custom-1")
+            self.assertEqual(command[-2:], ["qwen", "--yolo"])
+
+    def test_codex_docker_command_unchanged_by_extraction(self) -> None:
+        from starbench.runner.codex_process import build_docker_codex_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            command = build_docker_codex_command(
+                docker_bin="docker",
+                docker_image="starbench-codex:latest",
+                workspace=tmp_path,
+                codex_home=tmp_path,
+                inner_command=["codex", "exec"],
+                auth_env={"OPENAI_API_KEY": "x"},
+                container_name="starbench-abc",
+            )
+            self.assertIn("CODEX_HOME=/codex-home", command)
+            self.assertIn("--read-only", command)
+            self.assertIn("OPENAI_API_KEY", command)
+
+    def test_parse_args_allows_docker_for_docker_enabled_custom_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            root = tmp_path / "runtimes"
+            self.write_runtime(
+                root, "dockery",
+                {"id": "dockery", "command": "x", "parser": "text",
+                 "docker": {"image": "img:latest", "env_passthrough": ["OPENAI_API_KEY"]}},
+            )
+            self.write_runtime(root, "plain", {"id": "plain", "command": "x", "parser": "text"})
+            args = parse_args(
+                ["--tasks-dir", str(tmp_path), "--runs-dir", str(tmp_path),
+                 "--runtimes-dir", str(root),
+                 "--executor-agent", "custom:dockery", "--executor-backend", "docker"]
+            )
+            self.assertEqual(args.executor_backend, "docker")
+            with self.assertRaises(SystemExit):
+                parse_args(
+                    ["--tasks-dir", str(tmp_path), "--runs-dir", str(tmp_path),
+                     "--runtimes-dir", str(root),
+                     "--executor-agent", "custom:plain", "--executor-backend", "docker"]
+                )
+
     def test_load_custom_runtime_rejects_bad_configs(self) -> None:
         from starbench.runner.custom_runtime import load_custom_runtime
 
