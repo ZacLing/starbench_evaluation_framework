@@ -1,6 +1,8 @@
 # Docker Isolation
 
-Starbench uses Docker as the default executor backend.
+Starbench uses Docker as the default executor backend for the Codex runtime. Docker isolation is currently Codex-only: Claude Code, OpenCode, Grok Build, and Gemini CLI executors default to `--executor-backend local` and run on the host.
+
+On executor timeout, Starbench kills the container itself (killing only the `docker run` client would leave the container running and still writing into the mounted workspace).
 
 ## Build
 

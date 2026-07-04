@@ -2,7 +2,7 @@
 
 Starbench is a small benchmark runner for evaluating coding-agent CLIs with rubric judges.
 
-It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Executors can run in a Docker workspace by default, while evaluators inspect only the delivered package, trace summaries, and rubrics.
+It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Codex executors run in a Docker workspace by default (Docker isolation is currently Codex-only; other runtimes run host-local), while evaluators inspect only the delivered package, trace summaries, and rubrics.
 
 ## What Is Included
 
@@ -99,9 +99,7 @@ PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
   --run-id smoke_claude \
   --executor-agent claude \
   --evaluator-agent claude \
-  --claude-bin "$(pwd)/tmp/claude-code-docker.sh" \
   --auth-mode env \
-  --executor-backend local \
   --executor-model claude-opus-4-8 \
   --evaluator-model claude-opus-4-8 \
   --judge-mode single
