@@ -697,6 +697,61 @@ class SkillDistillerTests(unittest.TestCase):
             self.assertEqual(load_registry_skills(tmp_path / "executor_skills")[0].id, "empirical-measurement-governance-expert")
 
 
+class CustomRuntimeSpecTests(unittest.TestCase):
+    def write_runtime(self, root: Path, runtime_id: str, data: dict) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"{runtime_id}.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path
+
+    def test_load_custom_runtime_parses_fields_and_defaults(self) -> None:
+        from starbench.runner.custom_runtime import load_custom_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "runtimes"
+            self.write_runtime(
+                root,
+                "qwen-code",
+                {
+                    "id": "qwen-code",
+                    "command": "qwen --experimental",
+                    "args": ["--output-format", "json", "--yolo"],
+                    "model_flag": "-m",
+                    "parser": "headless-json",
+                    "docker": {"image": "starbench-qwen:latest", "env_passthrough": ["OPENAI_API_KEY"]},
+                },
+            )
+            spec = load_custom_runtime(root, "qwen-code")
+            self.assertEqual(spec.id, "qwen-code")
+            self.assertEqual(spec.command, "qwen --experimental")
+            self.assertEqual(spec.args, ["--output-format", "json", "--yolo"])
+            self.assertEqual(spec.judge_args, spec.args)
+            self.assertEqual(spec.model_flag, "-m")
+            self.assertEqual(spec.prompt_via, "stdin")
+            self.assertEqual(spec.prompt_flag, "-p")
+            self.assertEqual(spec.parser, "headless-json")
+            self.assertEqual(spec.env, {})
+            self.assertEqual(spec.docker_image, "starbench-qwen:latest")
+            self.assertEqual(spec.docker_env_passthrough, ["OPENAI_API_KEY"])
+
+    def test_load_custom_runtime_rejects_bad_configs(self) -> None:
+        from starbench.runner.custom_runtime import load_custom_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "runtimes"
+            with self.assertRaises(ValueError):
+                load_custom_runtime(root, "missing")
+            self.write_runtime(root, "bad-parser", {"id": "bad-parser", "command": "x", "parser": "yaml"})
+            with self.assertRaises(ValueError):
+                load_custom_runtime(root, "bad-parser")
+            self.write_runtime(root, "bad-via", {"id": "bad-via", "command": "x", "parser": "text", "prompt_via": "file"})
+            with self.assertRaises(ValueError):
+                load_custom_runtime(root, "bad-via")
+            self.write_runtime(root, "mismatch", {"id": "other", "command": "x", "parser": "text"})
+            with self.assertRaises(ValueError):
+                load_custom_runtime(root, "mismatch")
+
+
 class RegressionFixTests(unittest.TestCase):
     def test_default_docker_image_matches_documented_build_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
