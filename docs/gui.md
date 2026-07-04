@@ -8,8 +8,11 @@ disappears from the console; copy one in and it shows up.
 ## The experiment model
 
 The console's unit of work is the **experiment**: a fixed task set and one shared
-judge (the controls) compared across multiple **contender** runtimes (the
-variable). Launching an experiment orchestrates one plain `starbench-run` per
+judge (the controls) compared across multiple **contender agent runtimes** (the
+variable). The contenders are the coding-agent CLIs under test — Claude Code,
+Codex, Gemini CLI, Grok Build, OpenCode — each configured with a model drawn
+from an AI provider; the model is configuration, the runtime is the subject
+being measured. Launching an experiment orchestrates one plain `starbench-run` per
 contender with identical tasks, judge, and seed, and records the grouping in
 `<runs-dir>/experiments/<id>.json`. **Profiles** (`<runs-dir>/profiles.json`)
 store the shared configuration plus a declaration of which fields each contender
@@ -62,8 +65,8 @@ single-operator tool; do not expose it to a network.
   comparison matrix built from single-judge results, refreshed live while runs
   are in flight.
 - **New experiment** — a four-step wizard: pick tasks; add contender runtimes
-  (model-family cards with brand icons; the runtime is mapped automatically);
-  review the shared configuration from the active profile (judge, environment,
+  from runtime cards (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode) and
+  configure each with a provider + model; review the shared configuration from the active profile (judge, environment,
   seed/batch/repeat, per-contender field declaration) and optionally save it
   back; review the full launch plan (one command per contender) and launch.
   The judge is always explicit, and the console warns when it equals a

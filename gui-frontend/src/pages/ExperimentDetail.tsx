@@ -11,8 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { FamilyIcon } from "@/components/brand"
-import { AGENT_TO_FAMILY } from "@/components/brand"
+import { AGENT_LABELS, AgentIcon } from "@/components/brand"
 import { StatusBadge, PassSummaryBadge } from "@/components/verdict"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type ExperimentDetail as ExperimentDetailData, type MatrixCell } from "@/lib/api"
@@ -89,13 +88,14 @@ export default function ExperimentDetail() {
                             className="inline-flex items-center gap-1.5"
                             title={`${contender.label} (${contender.run_id})`}
                           >
-                            <FamilyIcon
-                              family={AGENT_TO_FAMILY[contender.agent] ?? "compat"}
-                              model={contender.model}
-                              size={15}
-                            />
-                            <span className="max-w-32 truncate font-mono text-xs normal-case">
-                              {contender.model || contender.agent}
+                            <AgentIcon agent={contender.agent} size={15} />
+                            <span className="grid justify-items-start normal-case">
+                              <span className="text-xs font-semibold">
+                                {AGENT_LABELS[contender.agent] ?? contender.agent}
+                              </span>
+                              <span className="max-w-32 truncate font-mono text-[10px] font-normal text-muted-foreground">
+                                {contender.model || "runtime default"}
+                              </span>
                             </span>
                           </span>
                         </TableHead>
@@ -147,14 +147,18 @@ function ContenderCard({
     <Card className="py-4">
       <CardContent className="grid gap-2 px-4">
         <div className="flex items-center gap-2">
-          <FamilyIcon family={AGENT_TO_FAMILY[contender.agent] ?? "compat"} model={contender.model} size={20} />
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
-            {contender.model || contender.agent}
+          <AgentIcon agent={contender.agent} size={20} />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-semibold">
+              {AGENT_LABELS[contender.agent] ?? contender.agent}
+            </span>
+            <span className="block truncate font-mono text-xs text-muted-foreground">
+              {contender.model || "runtime default"}
+            </span>
           </span>
           {run ? <StatusBadge status={run.status} /> : <Badge variant="secondary">missing</Badge>}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className="font-mono">{contender.agent}</span>
           <Badge variant="outline" className="text-[10px] text-muted-foreground">
             {contender.backend}
           </Badge>

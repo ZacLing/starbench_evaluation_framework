@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ExecutorStatsInline, PassSummaryBadge, StatusBadge } from "@/components/verdict"
-import { AGENT_TO_FAMILY, FamilyIcon } from "@/components/brand"
+import { AGENT_LABELS, AgentIcon } from "@/components/brand"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type RunOverview } from "@/lib/api"
 import { fmtTime, spanBetween } from "@/lib/format"
@@ -273,13 +273,16 @@ function ExperimentsSection() {
                     ) as RunOverview | undefined
                     return (
                       <div key={contender.run_id} className="flex items-center gap-2 text-xs">
-                        <FamilyIcon
-                          family={AGENT_TO_FAMILY[contender.agent] ?? "compat"}
-                          model={contender.model}
-                          size={14}
-                        />
-                        <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
-                          {contender.model || contender.agent}
+                        <AgentIcon agent={contender.agent} size={14} />
+                        <span className="min-w-0 flex-1 truncate">
+                          <span className="font-medium">
+                            {AGENT_LABELS[contender.agent] ?? contender.agent}
+                          </span>
+                          {contender.model && (
+                            <span className="ml-1 font-mono text-muted-foreground">
+                              {contender.model}
+                            </span>
+                          )}
                         </span>
                         {run && run.judge_totals ? (
                           <PassSummaryBadge
@@ -330,9 +333,9 @@ function ModelCell({ agent, model }: { agent: string | null; model: string | nul
   if (!agent) return <span className="text-muted-foreground">–</span>
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <FamilyIcon family={AGENT_TO_FAMILY[agent] ?? "compat"} model={model ?? undefined} size={18} />
+      <AgentIcon agent={agent} size={18} />
       <div className="min-w-0">
-        <div className="text-sm">{agent}</div>
+        <div className="text-sm">{AGENT_LABELS[agent] ?? agent}</div>
         {model && <div className="truncate font-mono text-xs text-muted-foreground">{model}</div>}
       </div>
     </div>

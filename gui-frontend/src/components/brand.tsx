@@ -2,6 +2,7 @@ import {
   Anthropic,
   Claude,
   ClaudeCode,
+  Codex,
   DeepSeek,
   Doubao,
   Gemini,
@@ -60,12 +61,30 @@ export function FamilyIcon({
   }
 }
 
+/* The contenders of every experiment are agent runtimes: full coding-agent
+   CLIs (harness + tools + prompts + model), not bare models. */
+export const AGENT_LABELS: Record<string, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  gemini: "Gemini CLI",
+  grok: "Grok Build",
+  opencode: "OpenCode",
+}
+
+export const AGENT_NOTES: Record<string, string> = {
+  claude: "Anthropic's coding agent",
+  codex: "OpenAI's coding agent",
+  gemini: "Google's coding agent",
+  grok: "xAI's coding agent",
+  opencode: "Open-source agent for OpenAI-compatible models",
+}
+
 export function AgentIcon({ agent, size = 20 }: { agent: string; size?: number }) {
   switch (agent) {
     case "claude":
       return <ClaudeCode size={size} />
     case "codex":
-      return <OpenAI size={size} />
+      return <Codex size={size} />
     case "gemini":
       return <GeminiCLI.Color size={size} />
     case "grok":

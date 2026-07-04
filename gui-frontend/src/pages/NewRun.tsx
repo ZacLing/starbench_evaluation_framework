@@ -38,7 +38,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
-import { AGENT_TO_FAMILY, FamilyIcon, ProviderIcon } from "@/components/brand"
+import { AGENT_LABELS, AGENT_NOTES, AgentIcon } from "@/components/brand"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/pages/Dashboard"
 import {
@@ -66,8 +66,12 @@ const PER_FIELD_OPTIONS = [
 
 const STEPS = ["Tasks", "Contenders", "Shared config", "Review & launch"]
 
+/* A contender IS an agent runtime; provider+model is its configuration. */
+const RUNTIMES = ["claude", "codex", "gemini", "grok", "opencode"] as const
+
 interface ContenderDraft {
   key: string
+  runtime: string
   provider_id: string
   model: string
   thinking_effort: string
@@ -163,14 +167,17 @@ export default function NewRun() {
     [],
   )
 
-  const addContender = (provider: AiProvider) => {
+  const addContender = (runtime: string) => {
     contenderCounter += 1
+    const compatible = providers.filter((item) => item.agent === runtime)
+    const provider = compatible.find((item) => item.models.length) ?? compatible[0]
     setContenders((current) => [
       ...current,
       {
         key: `c${contenderCounter}`,
-        provider_id: provider.id,
-        model: provider.models[0] ?? "",
+        runtime,
+        provider_id: provider?.id ?? "",
+        model: provider?.models[0] ?? "",
         thinking_effort: "none",
       },
     ])
@@ -188,8 +195,8 @@ export default function NewRun() {
       const settings = providerSettings(provider)
       return [
         {
-          label: `${provider.name} ${draft.model || "default"}`.trim(),
-          agent: provider.agent,
+          label: `${AGENT_LABELS[draft.runtime] ?? draft.runtime} ${draft.model || "default"}`.trim(),
+          agent: draft.runtime,
           model: draft.model.trim(),
           auth_mode: settings.auth_mode,
           thinking_effort: perFields.includes("thinking_effort") ? draft.thinking_effort : "none",
@@ -276,7 +283,7 @@ export default function NewRun() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">New experiment</h1>
         <p className="text-sm text-muted-foreground">
-          One task set, one judge, many contender models: comparable by construction.
+          One task set, one judge, many contender agent runtimes: comparable by construction.
         </p>
       </div>
 
@@ -332,10 +339,7 @@ export default function NewRun() {
           perFields={perFields}
           setPerFields={setPerFields}
           judgeConflicts={judgeConflicts.length}
-          hasNonCodex={contenders.some((draft) => {
-            const provider = providers.find((item) => item.id === draft.provider_id)
-            return provider ? provider.agent !== "codex" : false
-          })}
+          hasNonCodex={contenders.some((draft) => draft.runtime !== "codex")}
         />
       )}
       {step === 3 && (
@@ -549,7 +553,7 @@ function StepContenders({
   contenders: ContenderDraft[]
   perFields: string[]
   backend: string
-  onAdd: (provider: AiProvider) => void
+  onAdd: (runtime: string) => void
   onUpdate: (key: string, patch: Partial<ContenderDraft>) => void
   onRemove: (key: string) => void
 }) {
@@ -558,37 +562,39 @@ function StepContenders({
       <Card>
         <CardContent className="grid gap-3">
           <div>
-            <Label>Add contenders from your AI providers</Label>
+            <Label>Add contender agent runtimes</Label>
             <p className="text-xs text-muted-foreground">
-              Endpoint, credentials, and model catalog come from the provider; every contender
-              runs the same tasks under the same judge.
+              The contenders are the coding agents under test. Each one is configured with a
+              model from your AI providers and runs the same tasks under the same judge.
             </p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {providers.map((provider) => (
-              <button
-                key={provider.id}
-                type="button"
-                onClick={() => onAdd(provider)}
-                className="grid justify-items-center gap-1.5 rounded-md border p-3 text-center transition-colors hover:border-primary/50 hover:bg-accent/40"
-              >
-                <ProviderIcon provider={provider} size={24} />
-                <span className="text-sm font-medium">{provider.name}</span>
-                <span className="text-[11px] leading-tight text-muted-foreground">
-                  {provider.models.length
-                    ? `${provider.models.length} models`
-                    : "no catalog yet"}
-                  {provider.auth === "cli_login"
-                    ? " · CLI login"
-                    : provider.key_present
-                      ? ""
-                      : " · key missing"}
-                </span>
-                <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary">
-                  <Plus className="size-3" /> Add
-                </span>
-              </button>
-            ))}
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {RUNTIMES.map((runtime) => {
+              const compatible = providers.filter((item) => item.agent === runtime)
+              const modelCount = compatible.reduce((sum, item) => sum + item.models.length, 0)
+              return (
+                <button
+                  key={runtime}
+                  type="button"
+                  onClick={() => onAdd(runtime)}
+                  className="grid justify-items-center gap-1.5 rounded-md border p-3 text-center transition-colors hover:border-primary/50 hover:bg-accent/40"
+                >
+                  <AgentIcon agent={runtime} size={26} />
+                  <span className="text-sm font-medium">{AGENT_LABELS[runtime]}</span>
+                  <span className="text-[11px] leading-tight text-muted-foreground">
+                    {AGENT_NOTES[runtime]}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">
+                    {compatible.length
+                      ? `${modelCount} models from ${compatible.length} provider${compatible.length > 1 ? "s" : ""}`
+                      : "no provider configured"}
+                  </span>
+                  <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary">
+                    <Plus className="size-3" /> Add
+                  </span>
+                </button>
+              )
+            })}
           </div>
         </CardContent>
       </Card>
@@ -610,7 +616,7 @@ function StepContenders({
         </div>
       ) : (
         <p className="text-center text-sm text-muted-foreground">
-          No contenders yet. Add at least one above.
+          No contenders yet. Add at least one runtime above.
         </p>
       )}
     </div>
@@ -635,24 +641,17 @@ function ContenderCard({
   onRemove: () => void
 }) {
   const provider = providers.find((item) => item.id === draft.provider_id)
-  const dockerDowngraded = backend === "docker" && provider?.agent !== "codex"
+  const dockerDowngraded = backend === "docker" && draft.runtime !== "codex"
+  const hasCompatibleProvider = providers.some((item) => item.agent === draft.runtime)
   return (
     <Card className="py-4">
       <CardContent className="grid gap-3 px-4">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-muted-foreground">#{index + 1}</span>
-          <ProviderModelPicker
-            providerId={draft.provider_id}
-            model={draft.model}
-            onChange={({ provider: next, model }) =>
-              onUpdate({ provider_id: next.id, model })
-            }
-          />
-          {provider && (
-            <Badge variant="outline" className="font-mono text-[11px] text-muted-foreground">
-              {provider.agent}
-            </Badge>
-          )}
+          <span className="flex items-center gap-2">
+            <AgentIcon agent={draft.runtime} size={22} />
+            <span className="text-sm font-semibold">{AGENT_LABELS[draft.runtime]}</span>
+          </span>
           {provider?.auth === "cli_login" && (
             <Badge variant="outline" className="text-[11px] text-muted-foreground">
               CLI login
@@ -673,7 +672,24 @@ function ContenderCard({
             <Trash2 className="size-4" />
           </Button>
         </div>
-        {perFields.includes("thinking_effort") && provider?.agent === "claude" && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Model</Label>
+          {hasCompatibleProvider ? (
+            <ProviderModelPicker
+              agent={draft.runtime}
+              providerId={draft.provider_id}
+              model={draft.model}
+              onChange={({ provider: next, model }) =>
+                onUpdate({ provider_id: next.id, model })
+              }
+            />
+          ) : (
+            <span className="text-xs text-warn-ink">
+              No provider is configured for this runtime — add one on the AI providers page.
+            </span>
+          )}
+        </div>
+        {perFields.includes("thinking_effort") && draft.runtime === "claude" && (
           <div className="flex items-center gap-2">
             <Label className="text-xs text-muted-foreground">Thinking effort</Label>
             <RadioGroup
@@ -1083,12 +1099,13 @@ function StepReview({
             {plan.plans.map((item) => (
               <div key={item.run_id} className="grid gap-1 px-4 py-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <FamilyIcon
-                    family={AGENT_TO_FAMILY[item.agent] ?? "compat"}
-                    model={item.model}
-                    size={18}
-                  />
-                  <span className="text-sm font-medium">{item.label}</span>
+                  <AgentIcon agent={item.agent} size={18} />
+                  <span className="text-sm font-medium">
+                    {AGENT_LABELS[item.agent] ?? item.agent}
+                  </span>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {item.model || "runtime default"}
+                  </span>
                   <code className="font-mono text-xs text-muted-foreground">{item.run_id}</code>
                   <Badge variant="outline" className="text-[11px] text-muted-foreground">
                     {item.backend}

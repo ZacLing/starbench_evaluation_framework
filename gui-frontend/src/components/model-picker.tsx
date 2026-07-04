@@ -18,13 +18,18 @@ export function ProviderModelPicker({
   providerId,
   model,
   onChange,
+  agent,
 }: {
   providerId?: string
   model: string
   onChange: (value: { provider: AiProvider; model: string }) => void
+  /** Restrict the provider list to providers compatible with this runtime. */
+  agent?: string
 }) {
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
-  const providers = providersQuery.data?.providers ?? []
+  const providers = (providersQuery.data?.providers ?? []).filter(
+    (item) => !agent || item.agent === agent,
+  )
   const provider = providers.find((item) => item.id === providerId)
 
   return (
