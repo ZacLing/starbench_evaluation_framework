@@ -7,6 +7,7 @@ import subprocess
 import shlex
 import shutil
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -113,9 +114,13 @@ def build_claude_print_command(
     permission_mode: str | None = None,
     allowed_tools: str | None = None,
     max_turns: int | None = None,
+    output_format: str = "json",
 ) -> List[str]:
     command = split_command(claude_bin)
-    command.extend(["-p", "--output-format", "json", "--no-session-persistence"])
+    command.extend(["-p", "--output-format", output_format, "--no-session-persistence"])
+    if output_format == "stream-json":
+        # Claude Code print mode requires --verbose for stream-json output.
+        command.append("--verbose")
     if model:
         command.extend(["--model", model])
     if permission_mode:
@@ -202,9 +207,13 @@ def prepare_claude_env(claude_home: Path, auth_mode: str) -> Dict[str, str]:
     if auth_mode not in {"env", "global"}:
         raise ValueError("Claude agent currently supports --auth-mode env or global")
     env = os.environ.copy()
+    env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+    if auth_mode == "global":
+        # Keep the host CLAUDE_CONFIG_DIR: Claude Code login credentials are
+        # bound to the config dir, so overriding it would break host login.
+        return env
     claude_home.mkdir(parents=True, exist_ok=True)
     env["CLAUDE_CONFIG_DIR"] = str(claude_home)
-    env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
     return env
 
 
@@ -275,7 +284,17 @@ def _extract_claude_payload(stdout_path: Path) -> Dict[str, Any]:
     data = json.loads(stdout_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("Claude output was not a JSON object")
+    _raise_on_claude_error_result(data)
     return data
+
+
+def _raise_on_claude_error_result(result_event: Dict[str, Any]) -> None:
+    # Claude Code can exit 0 while reporting a failed run (e.g. "Not logged
+    # in"). Treat is_error results as failures instead of grading them.
+    if result_event.get("is_error"):
+        result_text = result_event.get("result")
+        detail = result_text if isinstance(result_text, str) and result_text else result_event.get("subtype", "unknown error")
+        raise ValueError(f"Claude reported an error result: {detail}")
 
 
 def write_claude_final_output(stdout_path: Path, final_path: Path, *, output_schema: Path | None = None) -> None:
@@ -292,6 +311,162 @@ def write_claude_final_output(stdout_path: Path, final_path: Path, *, output_sch
         final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     else:
         final_path.write_text(str(data.get("result", "")), encoding="utf-8")
+
+
+def _read_jsonl_events(path: Path) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def write_claude_stream_final_output(stdout_path: Path, final_path: Path) -> None:
+    """Extract the final assistant text from Claude Code stream-json events."""
+    result_event: Dict[str, Any] | None = None
+    for event in _read_jsonl_events(stdout_path):
+        if event.get("type") == "result":
+            result_event = event
+    if result_event is None:
+        raise ValueError("Claude stream-json output did not include a result event")
+    _raise_on_claude_error_result(result_event)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    result_text = result_event.get("result")
+    final_path.write_text(result_text if isinstance(result_text, str) else "", encoding="utf-8")
+
+
+_CLAUDE_FILE_CHANGE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def _claude_tool_result_text(block: Dict[str, Any]) -> str | None:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        ]
+        if parts:
+            return "".join(parts)
+    return None
+
+
+def append_claude_compat_events(events_path: Path) -> None:
+    """Append Codex-style item.completed events derived from Claude stream-json events.
+
+    This keeps trace_summary.json comparable across runtimes: agent messages,
+    reasoning, command executions, file changes, and usage all become visible
+    to summarize_events just like Codex/OpenCode traces.
+    """
+    events = _read_jsonl_events(events_path)
+
+    tool_results: Dict[str, Dict[str, Any]] = {}
+    for event in events:
+        if event.get("type") != "user":
+            continue
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_use_id = block.get("tool_use_id")
+            if not isinstance(tool_use_id, str):
+                continue
+            text = _claude_tool_result_text(block)
+            if text is None:
+                tool_use_result = event.get("tool_use_result")
+                if isinstance(tool_use_result, dict) and isinstance(tool_use_result.get("stdout"), str):
+                    text = tool_use_result["stdout"]
+            tool_results[tool_use_id] = {
+                "output": text,
+                "is_error": bool(block.get("is_error", False)),
+            }
+
+    compat_events: List[Dict[str, Any]] = []
+    usage: Any = None
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "result":
+            usage = event.get("usage")
+            continue
+        if event_type != "assistant":
+            continue
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type == "text":
+                compat_events.append(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "id": block.get("id"), "text": block.get("text")},
+                    }
+                )
+            elif block_type == "thinking":
+                compat_events.append(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "reasoning", "id": block.get("id"), "text": block.get("thinking")},
+                    }
+                )
+            elif block_type == "tool_use":
+                tool = block.get("name")
+                input_data = block.get("input")
+                input_data = input_data if isinstance(input_data, dict) else {}
+                tool_use_id = block.get("id")
+                result = tool_results.get(tool_use_id) if isinstance(tool_use_id, str) else None
+                status = None
+                if result is not None:
+                    status = "failed" if result["is_error"] else "completed"
+                if tool == "Bash":
+                    compat_events.append(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "command_execution",
+                                "id": tool_use_id,
+                                "command": input_data.get("command"),
+                                "status": status,
+                                "exit_code": None,
+                                "aggregated_output": result["output"] if result else None,
+                            },
+                        }
+                    )
+                elif tool in _CLAUDE_FILE_CHANGE_TOOLS:
+                    file_path = input_data.get("file_path") or input_data.get("notebook_path")
+                    compat_events.append(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "file_change",
+                                "id": tool_use_id,
+                                "status": status,
+                                "changes": [{"path": file_path}] if file_path else [],
+                            },
+                        }
+                    )
+
+    if usage is not None:
+        compat_events.append({"type": "turn.completed", "usage": usage})
+    if not compat_events:
+        return
+    with events_path.open("a", encoding="utf-8") as handle:
+        for event in compat_events:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
 def _extract_json_object(text: str) -> Any:
@@ -586,13 +761,16 @@ def build_docker_codex_command(
     codex_home: Path,
     inner_command: Iterable[str],
     auth_env: Dict[str, str],
+    container_name: str | None = None,
 ) -> List[str]:
     workspace = workspace.resolve()
     codex_home = codex_home.resolve()
     command = split_command(docker_bin)
+    command.append("run")
+    if container_name:
+        command.extend(["--name", container_name])
     command.extend(
         [
-            "run",
             "--rm",
             "-i",
             "--read-only",
@@ -617,7 +795,7 @@ def build_docker_codex_command(
             "CODEX_HOME=/codex-home",
         ]
     )
-    for key in ("CODEX_API_KEY", "OPENAI_API_KEY"):
+    for key in ("CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"):
         if auth_env.get(key):
             command.extend(["-e", key])
     command.append(docker_image)
@@ -733,6 +911,7 @@ async def run_codex_process_in_docker(
         allow_web_search=allow_web_search,
         include_trace_config=include_trace_config,
     )
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
     command = build_docker_codex_command(
         docker_bin=docker_bin,
         docker_image=docker_image,
@@ -740,6 +919,7 @@ async def run_codex_process_in_docker(
         codex_home=docker_auth_home,
         inner_command=inner_command,
         auth_env=auth_env,
+        container_name=container_name,
     )
     result = await run_codex_process(
         command,
@@ -750,6 +930,15 @@ async def run_codex_process_in_docker(
         stderr_path=stderr_path,
         timeout_seconds=timeout_seconds,
     )
+    if result.timed_out:
+        # Killing the docker CLI client does not stop the container itself;
+        # without this the timed-out container keeps running and writing into
+        # the mounted workspace.
+        subprocess.run(
+            split_command(docker_bin) + ["kill", container_name],
+            check=False,
+            capture_output=True,
+        )
 
     container_final_on_host = workspace / ".runner" / "final.md"
     if container_final_on_host.exists():

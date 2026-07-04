@@ -697,6 +697,360 @@ class SkillDistillerTests(unittest.TestCase):
             self.assertEqual(load_registry_skills(tmp_path / "executor_skills")[0].id, "empirical-measurement-governance-expert")
 
 
+class RegressionFixTests(unittest.TestCase):
+    def test_default_docker_image_matches_documented_build_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp])
+            self.assertEqual(args.docker_image, "starbench-codex:latest")
+
+    def test_read_jsonl_skips_unparseable_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "thread.started", "thread_id": "t1"}),
+                        "npm WARN deprecated something",
+                        "Loaded cached credentials.",
+                        json.dumps({"type": "turn.completed", "usage": {"output_tokens": 5}}),
+                        "{truncated json",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            events = read_jsonl(path)
+            self.assertEqual(len(events), 2)
+            self.assertEqual(events[0]["type"], "thread.started")
+            self.assertEqual(events[1]["type"], "turn.completed")
+
+    def test_docker_command_includes_container_name(self) -> None:
+        from starbench.runner.codex_process import build_docker_codex_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            command = build_docker_codex_command(
+                docker_bin="docker",
+                docker_image="starbench-codex:latest",
+                workspace=tmp_path,
+                codex_home=tmp_path,
+                inner_command=["codex", "exec"],
+                auth_env={},
+                container_name="starbench-task-abc123",
+            )
+            name_index = command.index("--name")
+            self.assertEqual(command[name_index + 1], "starbench-task-abc123")
+
+    def test_docker_command_forwards_base_url_env(self) -> None:
+        from starbench.runner.codex_process import build_docker_codex_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            command = build_docker_codex_command(
+                docker_bin="docker",
+                docker_image="starbench-codex:latest",
+                workspace=tmp_path,
+                codex_home=tmp_path,
+                inner_command=["codex", "exec"],
+                auth_env={"OPENAI_API_KEY": "x", "OPENAI_BASE_URL": "https://gw.example/v1"},
+            )
+            self.assertIn("OPENAI_BASE_URL", command)
+
+    def make_claude_stream_events(self) -> list:
+        return [
+            {"type": "system", "subtype": "init", "cwd": "/workspace", "session_id": "s1"},
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "thinking", "thinking": "Plan the demo package first."}],
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_01",
+                            "name": "Bash",
+                            "input": {"command": "echo hello-starbench"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_01",
+                            "content": "hello-starbench",
+                            "is_error": False,
+                        }
+                    ],
+                },
+                "tool_use_result": {"stdout": "hello-starbench", "stderr": ""},
+            },
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_02",
+                            "name": "Write",
+                            "input": {"file_path": "outputs/demo.md", "content": "demo"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_02",
+                            "content": "File created successfully",
+                            "is_error": False,
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+            },
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "num_turns": 2,
+                "result": "done",
+                "usage": {"input_tokens": 18, "output_tokens": 177},
+            },
+        ]
+
+    def test_claude_stream_final_output_written_from_result_event(self) -> None:
+        from starbench.runner.codex_process import write_claude_stream_final_output
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            events_path = tmp_path / "events.jsonl"
+            events_path.write_text(
+                "".join(json.dumps(event) + "\n" for event in self.make_claude_stream_events()),
+                encoding="utf-8",
+            )
+            final_path = tmp_path / "final.md"
+            write_claude_stream_final_output(events_path, final_path)
+            self.assertEqual(final_path.read_text(encoding="utf-8"), "done")
+
+    def test_prepare_claude_env_global_keeps_host_config_dir(self) -> None:
+        import os
+
+        from starbench.runner.codex_process import prepare_claude_env
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            global_env = prepare_claude_env(tmp_path / "claude_global", "global")
+            self.assertEqual(
+                global_env.get("CLAUDE_CONFIG_DIR"), os.environ.get("CLAUDE_CONFIG_DIR")
+            )
+            isolated_env = prepare_claude_env(tmp_path / "claude_env", "env")
+            self.assertEqual(isolated_env["CLAUDE_CONFIG_DIR"], str(tmp_path / "claude_env"))
+
+    def test_claude_stream_final_output_rejects_error_result(self) -> None:
+        from starbench.runner.codex_process import write_claude_stream_final_output
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            events_path = tmp_path / "events.jsonl"
+            events_path.write_text(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": True,
+                        "result": "Not logged in · Please run /login",
+                        "usage": {},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                write_claude_stream_final_output(events_path, tmp_path / "final.md")
+
+    def test_claude_json_final_output_rejects_error_result(self) -> None:
+        from starbench.runner.codex_process import write_claude_final_output
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            stdout_path = tmp_path / "events.jsonl"
+            stdout_path.write_text(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": True,
+                        "result": "Not logged in · Please run /login",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                write_claude_final_output(stdout_path, tmp_path / "final.md")
+
+    def test_claude_stream_events_normalize_to_codex_trace_items(self) -> None:
+        from starbench.runner.codex_process import append_claude_compat_events
+
+        with tempfile.TemporaryDirectory() as tmp:
+            events_path = Path(tmp) / "events.jsonl"
+            events_path.write_text(
+                "".join(json.dumps(event) + "\n" for event in self.make_claude_stream_events()),
+                encoding="utf-8",
+            )
+            append_claude_compat_events(events_path)
+            summary = summarize_events(read_jsonl(events_path))
+            self.assertEqual(summary["agent_messages"][0]["text"], "done")
+            self.assertEqual(summary["reasoning_items"][0]["text"], "Plan the demo package first.")
+            command = summary["command_executions"][0]
+            self.assertEqual(command["command"], "echo hello-starbench")
+            self.assertEqual(command["status"], "completed")
+            self.assertEqual(command["aggregated_output"], "hello-starbench")
+            self.assertEqual(summary["file_changes"][0]["changes"][0]["path"], "outputs/demo.md")
+            self.assertEqual(summary["usage"]["output_tokens"], 177)
+
+    def test_claude_print_command_supports_stream_json_output(self) -> None:
+        from starbench.runner.codex_process import build_claude_print_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            command = build_claude_print_command(
+                "claude",
+                cwd=Path(tmp),
+                model="claude-opus-4-8",
+                output_format="stream-json",
+            )
+            format_index = command.index("--output-format")
+            self.assertEqual(command[format_index + 1], "stream-json")
+            self.assertIn("--verbose", command)
+
+    def test_claude_executor_allowed_tools_follow_task_web_search(self) -> None:
+        from starbench.runner.run_benchmark import claude_executor_allowed_tools
+
+        without_web = claude_executor_allowed_tools(False)
+        with_web = claude_executor_allowed_tools(True)
+        self.assertNotIn("WebSearch", without_web)
+        self.assertIn("WebSearch", with_web)
+        self.assertIn("WebFetch", with_web)
+        self.assertIn("Bash", without_web)
+
+    def test_executor_backend_defaults_follow_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp])
+            self.assertEqual(args.executor_backend, "docker")
+            args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp, "--executor-agent", "claude"])
+            self.assertEqual(args.executor_backend, "local")
+            with self.assertRaises(SystemExit):
+                parse_args(
+                    [
+                        "--tasks-dir",
+                        tmp,
+                        "--runs-dir",
+                        tmp,
+                        "--executor-agent",
+                        "claude",
+                        "--executor-backend",
+                        "docker",
+                    ]
+                )
+
+    def test_parse_args_claude_max_turns_defaults_to_unlimited(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp])
+            self.assertIsNone(args.claude_max_turns)
+            args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp, "--claude-max-turns", "30"])
+            self.assertEqual(args.claude_max_turns, 30)
+
+    def test_opencode_judges_use_read_only_plan_agent(self) -> None:
+        from starbench.runner.run_benchmark import OPENCODE_JUDGE_AGENT
+
+        self.assertEqual(OPENCODE_JUDGE_AGENT, "plan")
+
+    def test_normalize_single_result_accepts_top_level_list(self) -> None:
+        from starbench.runner.evaluation import normalize_single_result
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "single_result.json"
+            path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "rubric_id": "R001",
+                            "answer": True,
+                            "expected": True,
+                            "passed": True,
+                            "fail_fast": False,
+                            "evidence": "ok",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            results = normalize_single_result(path)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].rubric_id, "R001")
+
+    def test_rubric_launch_order_is_deterministic_per_task(self) -> None:
+        from starbench.runner.run_benchmark import rubric_launch_order
+
+        rubrics = [
+            Rubric(id=f"R{index:03d}", fail_fast=False, expected=True, question="Q?")
+            for index in range(1, 9)
+        ]
+        first = rubric_launch_order(rubrics, seed=123, run_task_id="task_a")
+        second = rubric_launch_order(rubrics, seed=123, run_task_id="task_a")
+        self.assertEqual([rubric.id for rubric in first], [rubric.id for rubric in second])
+        self.assertEqual({rubric.id for rubric in first}, {rubric.id for rubric in rubrics})
+        other_task = rubric_launch_order(rubrics, seed=123, run_task_id="task_b")
+        other_seed = rubric_launch_order(rubrics, seed=124, run_task_id="task_a")
+        orders = {
+            tuple(rubric.id for rubric in order) for order in (first, other_task, other_seed)
+        }
+        self.assertGreater(len(orders), 1)
+
+    def test_duplicate_run_id_raises_friendly_error(self) -> None:
+        import asyncio
+
+        from starbench.runner.run_benchmark import run_benchmark
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tasks_dir = tmp_path / "tasks"
+            runs_dir = tmp_path / "runs"
+            shutil.copytree(DEMO_TASK, tasks_dir / "demo_python_cli")
+            (runs_dir / "existing_run").mkdir(parents=True)
+            args = parse_args(
+                [
+                    "--tasks-dir",
+                    str(tasks_dir),
+                    "--runs-dir",
+                    str(runs_dir),
+                    "--run-id",
+                    "existing_run",
+                ]
+            )
+            with self.assertRaises(SystemExit) as context:
+                asyncio.run(run_benchmark(args))
+            self.assertIn("existing_run", str(context.exception))
+
+
 class ClosedLoopTests(unittest.TestCase):
     def make_fake_codex(self, directory: Path) -> Path:
         script = directory / "fake_codex.py"
@@ -823,6 +1177,99 @@ class ClosedLoopTests(unittest.TestCase):
             encoding="utf-8",
         )
         return script
+
+    def make_fake_garbage_codex(self, directory: Path) -> Path:
+        """Fake codex: judge calls succeed, executor calls dump non-JSON stdout and fail."""
+        script = directory / "fake_garbage_codex.py"
+        script.write_text(
+            textwrap.dedent(
+                r'''
+                import json
+                import re
+                import sys
+                from pathlib import Path
+
+                def value_after(args, flag):
+                    return args[args.index(flag) + 1] if flag in args else None
+
+                args = sys.argv[1:]
+                prompt = sys.stdin.read()
+                output_schema = value_after(args, "--output-schema")
+                final_path_value = value_after(args, "--output-last-message")
+                if output_schema and final_path_value:
+                    ids = re.findall(r'"id":\s*"(R\d+)"', prompt) or ["R001"]
+                    final_path = Path(final_path_value)
+                    final_path.parent.mkdir(parents=True, exist_ok=True)
+                    final_path.write_text(json.dumps({
+                        "mode": "single",
+                        "results": [
+                            {
+                                "rubric_id": rid,
+                                "answer": False,
+                                "expected": True,
+                                "passed": False,
+                                "fail_fast": False,
+                                "evidence": "executor failed"
+                            }
+                            for rid in ids
+                        ],
+                        "overall_notes": "executor failed"
+                    }))
+                    print(json.dumps({"type": "turn.completed", "usage": {}}))
+                    sys.exit(0)
+                print("npm WARN deprecated left-pad@1.0.0")
+                print("Fatal: model backend unreachable")
+                sys.exit(3)
+                '''
+            ),
+            encoding="utf-8",
+        )
+        return script
+
+    def test_closed_loop_survives_failing_executor_with_garbage_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tasks_dir = tmp_path / "tasks"
+            runs_dir = tmp_path / "runs"
+            shutil.copytree(DEMO_TASK, tasks_dir / "demo_python_cli")
+            fake_codex = self.make_fake_garbage_codex(tmp_path)
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "starbench.runner.run_benchmark",
+                "--tasks-dir",
+                str(tasks_dir),
+                "--runs-dir",
+                str(runs_dir),
+                "--run-id",
+                "garbage_run",
+                "--seed",
+                "123",
+                "--judge-mode",
+                "single",
+                "--auth-mode",
+                "global",
+                "--executor-backend",
+                "local",
+                "--codex-bin",
+                f"{sys.executable} {fake_codex}",
+                "--no-progress",
+            ]
+            completed = subprocess.run(
+                cmd, cwd=ROOT, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+            run_root = runs_dir / "garbage_run"
+            self.assertTrue((run_root / "summary.json").exists())
+            status = json.loads(
+                (run_root / "demo_python_cli" / "logs" / "status.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(status["status"], "failed")
+            self.assertEqual(status["exit_code"], 3)
+            summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+            executor_status = summary["batches"][0]["tasks"][0]["executor"]
+            self.assertEqual(executor_status["status"], "failed")
 
     def test_closed_loop_with_fake_codex(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

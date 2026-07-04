@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from .codex_process import (
+    append_claude_compat_events,
     append_opencode_compat_events,
     build_claude_print_command,
     build_codex_exec_command,
@@ -26,6 +27,7 @@ from .codex_process import (
     run_codex_process,
     run_codex_process_in_docker,
     write_claude_final_output,
+    write_claude_stream_final_output,
     write_headless_final_output,
     write_opencode_final_output,
 )
@@ -49,6 +51,24 @@ CLAUDE_THINKING_EFFORT_INSTRUCTIONS = {
     "medium": "Before responding, think through the task carefully, including constraints, edge cases, and verification steps.",
     "high": "Before responding, think deeply about the task. Build a complete plan, inspect relevant evidence, consider failure modes and alternatives, and self-check the final deliverable before finishing.",
 }
+CLAUDE_EXECUTOR_BASE_TOOLS = "Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS"
+CLAUDE_EXECUTOR_WEB_TOOLS = "WebSearch,WebFetch"
+# Judges must be read-only across runtimes; OpenCode's built-in plan agent
+# matches the read-only sandboxes used for Codex/Grok/Gemini judges.
+OPENCODE_JUDGE_AGENT = "plan"
+
+
+def claude_executor_allowed_tools(allow_web_search: bool) -> str:
+    if allow_web_search:
+        return f"{CLAUDE_EXECUTOR_BASE_TOOLS},{CLAUDE_EXECUTOR_WEB_TOOLS}"
+    return CLAUDE_EXECUTOR_BASE_TOOLS
+
+
+def rubric_launch_order(rubrics: Sequence[Rubric], *, seed: int, run_task_id: str) -> List[Rubric]:
+    """Deterministic per-task rubric launch order, independent of async scheduling."""
+    order = list(rubrics)
+    random.Random(f"{seed}:{run_task_id}").shuffle(order)
+    return order
 
 
 def json_dump(path: Path, data: Dict[str, Any]) -> None:
@@ -451,6 +471,7 @@ async def run_executor(
     opencode_base_url: str | None,
     opencode_api_key_env: str | None,
     claude_thinking_effort: str,
+    claude_max_turns: int | None,
     auth_mode: str,
     model: str | None,
     executor_backend: str,
@@ -468,8 +489,9 @@ async def run_executor(
             cwd=paths["workspace"],
             model=model,
             permission_mode="acceptEdits",
-            allowed_tools="Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS",
-            max_turns=20,
+            allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
+            max_turns=claude_max_turns,
+            output_format="stream-json",
         )
         env = prepare_claude_env(paths["codex_home"] / "claude_executor", auth_mode)
         result = await run_codex_process(
@@ -489,7 +511,8 @@ async def run_executor(
         )
         if result.status == "success":
             try:
-                write_claude_final_output(logs / "events.jsonl", logs / "final.md")
+                write_claude_stream_final_output(logs / "events.jsonl", logs / "final.md")
+                append_claude_compat_events(logs / "events.jsonl")
             except Exception as exc:
                 result = result.__class__(
                     command=result.command,
@@ -718,7 +741,6 @@ async def run_single_judge(
                 model=model,
                 output_schema=SCHEMAS_DIR / "single_result.schema.json",
                 allowed_tools="Read,Glob,Grep,Bash,LS",
-                max_turns=20,
             )
             env = prepare_claude_env(paths["codex_home"] / "judge_single_claude", auth_mode)
         elif agent == "opencode":
@@ -727,7 +749,7 @@ async def run_single_judge(
                 opencode_bin,
                 cwd=judge_workspace,
                 model=model_name,
-                agent="build",
+                agent=OPENCODE_JUDGE_AGENT,
             )
             env = prepare_opencode_env(
                 paths["codex_home"] / "judge_single_opencode",
@@ -913,7 +935,6 @@ async def run_parallel_judges(
                     model=model,
                     output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
                     allowed_tools="Read,Glob,Grep,Bash,LS",
-                    max_turns=10,
                 )
                 env = prepare_claude_env(paths["codex_home"] / f"judge_{rubric.id}_claude", auth_mode)
             elif agent == "opencode":
@@ -922,7 +943,7 @@ async def run_parallel_judges(
                     opencode_bin,
                     cwd=judge_workspace,
                     model=model_name,
-                    agent="build",
+                    agent=OPENCODE_JUDGE_AGENT,
                 )
                 env = prepare_opencode_env(
                     paths["codex_home"] / f"judge_{rubric.id}_opencode",
@@ -1327,7 +1348,12 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
 
     run_id = args.run_id or datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ")
     run_root = args.runs_dir / run_id
-    run_root.mkdir(parents=True, exist_ok=False)
+    try:
+        run_root.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise SystemExit(
+            f"Run directory already exists: {run_root}. Choose a new --run-id or remove the old run."
+        )
     selected_instruction_step_ids = task_runs[0].instruction_step_ids if args.instruction_mode == "select" and task_runs else []
     instruction_variants: List[Dict[str, Any]] = []
     seen_instruction_variants = set()
@@ -1355,6 +1381,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "executor_agent": args.executor_agent,
         "evaluator_agent": args.evaluator_agent,
         "claude_thinking_effort": args.claude_thinking_effort,
+        "claude_max_turns": args.claude_max_turns,
         "opencode_provider": args.opencode_provider,
         "opencode_base_url": args.opencode_base_url,
         "opencode_api_key_env": args.opencode_api_key_env,
@@ -1423,25 +1450,47 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
 
             async def execute_record(record: Dict[str, Any]) -> Dict[str, Any]:
                 progress.executor_started(run_task_id=record["run_task_id"], task_id=record["task"].id)
-                status = await run_executor(
-                    record["task_run"],
-                    record["paths"],
-                    agent=args.executor_agent,
-                    codex_bin=args.codex_bin,
-                    claude_bin=args.claude_bin,
-                    grok_bin=args.grok_bin,
-                    gemini_bin=args.gemini_bin,
-                    opencode_bin=args.opencode_bin,
-                    opencode_provider=args.opencode_provider,
-                    opencode_base_url=args.opencode_base_url,
-                    opencode_api_key_env=args.opencode_api_key_env,
-                    claude_thinking_effort=args.claude_thinking_effort,
-                    auth_mode=args.executor_auth_mode,
-                    model=args.executor_model,
-                    executor_backend=args.executor_backend,
-                    docker_bin=args.docker_bin,
-                    docker_image=args.docker_image,
-                )
+                try:
+                    status = await run_executor(
+                        record["task_run"],
+                        record["paths"],
+                        agent=args.executor_agent,
+                        codex_bin=args.codex_bin,
+                        claude_bin=args.claude_bin,
+                        grok_bin=args.grok_bin,
+                        gemini_bin=args.gemini_bin,
+                        opencode_bin=args.opencode_bin,
+                        opencode_provider=args.opencode_provider,
+                        opencode_base_url=args.opencode_base_url,
+                        opencode_api_key_env=args.opencode_api_key_env,
+                        claude_thinking_effort=args.claude_thinking_effort,
+                        claude_max_turns=args.claude_max_turns,
+                        auth_mode=args.executor_auth_mode,
+                        model=args.executor_model,
+                        executor_backend=args.executor_backend,
+                        docker_bin=args.docker_bin,
+                        docker_image=args.docker_image,
+                    )
+                except Exception as exc:
+                    # One crashing task must not abort the whole run.
+                    logs = record["paths"]["logs"]
+                    with (logs / "stderr.log").open("a", encoding="utf-8") as handle:
+                        handle.write(f"\nExecutor crashed: {type(exc).__name__}: {exc}\n")
+                    status = {
+                        "command": [],
+                        "exit_code": None,
+                        "status": "failed",
+                        "timed_out": False,
+                        "started_at": None,
+                        "ended_at": None,
+                        "duration_seconds": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "executor_backend": args.executor_backend,
+                        "docker_image": args.docker_image if args.executor_backend == "docker" else None,
+                        "usage": None,
+                        "artifact_file_count": 0,
+                    }
+                    json_dump(logs / "status.json", status)
                 progress.executor_finished(
                     run_task_id=record["run_task_id"],
                     task_id=record["task"].id,
@@ -1460,25 +1509,37 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                 executor_timing = executor_timing_from_status(executor_status)
                 if args.judge_mode in ("single", "both"):
                     progress.evaluator_started(run_task_id=record["run_task_id"], mode="single")
-                    modes["single"] = await run_single_judge(
-                        task,
-                        paths,
-                        agent=args.evaluator_agent,
-                        codex_bin=args.codex_bin,
-                        claude_bin=args.claude_bin,
-                        grok_bin=args.grok_bin,
-                        gemini_bin=args.gemini_bin,
-                        opencode_bin=args.opencode_bin,
-                        opencode_provider=args.opencode_provider,
-                        opencode_base_url=args.opencode_base_url,
-                        opencode_api_key_env=args.opencode_api_key_env,
-                        claude_thinking_effort=args.claude_thinking_effort,
-                        auth_mode=args.evaluator_auth_mode,
-                        model=args.evaluator_model,
-                        timeout_seconds=args.evaluator_timeout_seconds,
-                        executor_timing=executor_timing,
-                        semaphore=evaluator_semaphore,
-                    )
+                    try:
+                        modes["single"] = await run_single_judge(
+                            task,
+                            paths,
+                            agent=args.evaluator_agent,
+                            codex_bin=args.codex_bin,
+                            claude_bin=args.claude_bin,
+                            grok_bin=args.grok_bin,
+                            gemini_bin=args.gemini_bin,
+                            opencode_bin=args.opencode_bin,
+                            opencode_provider=args.opencode_provider,
+                            opencode_base_url=args.opencode_base_url,
+                            opencode_api_key_env=args.opencode_api_key_env,
+                            claude_thinking_effort=args.claude_thinking_effort,
+                            auth_mode=args.evaluator_auth_mode,
+                            model=args.evaluator_model,
+                            timeout_seconds=args.evaluator_timeout_seconds,
+                            executor_timing=executor_timing,
+                            semaphore=evaluator_semaphore,
+                        )
+                    except Exception as exc:
+                        modes["single"] = {
+                            "status": {"status": "failed", "error": f"{type(exc).__name__}: {exc}"},
+                            "aggregate": {
+                                "mode": "single",
+                                "overall_pass": False,
+                                "error": f"{type(exc).__name__}: {exc}",
+                                "executor_timing": executor_timing,
+                                "results": [],
+                            },
+                        }
                     progress.evaluator_finished(
                         run_task_id=record["run_task_id"],
                         mode="single",
@@ -1486,30 +1547,42 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         aggregate=modes["single"].get("aggregate"),
                     )
                 if args.judge_mode in ("parallel", "both"):
-                    rubric_order = list(task.rubrics)
-                    rng.shuffle(rubric_order)
-                    modes["parallel"] = await run_parallel_judges(
-                        task,
-                        paths,
-                        agent=args.evaluator_agent,
-                        codex_bin=args.codex_bin,
-                        claude_bin=args.claude_bin,
-                        grok_bin=args.grok_bin,
-                        gemini_bin=args.gemini_bin,
-                        opencode_bin=args.opencode_bin,
-                        opencode_provider=args.opencode_provider,
-                        opencode_base_url=args.opencode_base_url,
-                        opencode_api_key_env=args.opencode_api_key_env,
-                        claude_thinking_effort=args.claude_thinking_effort,
-                        auth_mode=args.evaluator_auth_mode,
-                        model=args.evaluator_model,
-                        timeout_seconds=args.evaluator_timeout_seconds,
-                        executor_timing=executor_timing,
-                        semaphore=evaluator_semaphore,
-                        launch_order=rubric_order,
-                        progress=progress,
-                        run_task_id=record["run_task_id"],
+                    rubric_order = rubric_launch_order(
+                        task.rubrics, seed=args.seed, run_task_id=record["run_task_id"]
                     )
+                    try:
+                        modes["parallel"] = await run_parallel_judges(
+                            task,
+                            paths,
+                            agent=args.evaluator_agent,
+                            codex_bin=args.codex_bin,
+                            claude_bin=args.claude_bin,
+                            grok_bin=args.grok_bin,
+                            gemini_bin=args.gemini_bin,
+                            opencode_bin=args.opencode_bin,
+                            opencode_provider=args.opencode_provider,
+                            opencode_base_url=args.opencode_base_url,
+                            opencode_api_key_env=args.opencode_api_key_env,
+                            claude_thinking_effort=args.claude_thinking_effort,
+                            auth_mode=args.evaluator_auth_mode,
+                            model=args.evaluator_model,
+                            timeout_seconds=args.evaluator_timeout_seconds,
+                            executor_timing=executor_timing,
+                            semaphore=evaluator_semaphore,
+                            launch_order=rubric_order,
+                            progress=progress,
+                            run_task_id=record["run_task_id"],
+                        )
+                    except Exception as exc:
+                        modes["parallel"] = {
+                            "aggregate": {
+                                "mode": "parallel",
+                                "overall_pass": False,
+                                "error": f"{type(exc).__name__}: {exc}",
+                                "executor_timing": executor_timing,
+                                "results": [],
+                            },
+                        }
                 result = {
                     "run_task_id": record["run_task_id"],
                     "task_id": task.id,
@@ -1630,6 +1703,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--claude-max-turns",
+        type=int,
+        default=None,
+        help=(
+            "Optional agentic turn cap for the Claude Code executor. Defaults to no cap so "
+            "Claude runs are comparable with other runtimes."
+        ),
+    )
+    parser.add_argument(
         "--opencode-provider",
         help="OpenCode provider id for generated OpenAI-compatible config, e.g. yunwu.",
     )
@@ -1658,13 +1740,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--executor-backend",
         choices=["local", "docker"],
-        default="docker",
-        help="Run executor directly on the host or inside a per-task Docker container.",
+        default=None,
+        help=(
+            "Run executor directly on the host or inside a per-task Docker container. "
+            "Defaults to docker for the codex runtime and local for other runtimes "
+            "(Docker support is currently Codex-only)."
+        ),
     )
     parser.add_argument("--docker-bin", default="docker", help="Docker executable or shell-like command prefix.")
     parser.add_argument(
         "--docker-image",
-        default="codex-bench:latest",
+        default="starbench-codex:latest",
         help="Image used when --executor-backend docker is selected.",
     )
     parser.add_argument("--evaluator-timeout-seconds", type=int, default=900)
@@ -1723,6 +1809,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.rigor_mode = "select"
     if args.rigor_mode == "select" and not args.rigor:
         parser.error("--rigor-mode select requires at least one --rigor")
+    if args.executor_backend is None:
+        args.executor_backend = "docker" if args.executor_agent == "codex" else "local"
+    elif args.executor_backend == "docker" and args.executor_agent != "codex":
+        parser.error(
+            f"--executor-agent {args.executor_agent} currently requires --executor-backend local; "
+            "Docker isolation is Codex-only for now."
+        )
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
     args.tasks_dir = args.tasks_dir.resolve()
