@@ -77,6 +77,7 @@ export default function Providers() {
     auth: provider.auth,
     base_url: provider.base_url,
     anthropic_base_url: provider.anthropic_base_url ?? "",
+    gemini_base_url: provider.gemini_base_url ?? "",
     api_key_env: provider.api_key_env,
     models: provider.models,
     models_fetched_at: provider.models_fetched_at,
@@ -117,6 +118,7 @@ export default function Providers() {
               auth: "api_key",
               base_url: "",
               anthropic_base_url: "",
+              gemini_base_url: "",
               api_key_env: "OPENAI_API_KEY",
               models: [],
               models_fetched_at: null,
@@ -389,6 +391,21 @@ function ProviderEditor({
                 <p className="text-xs text-muted-foreground">
                   If this provider exposes an Anthropic Messages endpoint, Claude Code can run
                   its models through it (injected as ANTHROPIC_BASE_URL).
+                </p>
+              </div>
+            )}
+            {value.kind !== "google" && (
+              <div className="grid gap-1.5">
+                <Label>Gemini-compatible endpoint (optional)</Label>
+                <Input
+                  className="font-mono"
+                  placeholder="https://my-litellm-proxy.example"
+                  value={value.gemini_base_url ?? ""}
+                  onChange={(event) => set({ gemini_base_url: event.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  If this provider exposes a Gemini API endpoint, Gemini CLI can run its models
+                  through it (injected as GOOGLE_GEMINI_BASE_URL).
                 </p>
               </div>
             )}

@@ -300,6 +300,7 @@ export interface Contender {
   opencode_provider?: string
   opencode_base_url?: string
   opencode_api_key_env?: string
+  codex_bin?: string
   env?: Record<string, { value?: string; from_env?: string }>
 }
 
@@ -312,6 +313,7 @@ export interface AiProvider {
   auth: "api_key" | "cli_login"
   base_url: string
   anthropic_base_url?: string | null
+  gemini_base_url?: string | null
   api_key_env: string
   models: string[]
   models_fetched_at: string | null

@@ -151,6 +151,7 @@ def _decorate(provider: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "auth": "api_key",
         "anthropic_base_url": "",
+        "gemini_base_url": "",
         "models_fetched_at": None,
         "models_source": None,
         **provider,
@@ -216,6 +217,7 @@ def save_providers(runs_dir: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
                 "auth": auth,
                 "base_url": str(provider.get("base_url") or "").strip(),
                 "anthropic_base_url": str(provider.get("anthropic_base_url") or "").strip(),
+                "gemini_base_url": str(provider.get("gemini_base_url") or "").strip(),
                 "api_key_env": str(provider.get("api_key_env") or "").strip(),
                 "models": [model.strip() for model in models if model.strip()],
                 "models_fetched_at": provider.get("models_fetched_at"),

@@ -97,6 +97,7 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
         argv += ["--docker-image", docker_image]
 
     for key, flag in (
+        ("codex_bin", "--codex-bin"),
         ("executor_model", "--executor-model"),
         ("evaluator_model", "--evaluator-model"),
         ("executor_auth_mode", "--executor-auth-mode"),

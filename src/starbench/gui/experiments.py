@@ -172,6 +172,16 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
 
         effective_backend = backend if agent in DOCKER_CAPABLE_AGENTS else "local"
 
+        # The codex binary config is process-global: rerouting a Codex
+        # contender through a gateway would silently reroute a Codex judge in
+        # the same run.
+        if contender.get("codex_bin") and evaluator_agent == "codex":
+            raise ExperimentError(
+                f"Contender {label}: routing Codex through a gateway also reroutes the "
+                "Codex judge (the CLI shares one codex configuration per run). Pick a "
+                "non-Codex judge or use the official OpenAI provider for this contender."
+            )
+
         # OpenCode gateway flags are process-global in the CLI: a contender and
         # an OpenCode judge must agree on them, and an OpenCode judge supplies
         # them when the contender does not use OpenCode at all.
@@ -212,6 +222,7 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
             "seed": shared.get("seed"),
             "batch_size": shared.get("batch_size"),
             "repeat": shared.get("repeat"),
+            "codex_bin": contender.get("codex_bin"),
             "opencode_provider": gateway.get("opencode_provider"),
             "opencode_base_url": gateway.get("opencode_base_url"),
             "opencode_api_key_env": gateway.get("opencode_api_key_env"),

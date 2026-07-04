@@ -45,10 +45,15 @@ single-operator tool; do not expose it to a network.
   optional base URL, and a **model catalog refreshed from the provider's own
   models API** — not edited by hand. CLI-login providers and missing keys fall
   back to a public vendor catalog snapshot, labeled as such. Contenders and the
-  judge are pure references to a provider + model: choosing one derives the
-  runtime, auth mode, OpenCode gateway flags, or
-  `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` injection automatically, and the
-  wizard contains no endpoint or credential inputs at all.
+  judge are pure references to a provider + model, and runtime-provider
+  compatibility is decided by wire protocol: Claude Code takes any provider
+  with an Anthropic-compatible endpoint (env injection), Codex takes any
+  OpenAI-protocol provider (official codex config overrides; the endpoint must
+  support the Responses API), Gemini CLI takes any provider with a
+  Gemini-compatible endpoint (env injection), OpenCode takes any
+  OpenAI-protocol provider (gateway flags), and Grok Build is official-only
+  (its CLI has no endpoint override). The wizard contains no endpoint or
+  credential inputs at all.
 - **Task library** — task packages as browsable cards. Click one to preview its
   prompt and rubrics and launch it directly. Import new packages by dragging a
   task folder or `.zip` onto the page (validated server-side before anything is

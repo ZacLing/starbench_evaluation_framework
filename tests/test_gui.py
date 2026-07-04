@@ -870,6 +870,31 @@ class ProviderTest(unittest.TestCase):
         with self.assertRaises(ExperimentError):
             experiments.plan_experiment(payload, runs_dir=self.runs_dir)
 
+    def test_codex_gateway_conflicts_with_codex_judge(self) -> None:
+        tasks_dir = self.tmp / "tasks"
+        tasks_dir.mkdir(exist_ok=True)
+        payload = {
+            "name": "exp_codexgw",
+            "tasks_dir": str(tasks_dir),
+            "tasks": [],
+            "shared": {"evaluator_agent": "codex", "judge_mode": "single"},
+            "contenders": [
+                {
+                    "label": "codex via openrouter",
+                    "agent": "codex",
+                    "model": "openai/gpt-5.3-codex",
+                    "auth_mode": "env",
+                    "codex_bin": "codex -c model_provider=openrouter",
+                }
+            ],
+        }
+        with self.assertRaises(ExperimentError):
+            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        payload["shared"]["evaluator_agent"] = "claude"
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        joined = plan["plans"][0]["argv"]
+        self.assertIn("codex -c model_provider=openrouter", joined)
+
     def test_judge_gateway_used_when_contender_not_opencode(self) -> None:
         tasks_dir = self.tmp / "tasks"
         tasks_dir.mkdir(exist_ok=True)

@@ -96,13 +96,23 @@ export function AgentIcon({ agent, size = 20 }: { agent: string; size?: number }
   }
 }
 
-/* Runtime <-> provider compatibility is decided by wire protocol, not vendor:
-   Claude Code speaks the Anthropic protocol (official API or any provider
-   exposing an Anthropic-compatible endpoint); OpenCode speaks the OpenAI
-   protocol; Codex / Gemini CLI / Grok Build only support their own vendor. */
+/* Runtime <-> provider compatibility is decided by wire protocol, not vendor.
+   Every runtime accepts every provider that speaks its protocol:
+   - Claude Code: Anthropic protocol (official, or any anthropic_base_url) via env
+   - Codex: OpenAI Responses protocol (official, or any OpenAI-compatible
+     gateway) via config overrides in the codex bin prefix
+   - OpenCode: OpenAI protocol via gateway flags
+   - Gemini CLI: Gemini protocol (official, or any gemini_base_url) via env
+   - Grok Build: official only (the CLI has no endpoint override mechanism) */
 const OPENAI_PROTOCOL_KINDS = new Set(["openai-compatible", "openai", "xai"])
 
-export function compatibleProviders<T extends { kind: string; anthropic_base_url?: string | null }>(
+interface CompatProvider {
+  kind: string
+  anthropic_base_url?: string | null
+  gemini_base_url?: string | null
+}
+
+export function compatibleProviders<T extends CompatProvider>(
   runtime: string,
   providers: T[],
 ): T[] {
@@ -114,9 +124,13 @@ export function compatibleProviders<T extends { kind: string; anthropic_base_url
     case "opencode":
       return providers.filter((provider) => OPENAI_PROTOCOL_KINDS.has(provider.kind))
     case "codex":
-      return providers.filter((provider) => provider.kind === "openai")
+      return providers.filter(
+        (provider) => provider.kind === "openai" || provider.kind === "openai-compatible",
+      )
     case "gemini":
-      return providers.filter((provider) => provider.kind === "google")
+      return providers.filter(
+        (provider) => provider.kind === "google" || Boolean(provider.gemini_base_url),
+      )
     case "grok":
       return providers.filter((provider) => provider.kind === "xai")
     default:

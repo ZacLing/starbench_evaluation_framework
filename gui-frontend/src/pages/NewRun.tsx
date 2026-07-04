@@ -85,11 +85,19 @@ function timestampName(prefix: string): string {
   )}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 
-/* A (runtime, provider) pair fully determines auth mode, gateway flags, and
-   env overrides. Protocol rules: Claude Code reaches non-Anthropic providers
-   through their Anthropic-compatible endpoint; OpenCode reaches any
-   OpenAI-protocol provider. */
-function providerSettings(runtime: string, provider: AiProvider) {
+/* A (runtime, provider) pair fully determines auth mode, gateway flags,
+   codex config overrides, and env overrides — one channel per runtime:
+   Claude Code and Gemini CLI take env vars, Codex takes config overrides in
+   its bin prefix (endpoint must speak the OpenAI Responses API), OpenCode
+   takes gateway flags. Grok Build has no override channel. */
+interface ContenderSettings {
+  auth_mode: string
+  gateway: Record<string, string | undefined>
+  codex_bin?: string
+  env?: Record<string, { value?: string; from_env?: string }>
+}
+
+function providerSettings(runtime: string, provider: AiProvider): ContenderSettings {
   const authMode = provider.auth === "cli_login" ? "global" : "env"
   if (runtime === "opencode") {
     return {
@@ -100,7 +108,22 @@ function providerSettings(runtime: string, provider: AiProvider) {
           provider.base_url || DEFAULT_OPENAI_BASE_URLS[provider.kind] || undefined,
         opencode_api_key_env: provider.api_key_env || undefined,
       },
-      env: undefined,
+    }
+  }
+  if (runtime === "codex" && provider.kind !== "openai" && provider.base_url) {
+    /* Official codex config overrides; ids are SAFE_ID so values need no quoting. */
+    const gw = provider.id.replace(/[^A-Za-z0-9_]/g, "_")
+    return {
+      auth_mode: authMode,
+      gateway: {},
+      codex_bin: [
+        "codex",
+        `-c model_provider=${gw}`,
+        `-c model_providers.${gw}.name=${gw}`,
+        `-c model_providers.${gw}.base_url=${provider.base_url}`,
+        `-c model_providers.${gw}.env_key=${provider.api_key_env || "OPENAI_API_KEY"}`,
+        `-c model_providers.${gw}.wire_api=responses`,
+      ].join(" "),
     }
   }
   if (runtime === "claude") {
@@ -117,7 +140,21 @@ function providerSettings(runtime: string, provider: AiProvider) {
       }
     }
   }
-  return { auth_mode: authMode, gateway: {}, env: undefined }
+  if (runtime === "gemini") {
+    const gatewayUrl =
+      provider.kind === "google" ? provider.base_url : provider.gemini_base_url
+    if (gatewayUrl) {
+      return {
+        auth_mode: authMode,
+        gateway: {},
+        env: {
+          GOOGLE_GEMINI_BASE_URL: { value: gatewayUrl },
+          GEMINI_API_KEY: { from_env: provider.api_key_env || "GEMINI_API_KEY" },
+        },
+      }
+    }
+  }
+  return { auth_mode: authMode, gateway: {} }
 }
 
 let contenderCounter = 0
@@ -208,6 +245,7 @@ export default function NewRun() {
           auth_mode: settings.auth_mode,
           thinking_effort: perFields.includes("thinking_effort") ? draft.thinking_effort : "none",
           ...settings.gateway,
+          codex_bin: settings.codex_bin,
           env: settings.env,
         },
       ]
@@ -696,6 +734,11 @@ function ContenderCard({
             </span>
           )}
         </div>
+        {draft.runtime === "codex" && provider && provider.kind !== "openai" && (
+          <p className="text-xs text-muted-foreground">
+            Routed through {provider.name}; the endpoint must support the OpenAI Responses API.
+          </p>
+        )}
         {perFields.includes("thinking_effort") && draft.runtime === "claude" && (
           <div className="flex items-center gap-2">
             <Label className="text-xs text-muted-foreground">Thinking effort</Label>
