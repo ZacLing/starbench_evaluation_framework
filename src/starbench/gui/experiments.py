@@ -149,6 +149,12 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
         raise ExperimentError("At most 12 contenders per experiment.")
 
     backend = str(shared.get("executor_backend") or "local")
+    evaluator_agent = str(shared.get("evaluator_agent") or "codex")
+    evaluator_gateway = (
+        shared.get("evaluator_gateway")
+        if isinstance(shared.get("evaluator_gateway"), dict)
+        else None
+    )
     plans: List[Dict[str, Any]] = []
     used_run_ids = set()
     for index, contender in enumerate(contenders):
@@ -165,6 +171,29 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
         used_run_ids.add(run_id)
 
         effective_backend = backend if agent in DOCKER_CAPABLE_AGENTS else "local"
+
+        # OpenCode gateway flags are process-global in the CLI: a contender and
+        # an OpenCode judge must agree on them, and an OpenCode judge supplies
+        # them when the contender does not use OpenCode at all.
+        gateway = {
+            "opencode_provider": contender.get("opencode_provider"),
+            "opencode_base_url": contender.get("opencode_base_url"),
+            "opencode_api_key_env": contender.get("opencode_api_key_env"),
+        }
+        if evaluator_agent == "opencode" and evaluator_gateway:
+            if agent == "opencode":
+                for key in gateway:
+                    contender_value = str(gateway.get(key) or "")
+                    judge_value = str(evaluator_gateway.get(key) or "")
+                    if contender_value and judge_value and contender_value != judge_value:
+                        raise ExperimentError(
+                            f"Contender {label}: its OpenCode gateway conflicts with the "
+                            "judge's gateway; the CLI supports only one OpenCode gateway "
+                            "per run."
+                        )
+            else:
+                gateway = dict(evaluator_gateway)
+
         launch_payload = {
             "run_id": run_id,
             "tasks_dir": payload.get("tasks_dir"),
@@ -183,9 +212,9 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
             "seed": shared.get("seed"),
             "batch_size": shared.get("batch_size"),
             "repeat": shared.get("repeat"),
-            "opencode_provider": contender.get("opencode_provider"),
-            "opencode_base_url": contender.get("opencode_base_url"),
-            "opencode_api_key_env": contender.get("opencode_api_key_env"),
+            "opencode_provider": gateway.get("opencode_provider"),
+            "opencode_base_url": gateway.get("opencode_base_url"),
+            "opencode_api_key_env": gateway.get("opencode_api_key_env"),
             "extra_args": str(shared.get("extra_args") or ""),
         }
         try:

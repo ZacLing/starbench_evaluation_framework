@@ -270,6 +270,12 @@ export interface SharedConfig {
   batch_size: number | string | null
   repeat: number | string | null
   extra_args?: string
+  evaluator_provider_id?: string
+  evaluator_gateway?: {
+    opencode_provider?: string
+    opencode_base_url?: string
+    opencode_api_key_env?: string
+  } | null
 }
 
 export interface Profile {
@@ -303,9 +309,12 @@ export interface AiProvider {
   id: string
   name: string
   kind: ProviderKind
+  auth: "api_key" | "cli_login"
   base_url: string
   api_key_env: string
   models: string[]
+  models_fetched_at: string | null
+  models_source: "api" | "catalog" | null
   agent: string
   key_present: boolean
 }
@@ -430,8 +439,12 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  vercelCatalog: () =>
-    request<{ models: string[]; count: number; source: string }>("/api/catalog/vercel"),
+  refreshProviderModels: (id: string) =>
+    request<ProvidersPayload>(`/api/providers/${encodeURIComponent(id)}/refresh-models`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }),
   profiles: () => request<ProfilesPayload>("/api/profiles"),
   saveProfiles: (payload: ProfilesPayload) =>
     request<ProfilesPayload>("/api/profiles", {

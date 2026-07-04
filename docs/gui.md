@@ -34,15 +34,18 @@ single-operator tool; do not expose it to a network.
 
 - **Dashboard** — summary cards (runs, task pass rate, executor success, running
   now), pass rate by run, and recent runs.
-- **AI providers** — named endpoints with credentials and model catalogs
+- **AI providers** — the resource side of every experiment
   (`<runs-dir>/providers.json`; built-in presets until first save). A provider is
   a kind (Anthropic / OpenAI / Google / xAI / OpenAI-compatible, which decides
-  the runtime), an optional base URL, the *name* of the API-key environment
-  variable (keys themselves are never stored; presence is checked live), and a
-  model list that can be imported from the public Vercel AI Gateway catalog.
-  The wizard's unified model picker groups models by provider; choosing one
-  auto-fills gateway flags (OpenAI-compatible → OpenCode) or injects
-  `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` for Anthropic-compatible gateways.
+  the runtime), a credential (either the *name* of an API-key environment
+  variable, or the local CLI login; keys themselves are never stored), an
+  optional base URL, and a **model catalog refreshed from the provider's own
+  models API** — not edited by hand. CLI-login providers and missing keys fall
+  back to a public vendor catalog snapshot, labeled as such. Contenders and the
+  judge are pure references to a provider + model: choosing one derives the
+  runtime, auth mode, OpenCode gateway flags, or
+  `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` injection automatically, and the
+  wizard contains no endpoint or credential inputs at all.
 - **Task library** — task packages as browsable cards. Click one to preview its
   prompt and rubrics and launch it directly. Import new packages by dragging a
   task folder or `.zip` onto the page (validated server-side before anything is

@@ -1,99 +1,88 @@
-import { useMemo } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Input } from "@/components/ui/input"
+import { Link } from "react-router-dom"
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
 import { ProviderIcon } from "@/components/brand"
 import { api, type AiProvider } from "@/lib/api"
 
-const CUSTOM = "__custom__"
+const RUNTIME_DEFAULT = "__runtime_default__"
 
-/* Unified model selector: models grouped by AI provider (see the AI Providers
-   page), filtered to providers whose kind maps to the given runtime, with a
-   free-form fallback. */
-export function ModelPicker({
-  agent,
+/* Execution-side model choice = a reference to (provider, model). Providers
+   own endpoints, credentials, and catalogs; nothing is defined here. */
+export function ProviderModelPicker({
   providerId,
   model,
   onChange,
-  placeholder,
 }: {
-  agent: string
   providerId?: string
   model: string
-  onChange: (value: { providerId?: string; model: string; provider?: AiProvider }) => void
-  placeholder?: string
+  onChange: (value: { provider: AiProvider; model: string }) => void
 }) {
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
-  const eligible = useMemo(
-    () =>
-      (providersQuery.data?.providers ?? []).filter(
-        (provider) => provider.agent === agent && provider.models.length > 0,
-      ),
-    [providersQuery.data, agent],
-  )
-
-  const match = providerId
-    ? eligible.find((p) => p.id === providerId && p.models.includes(model))
-    : eligible.find((p) => p.models.includes(model))
-  const selected = match && model ? `${match.id}::${model}` : CUSTOM
+  const providers = providersQuery.data?.providers ?? []
+  const provider = providers.find((item) => item.id === providerId)
 
   return (
-    <div className="grid gap-1.5">
+    <div className="flex flex-wrap items-center gap-2">
       <Select
-        value={selected}
-        onValueChange={(value) => {
-          if (value === CUSTOM) {
-            onChange({ providerId: undefined, model: "" })
-            return
-          }
-          const [pid, ...rest] = value.split("::")
-          const provider = eligible.find((item) => item.id === pid)
-          onChange({ providerId: pid, model: rest.join("::"), provider })
+        value={providerId}
+        onValueChange={(id) => {
+          const next = providers.find((item) => item.id === id)
+          if (next) onChange({ provider: next, model: next.models[0] ?? "" })
         }}
       >
-        <SelectTrigger className="w-full">
-          <SelectValue />
+        <SelectTrigger className="w-52">
+          <SelectValue placeholder="Provider…" />
         </SelectTrigger>
         <SelectContent>
-          {eligible.map((provider) => (
-            <SelectGroup key={provider.id}>
-              <SelectLabel className="flex items-center gap-1.5">
-                <ProviderIcon provider={provider} size={13} /> {provider.name}
-                {!provider.key_present && (
-                  <span className="font-normal text-warn-ink">· key missing</span>
+          {providers.map((item) => (
+            <SelectItem key={item.id} value={item.id}>
+              <span className="flex items-center gap-2">
+                <ProviderIcon provider={item} size={14} />
+                {item.name}
+                {item.auth === "api_key" && !item.key_present && (
+                  <span className="text-xs text-warn-ink">· key missing</span>
                 )}
-              </SelectLabel>
-              {provider.models.map((item) => (
-                <SelectItem
-                  key={`${provider.id}::${item}`}
-                  value={`${provider.id}::${item}`}
-                  className="font-mono text-xs"
-                >
-                  {item}
-                </SelectItem>
-              ))}
-            </SelectGroup>
+              </span>
+            </SelectItem>
           ))}
-          {eligible.length > 0 && <SelectSeparator />}
-          <SelectItem value={CUSTOM}>Custom model id…</SelectItem>
         </SelectContent>
       </Select>
-      {selected === CUSTOM && (
-        <Input
-          className="font-mono"
-          placeholder={placeholder ?? "model id (empty = runtime default)"}
-          value={model}
-          onChange={(event) => onChange({ providerId: undefined, model: event.target.value })}
-        />
+
+      <Select
+        value={model || RUNTIME_DEFAULT}
+        disabled={!provider}
+        onValueChange={(value) => {
+          if (provider) onChange({ provider, model: value === RUNTIME_DEFAULT ? "" : value })
+        }}
+      >
+        <SelectTrigger className="w-64 font-mono text-xs">
+          <SelectValue placeholder="Model…" />
+        </SelectTrigger>
+        <SelectContent>
+          {(provider?.models ?? []).map((item) => (
+            <SelectItem key={item} value={item} className="font-mono text-xs">
+              {item}
+            </SelectItem>
+          ))}
+          <SelectItem value={RUNTIME_DEFAULT} className="text-xs text-muted-foreground">
+            (runtime default)
+          </SelectItem>
+        </SelectContent>
+      </Select>
+
+      {provider && provider.models.length === 0 && (
+        <span className="text-xs text-muted-foreground">
+          No catalog yet —{" "}
+          <Link to="/providers" className="text-primary hover:underline">
+            refresh it on the AI providers page
+          </Link>
+        </span>
       )}
     </div>
   )

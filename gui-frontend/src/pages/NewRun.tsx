@@ -38,11 +38,12 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
-import { FamilyIcon, type FamilyId } from "@/components/brand"
-import { ModelPicker } from "@/components/model-picker"
+import { AGENT_TO_FAMILY, FamilyIcon, ProviderIcon } from "@/components/brand"
+import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/pages/Dashboard"
 import {
   api,
+  type AiProvider,
   type Contender,
   type ExperimentPlanItem,
   type Profile,
@@ -50,37 +51,16 @@ import {
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
-/* Model families map to runtimes per the repo's own convention. */
-export const FAMILIES: {
-  id: FamilyId
-  agent: string
-  label: string
-  note: string
-  suggestions: string[]
-}[] = [
-  { id: "claude", agent: "claude", label: "Claude", note: "via Claude Code", suggestions: ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"] },
-  { id: "gpt", agent: "codex", label: "GPT / OpenAI", note: "via Codex", suggestions: ["gpt-5.5"] },
-  { id: "gemini", agent: "gemini", label: "Gemini", note: "via Gemini CLI", suggestions: ["gemini-2.5-pro"] },
-  { id: "grok", agent: "grok", label: "Grok", note: "via Grok Build", suggestions: [] },
-  { id: "compat", agent: "opencode", label: "OpenAI-compatible", note: "Doubao, Qwen… via OpenCode", suggestions: ["doubao-seed-2-0-pro-260215"] },
-]
-
-const AUTH_LABELS: Record<string, string> = {
-  env: "Env API key",
-  global: "Local CLI login",
-  "copy-auth": "Copy login into sandbox",
-}
-
 const JUDGE_MODES = [
   { value: "single", label: "Single judge", note: "One session grades all rubrics. Fast." },
   { value: "parallel", label: "Per-rubric judges", note: "Independent judge per rubric. Strict." },
   { value: "both", label: "Both", note: "Run both to compare their agreement." },
 ]
 
+/* Only true run-time knobs are per-contender; endpoints and credentials
+   belong to providers (the resource side). */
 const PER_FIELD_OPTIONS = [
-  { id: "model", label: "Model id", locked: true },
-  { id: "credentials", label: "Credentials" },
-  { id: "gateway", label: "Gateway (OpenAI-compatible)" },
+  { id: "model", label: "Model", locked: true },
   { id: "thinking_effort", label: "Claude thinking effort" },
 ]
 
@@ -88,18 +68,9 @@ const STEPS = ["Tasks", "Contenders", "Shared config", "Review & launch"]
 
 interface ContenderDraft {
   key: string
-  family: FamilyId
+  provider_id: string
   model: string
-  provider_id?: string
-  auth_mode: string
   thinking_effort: string
-  opencode_provider: string
-  opencode_base_url: string
-  opencode_api_key_env: string
-}
-
-function familyOf(id: FamilyId) {
-  return FAMILIES.find((family) => family.id === id)!
 }
 
 function timestampName(prefix: string): string {
@@ -108,6 +79,34 @@ function timestampName(prefix: string): string {
   return `${prefix}_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(
     now.getHours(),
   )}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+}
+
+/* Front-end mirror of providers.contender_settings: a provider reference
+   fully determines runtime, auth mode, gateway flags, and env overrides. */
+function providerSettings(provider: AiProvider) {
+  const authMode = provider.auth === "cli_login" ? "global" : "env"
+  if (provider.kind === "openai-compatible") {
+    return {
+      auth_mode: authMode,
+      gateway: {
+        opencode_provider: provider.id,
+        opencode_base_url: provider.base_url || undefined,
+        opencode_api_key_env: provider.api_key_env || undefined,
+      },
+      env: undefined,
+    }
+  }
+  if (provider.kind === "anthropic" && provider.base_url) {
+    return {
+      auth_mode: authMode,
+      gateway: {},
+      env: {
+        ANTHROPIC_BASE_URL: { value: provider.base_url },
+        ANTHROPIC_AUTH_TOKEN: { from_env: provider.api_key_env || "ANTHROPIC_AUTH_TOKEN" },
+      },
+    }
+  }
+  return { auth_mode: authMode, gateway: {}, env: undefined }
 }
 
 let contenderCounter = 0
@@ -125,6 +124,7 @@ export default function NewRun() {
     () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
     [tasklib.data],
   )
+  const providers = providersQuery.data?.providers ?? []
 
   const [step, setStep] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -134,10 +134,9 @@ export default function NewRun() {
   const [contenders, setContenders] = useState<ContenderDraft[]>([])
   const [profileId, setProfileId] = useState<string | null>(null)
   const [shared, setShared] = useState<Partial<SharedConfig>>({})
-  const [perFields, setPerFields] = useState<string[]>(["model", "credentials", "gateway"])
+  const [perFields, setPerFields] = useState<string[]>(["model"])
   const [expName, setExpName] = useState(() => timestampName("exp"))
 
-  /* Adopt the default profile once loaded. */
   useEffect(() => {
     if (!profilesQuery.data || profileId !== null) return
     const payload = profilesQuery.data
@@ -164,20 +163,15 @@ export default function NewRun() {
     [],
   )
 
-  const addContender = (family: FamilyId) => {
+  const addContender = (provider: AiProvider) => {
     contenderCounter += 1
-    const spec = familyOf(family)
     setContenders((current) => [
       ...current,
       {
         key: `c${contenderCounter}`,
-        family,
-        model: spec.suggestions[0] ?? "",
-        auth_mode: String(shared.executor_auth_mode ?? "env"),
+        provider_id: provider.id,
+        model: provider.models[0] ?? "",
         thinking_effort: "none",
-        opencode_provider: "",
-        opencode_base_url: "",
-        opencode_api_key_env: "",
       },
     ])
   }
@@ -188,46 +182,23 @@ export default function NewRun() {
     )
 
   const apiContenders = useCallback((): Contender[] => {
-    const allProviders = providersQuery.data?.providers ?? []
-    return contenders.map((draft) => {
-      const spec = familyOf(draft.family)
-      const provider = draft.provider_id
-        ? allProviders.find((item) => item.id === draft.provider_id)
-        : undefined
-      /* A chosen provider supplies gateway flags (OpenAI-compatible) or an
-         Anthropic-gateway env override; secrets travel as env-var names only. */
-      const gateway =
-        provider && provider.kind === "openai-compatible"
-          ? {
-              opencode_provider: provider.id,
-              opencode_base_url: provider.base_url || undefined,
-              opencode_api_key_env: provider.api_key_env || undefined,
-            }
-          : {
-              opencode_provider: draft.opencode_provider.trim() || undefined,
-              opencode_base_url: draft.opencode_base_url.trim() || undefined,
-              opencode_api_key_env: draft.opencode_api_key_env.trim() || undefined,
-            }
-      const env =
-        provider && provider.kind === "anthropic" && provider.base_url
-          ? {
-              ANTHROPIC_BASE_URL: { value: provider.base_url },
-              ANTHROPIC_AUTH_TOKEN: { from_env: provider.api_key_env || "ANTHROPIC_AUTH_TOKEN" },
-            }
-          : undefined
-      return {
-        label: `${spec.label} ${draft.model || "default"}`.trim(),
-        agent: spec.agent,
-        model: draft.model.trim(),
-        auth_mode: perFields.includes("credentials")
-          ? draft.auth_mode
-          : String(shared.executor_auth_mode ?? "env"),
-        thinking_effort: perFields.includes("thinking_effort") ? draft.thinking_effort : "none",
-        ...gateway,
-        env,
-      }
+    return contenders.flatMap((draft) => {
+      const provider = providers.find((item) => item.id === draft.provider_id)
+      if (!provider) return []
+      const settings = providerSettings(provider)
+      return [
+        {
+          label: `${provider.name} ${draft.model || "default"}`.trim(),
+          agent: provider.agent,
+          model: draft.model.trim(),
+          auth_mode: settings.auth_mode,
+          thinking_effort: perFields.includes("thinking_effort") ? draft.thinking_effort : "none",
+          ...settings.gateway,
+          env: settings.env,
+        },
+      ]
     })
-  }, [contenders, perFields, shared.executor_auth_mode, providersQuery.data])
+  }, [contenders, providers, perFields])
 
   /* Authoritative plan preview on the review step. */
   const [plan, setPlan] = useState<{ plans: ExperimentPlanItem[] | null; error: string | null }>({
@@ -258,9 +229,12 @@ export default function NewRun() {
     }
   }, [step, expName, tasksDir, tasks, shared, apiContenders, contenders.length])
 
-  if (tasklib.isPending || profilesQuery.isPending) return <Skeleton className="h-96" />
+  if (tasklib.isPending || profilesQuery.isPending || providersQuery.isPending) {
+    return <Skeleton className="h-96" />
+  }
   if (tasklib.isError) return <ErrorNote message={(tasklib.error as Error).message} />
   if (profilesQuery.isError) return <ErrorNote message={(profilesQuery.error as Error).message} />
+  if (providersQuery.isError) return <ErrorNote message={(providersQuery.error as Error).message} />
 
   const activeLibrary = libraries.find((library) => library.dir === tasksDir)
   const taskCount = tasks.length || activeLibrary?.tasks.length || 0
@@ -302,7 +276,7 @@ export default function NewRun() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">New experiment</h1>
         <p className="text-sm text-muted-foreground">
-          One task set, one judge, many contender runtimes: comparable by construction.
+          One task set, one judge, many contender models: comparable by construction.
         </p>
       </div>
 
@@ -324,6 +298,7 @@ export default function NewRun() {
       )}
       {step === 1 && (
         <StepContenders
+          providers={providers}
           contenders={contenders}
           perFields={perFields}
           backend={String(shared.executor_backend ?? "local")}
@@ -350,12 +325,17 @@ export default function NewRun() {
               )
             }
           }}
+          providers={providers}
           shared={shared}
+          setShared={setShared}
           setSharedField={setSharedField}
           perFields={perFields}
           setPerFields={setPerFields}
           judgeConflicts={judgeConflicts.length}
-          hasNonCodex={contenders.some((draft) => familyOf(draft.family).agent !== "codex")}
+          hasNonCodex={contenders.some((draft) => {
+            const provider = providers.find((item) => item.id === draft.provider_id)
+            return provider ? provider.agent !== "codex" : false
+          })}
         />
       )}
       {step === 3 && (
@@ -554,9 +534,10 @@ function StepTasks({
   )
 }
 
-/* ---------- step 2: contenders ---------- */
+/* ---------- step 2: contenders (pure references to providers) ---------- */
 
 function StepContenders({
+  providers,
   contenders,
   perFields,
   backend,
@@ -564,10 +545,11 @@ function StepContenders({
   onUpdate,
   onRemove,
 }: {
+  providers: AiProvider[]
   contenders: ContenderDraft[]
   perFields: string[]
   backend: string
-  onAdd: (family: FamilyId) => void
+  onAdd: (provider: AiProvider) => void
   onUpdate: (key: string, patch: Partial<ContenderDraft>) => void
   onRemove: (key: string) => void
 }) {
@@ -576,24 +558,31 @@ function StepContenders({
       <Card>
         <CardContent className="grid gap-3">
           <div>
-            <Label>Add contenders</Label>
+            <Label>Add contenders from your AI providers</Label>
             <p className="text-xs text-muted-foreground">
-              Every contender runs the same tasks under the same judge. Add as many as you want
-              to compare; the runtime is mapped from the family.
+              Endpoint, credentials, and model catalog come from the provider; every contender
+              runs the same tasks under the same judge.
             </p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            {FAMILIES.map((family) => (
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {providers.map((provider) => (
               <button
-                key={family.id}
+                key={provider.id}
                 type="button"
-                onClick={() => onAdd(family.id)}
+                onClick={() => onAdd(provider)}
                 className="grid justify-items-center gap-1.5 rounded-md border p-3 text-center transition-colors hover:border-primary/50 hover:bg-accent/40"
               >
-                <FamilyIcon family={family.id} size={26} />
-                <span className="text-sm font-medium">{family.label}</span>
+                <ProviderIcon provider={provider} size={24} />
+                <span className="text-sm font-medium">{provider.name}</span>
                 <span className="text-[11px] leading-tight text-muted-foreground">
-                  {family.note}
+                  {provider.models.length
+                    ? `${provider.models.length} models`
+                    : "no catalog yet"}
+                  {provider.auth === "cli_login"
+                    ? " · CLI login"
+                    : provider.key_present
+                      ? ""
+                      : " · key missing"}
                 </span>
                 <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary">
                   <Plus className="size-3" /> Add
@@ -611,6 +600,7 @@ function StepContenders({
               key={draft.key}
               index={index}
               draft={draft}
+              providers={providers}
               perFields={perFields}
               backend={backend}
               onUpdate={(patch) => onUpdate(draft.key, patch)}
@@ -630,6 +620,7 @@ function StepContenders({
 function ContenderCard({
   index,
   draft,
+  providers,
   perFields,
   backend,
   onUpdate,
@@ -637,25 +628,38 @@ function ContenderCard({
 }: {
   index: number
   draft: ContenderDraft
+  providers: AiProvider[]
   perFields: string[]
   backend: string
   onUpdate: (patch: Partial<ContenderDraft>) => void
   onRemove: () => void
 }) {
-  const spec = familyOf(draft.family)
-  const dockerDowngraded = backend === "docker" && spec.agent !== "codex"
+  const provider = providers.find((item) => item.id === draft.provider_id)
+  const dockerDowngraded = backend === "docker" && provider?.agent !== "codex"
   return (
     <Card className="py-4">
       <CardContent className="grid gap-3 px-4">
-        <div className="flex items-center gap-3">
-          <FamilyIcon family={draft.family} model={draft.model} size={22} />
-          <span className="text-sm font-semibold">{spec.label}</span>
-          <Badge variant="outline" className="font-mono text-[11px] text-muted-foreground">
-            {spec.agent}
-          </Badge>
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">#{index + 1}</span>
+          <ProviderModelPicker
+            providerId={draft.provider_id}
+            model={draft.model}
+            onChange={({ provider: next, model }) =>
+              onUpdate({ provider_id: next.id, model })
+            }
+          />
+          {provider && (
+            <Badge variant="outline" className="font-mono text-[11px] text-muted-foreground">
+              {provider.agent}
+            </Badge>
+          )}
+          {provider?.auth === "cli_login" && (
+            <Badge variant="outline" className="text-[11px] text-muted-foreground">
+              CLI login
+            </Badge>
+          )}
           {dockerDowngraded && (
-            <Badge className="border-transparent bg-warn-soft text-warn-ink">
+            <Badge className="border-transparent bg-warn-soft text-[11px] text-warn-ink">
               runs locally — Docker is Codex-only
             </Badge>
           )}
@@ -669,97 +673,29 @@ function ContenderCard({
             <Trash2 className="size-4" />
           </Button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="grid gap-1.5">
-            <Label>Model</Label>
-            <ModelPicker
-              agent={spec.agent}
-              providerId={draft.provider_id}
-              model={draft.model}
-              placeholder={spec.suggestions[0] ?? "model id (empty = runtime default)"}
-              onChange={({ providerId, model }) =>
-                onUpdate({ provider_id: providerId, model })
-              }
-            />
-          </div>
-          {perFields.includes("credentials") && (
-            <div className="grid gap-1.5">
-              <Label>Credentials</Label>
-              <Select
-                value={draft.auth_mode}
-                onValueChange={(value) => onUpdate({ auth_mode: value })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(AUTH_LABELS)
-                    .filter(([value]) => value !== "copy-auth" || (backend === "docker" && spec.agent === "codex"))
-                    .map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-          {perFields.includes("thinking_effort") && spec.agent === "claude" && (
-            <div className="grid gap-1.5">
-              <Label>Thinking effort</Label>
-              <Select
-                value={draft.thinking_effort}
-                onValueChange={(value) => onUpdate({ thinking_effort: value })}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {["none", "low", "medium", "high"].map((effort) => (
-                    <SelectItem key={effort} value={effort}>
-                      {effort}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-        </div>
-        {draft.provider_id && (
-          <p className="text-xs text-muted-foreground">
-            Endpoint and credentials come from the{" "}
-            <span className="font-medium">{draft.provider_id}</span> provider (AI Providers page).
-          </p>
-        )}
-        {!draft.provider_id && perFields.includes("gateway") && spec.agent === "opencode" && (
-          <div className="grid gap-3 rounded-md border bg-muted/30 p-3 sm:grid-cols-3">
-            <div className="grid gap-1.5">
-              <Label>Provider id</Label>
-              <Input
-                className="font-mono"
-                placeholder="yunwu"
-                value={draft.opencode_provider}
-                onChange={(event) => onUpdate({ opencode_provider: event.target.value })}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Base URL</Label>
-              <Input
-                className="font-mono"
-                placeholder="https://yunwu.ai/v1"
-                value={draft.opencode_base_url}
-                onChange={(event) => onUpdate({ opencode_base_url: event.target.value })}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>API key env var</Label>
-              <Input
-                className="font-mono"
-                placeholder="OPENAI_API_KEY"
-                value={draft.opencode_api_key_env}
-                onChange={(event) => onUpdate({ opencode_api_key_env: event.target.value })}
-              />
-            </div>
+        {perFields.includes("thinking_effort") && provider?.agent === "claude" && (
+          <div className="flex items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Thinking effort</Label>
+            <RadioGroup
+              value={draft.thinking_effort}
+              onValueChange={(value) => onUpdate({ thinking_effort: value })}
+              className="flex flex-wrap gap-1.5"
+            >
+              {["none", "low", "medium", "high"].map((effort) => (
+                <label
+                  key={effort}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
+                    draft.thinking_effort === effort
+                      ? "border-primary bg-accent/60"
+                      : "hover:border-primary/40",
+                  )}
+                >
+                  <RadioGroupItem value={effort} className="size-3" />
+                  {effort}
+                </label>
+              ))}
+            </RadioGroup>
           </div>
         )}
       </CardContent>
@@ -775,7 +711,9 @@ function StepShared({
   defaultProfileId,
   profileId,
   onSelectProfile,
+  providers,
   shared,
+  setShared,
   setSharedField,
   perFields,
   setPerFields,
@@ -787,7 +725,9 @@ function StepShared({
   defaultProfileId: string | null
   profileId: string | null
   onSelectProfile: (id: string) => void
+  providers: AiProvider[]
   shared: Partial<SharedConfig>
+  setShared: React.Dispatch<React.SetStateAction<Partial<SharedConfig>>>
   setSharedField: (key: keyof SharedConfig, value: unknown) => void
   perFields: string[]
   setPerFields: (fields: string[]) => void
@@ -796,9 +736,9 @@ function StepShared({
 }) {
   const queryClient = useQueryClient()
   const [saving, setSaving] = useState(false)
-  const judgeFamily =
-    FAMILIES.find((family) => family.agent === String(shared.evaluator_agent ?? "codex"))?.id ??
-    "gpt"
+  const judgeProvider = providers.find(
+    (item) => item.id === String(shared.evaluator_provider_id ?? ""),
+  )
 
   const saveToProfile = async () => {
     if (!profileId) return
@@ -863,60 +803,41 @@ function StepShared({
             <Scale className="size-4 text-live-ink" />
             <span className="text-sm font-semibold">Judge — shared across all contenders</span>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3">
             <div className="grid gap-1.5">
-              <Label>Judge family</Label>
-              <Select
-                value={judgeFamily}
-                onValueChange={(id) =>
-                  setSharedField("evaluator_agent", familyOf(id as FamilyId).agent)
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {FAMILIES.map((family) => (
-                    <SelectItem key={family.id} value={family.id}>
-                      <span className="flex items-center gap-2">
-                        <FamilyIcon family={family.id} size={15} /> {family.label}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Judge model</Label>
-              <ModelPicker
-                agent={String(shared.evaluator_agent ?? "codex")}
+              <Label>Judge model (from a provider)</Label>
+              <ProviderModelPicker
+                providerId={judgeProvider?.id}
                 model={String(shared.evaluator_model ?? "")}
-                providerId={undefined}
-                placeholder="gpt-5.5"
-                onChange={({ model }) => setSharedField("evaluator_model", model)}
+                onChange={({ provider, model }) =>
+                  setShared((current) => ({
+                    ...current,
+                    evaluator_provider_id: provider.id,
+                    evaluator_agent: provider.agent,
+                    evaluator_model: model,
+                    evaluator_auth_mode: provider.auth === "cli_login" ? "global" : "env",
+                    evaluator_gateway:
+                      provider.kind === "openai-compatible"
+                        ? {
+                            opencode_provider: provider.id,
+                            opencode_base_url: provider.base_url || undefined,
+                            opencode_api_key_env: provider.api_key_env || undefined,
+                          }
+                        : null,
+                  }))
+                }
               />
+              {judgeProvider && (
+                <p className="text-xs text-muted-foreground">
+                  Runtime <code className="font-mono">{judgeProvider.agent}</code> · credentials
+                  from the {judgeProvider.name} provider
+                </p>
+              )}
             </div>
-            <div className="grid gap-1.5">
-              <Label>Judge credentials</Label>
-              <Select
-                value={String(shared.evaluator_auth_mode ?? "env")}
-                onValueChange={(value) => setSharedField("evaluator_auth_mode", value)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {["env", "global"].map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {AUTH_LABELS[value]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Judge timeout (s)</Label>
+            <div className="grid max-w-52 gap-1.5">
+              <Label htmlFor="judge-timeout">Judge timeout (s)</Label>
               <Input
+                id="judge-timeout"
                 type="number"
                 min={1}
                 placeholder="900"
@@ -1039,8 +960,8 @@ function StepShared({
         <CardContent className="grid gap-2 px-4">
           <span className="text-sm font-semibold">Per-contender fields</span>
           <p className="text-xs text-muted-foreground">
-            Which settings each contender fills in individually; everything else comes from this
-            shared configuration. Stored in the profile.
+            Which run-time knobs each contender sets individually. Endpoints and credentials
+            always come from the provider.
           </p>
           <div className="flex flex-wrap gap-2">
             {PER_FIELD_OPTIONS.map((option) => {
@@ -1070,26 +991,6 @@ function StepShared({
               )
             })}
           </div>
-          {!perFields.includes("credentials") && (
-            <div className="grid max-w-xs gap-1.5 pt-1">
-              <Label>Shared contender credentials</Label>
-              <Select
-                value={String(shared.executor_auth_mode ?? "env")}
-                onValueChange={(value) => setSharedField("executor_auth_mode", value)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {["env", "global"].map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {AUTH_LABELS[value]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
         </CardContent>
       </Card>
     </div>
@@ -1159,6 +1060,16 @@ function StepReview({
         />
       </div>
 
+      {judgeConflicts > 0 && (
+        <Alert className="border-warn-ink/40 bg-warn-soft/60">
+          <AlertTriangle className="size-4" />
+          <AlertTitle>Self-grading configuration</AlertTitle>
+          <AlertDescription>
+            The judge and a contender share the same model. Scores may be biased.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card className="gap-0 overflow-hidden py-0">
         <div className="border-b bg-muted/30 px-4 py-2.5 text-sm font-semibold">
           Runs that will launch
@@ -1173,9 +1084,7 @@ function StepReview({
               <div key={item.run_id} className="grid gap-1 px-4 py-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <FamilyIcon
-                    family={
-                      FAMILIES.find((family) => family.agent === item.agent)?.id ?? "compat"
-                    }
+                    family={AGENT_TO_FAMILY[item.agent] ?? "compat"}
                     model={item.model}
                     size={18}
                   />

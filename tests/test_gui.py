@@ -697,10 +697,12 @@ class ProviderTest(unittest.TestCase):
         self.assertFalse(loaded["persisted"])
         ids = {provider["id"] for provider in loaded["providers"]}
         self.assertIn("anthropic", ids)
+        self.assertIn("anthropic-cli", ids)
         self.assertIn("vercel-ai-gateway", ids)
         for provider in loaded["providers"]:
             self.assertIn("agent", provider)
             self.assertIn("key_present", provider)
+            self.assertIn(provider["auth"], ("api_key", "cli_login"))
 
     def test_save_and_reload(self) -> None:
         saved = providers.save_providers(
@@ -738,6 +740,92 @@ class ProviderTest(unittest.TestCase):
                     ]
                 },
             )
+        with self.assertRaises(ProviderError):
+            providers.save_providers(
+                self.runs_dir,
+                {"providers": [{"id": "a", "kind": "openai", "auth": "nope", "models": []}]},
+            )
+        with self.assertRaises(ProviderError):
+            providers.save_providers(
+                self.runs_dir,
+                {
+                    "providers": [
+                        {
+                            "id": "gw",
+                            "kind": "openai-compatible",
+                            "auth": "cli_login",
+                            "models": [],
+                        }
+                    ]
+                },
+            )
+
+    def test_refresh_models_from_api(self) -> None:
+        import os
+
+        calls = {}
+
+        def fake_fetch(url, headers=None):
+            calls["url"] = url
+            calls["headers"] = headers or {}
+            return {"data": [{"id": "m-2"}, {"id": "m-1"}]}
+
+        os.environ["STARBENCH_TEST_KEY"] = "k"
+        original = providers._fetch_json
+        providers._fetch_json = fake_fetch
+        try:
+            providers.save_providers(
+                self.runs_dir,
+                {
+                    "providers": [
+                        {
+                            "id": "gw",
+                            "kind": "openai-compatible",
+                            "auth": "api_key",
+                            "base_url": "https://gw.example/v1",
+                            "api_key_env": "STARBENCH_TEST_KEY",
+                            "models": [],
+                        }
+                    ]
+                },
+            )
+            result = providers.refresh_provider_models(self.runs_dir, "gw")
+        finally:
+            providers._fetch_json = original
+            del os.environ["STARBENCH_TEST_KEY"]
+        provider = result["providers"][0]
+        self.assertEqual(provider["models"], ["m-1", "m-2"])
+        self.assertEqual(provider["models_source"], "api")
+        self.assertIn("gw.example/v1/models", calls["url"])
+        self.assertEqual(calls["headers"].get("Authorization"), "Bearer k")
+
+    def test_refresh_models_cli_login_falls_back_to_catalog(self) -> None:
+        def fake_fetch(url, headers=None):
+            self.assertIn("ai-gateway.vercel.sh", url)
+            return {"data": [{"id": "anthropic/claude-opus-4.8"}, {"id": "openai/gpt-5.5"}]}
+
+        original = providers._fetch_json
+        providers._fetch_json = fake_fetch
+        try:
+            providers.save_providers(
+                self.runs_dir,
+                {
+                    "providers": [
+                        {
+                            "id": "anthropic-cli",
+                            "kind": "anthropic",
+                            "auth": "cli_login",
+                            "models": [],
+                        }
+                    ]
+                },
+            )
+            result = providers.refresh_provider_models(self.runs_dir, "anthropic-cli")
+        finally:
+            providers._fetch_json = original
+        provider = result["providers"][0]
+        self.assertEqual(provider["models"], ["claude-opus-4.8"])
+        self.assertEqual(provider["models_source"], "catalog")
 
     def test_contender_settings_openai_compatible(self) -> None:
         settings = providers.contender_settings(
@@ -765,8 +853,74 @@ class ProviderTest(unittest.TestCase):
             "claude-opus-4-8",
         )
         self.assertEqual(settings["agent"], "claude")
+        self.assertEqual(settings["auth_mode"], "env")
         self.assertEqual(settings["env"]["ANTHROPIC_BASE_URL"], {"value": "https://gw.example"})
         self.assertEqual(settings["env"]["ANTHROPIC_AUTH_TOKEN"], {"from_env": "GW_TOKEN"})
+
+    def test_contender_settings_cli_login_maps_to_global_auth(self) -> None:
+        settings = providers.contender_settings(
+            {"id": "anthropic-cli", "kind": "anthropic", "auth": "cli_login"},
+            "claude-opus-4-8",
+        )
+        self.assertEqual(settings["auth_mode"], "global")
+        self.assertEqual(settings["env"], {})
+
+    def test_judge_gateway_conflict_detected(self) -> None:
+        tasks_dir = self.tmp / "tasks"
+        tasks_dir.mkdir(exist_ok=True)
+        payload = {
+            "name": "exp_gwconflict",
+            "tasks_dir": str(tasks_dir),
+            "tasks": [],
+            "shared": {
+                "evaluator_agent": "opencode",
+                "evaluator_gateway": {
+                    "opencode_provider": "gw-a",
+                    "opencode_base_url": "https://a.example/v1",
+                    "opencode_api_key_env": "A_KEY",
+                },
+                "judge_mode": "single",
+            },
+            "contenders": [
+                {
+                    "label": "doubao",
+                    "agent": "opencode",
+                    "model": "doubao",
+                    "auth_mode": "env",
+                    "opencode_provider": "gw-b",
+                    "opencode_base_url": "https://b.example/v1",
+                    "opencode_api_key_env": "B_KEY",
+                }
+            ],
+        }
+        with self.assertRaises(ExperimentError):
+            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+
+    def test_judge_gateway_used_when_contender_not_opencode(self) -> None:
+        tasks_dir = self.tmp / "tasks"
+        tasks_dir.mkdir(exist_ok=True)
+        payload = {
+            "name": "exp_gwjudge",
+            "tasks_dir": str(tasks_dir),
+            "tasks": [],
+            "shared": {
+                "evaluator_agent": "opencode",
+                "evaluator_model": "doubao-judge",
+                "evaluator_gateway": {
+                    "opencode_provider": "gw-a",
+                    "opencode_base_url": "https://a.example/v1",
+                    "opencode_api_key_env": "A_KEY",
+                },
+                "judge_mode": "single",
+            },
+            "contenders": [
+                {"label": "claude", "agent": "claude", "model": "claude-opus-4-8", "auth_mode": "global"}
+            ],
+        }
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        joined = " ".join(plan["plans"][0]["argv"])
+        self.assertIn("--opencode-base-url https://a.example/v1", joined)
+        self.assertIn("--opencode-provider gw-a", joined)
 
     def test_resolve_env_spec(self) -> None:
         import os

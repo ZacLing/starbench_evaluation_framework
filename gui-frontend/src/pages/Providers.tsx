@@ -1,12 +1,21 @@
 import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { CheckCircle2, CloudDownload, KeyRound, Loader2, Pencil, Plus, Trash2 } from "lucide-react"
+import {
+  CheckCircle2,
+  KeyRound,
+  MonitorCheck,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import {
   Select,
   SelectContent,
@@ -22,10 +31,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Textarea } from "@/components/ui/textarea"
 import { ProviderIcon } from "@/components/brand"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type AiProvider, type ProviderKind } from "@/lib/api"
+import { fmtTime } from "@/lib/format"
+import { cn } from "@/lib/utils"
 
 const KIND_LABELS: Record<ProviderKind, string> = {
   anthropic: "Anthropic API (Claude Code runtime)",
@@ -42,6 +52,7 @@ export default function Providers() {
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const [editing, setEditing] = useState<Draft | null>(null)
   const [isNew, setIsNew] = useState(false)
+  const [refreshing, setRefreshing] = useState<string | null>(null)
 
   if (providersQuery.isPending) return <Skeleton className="h-96" />
   if (providersQuery.isError) return <ErrorNote message={(providersQuery.error as Error).message} />
@@ -63,10 +74,26 @@ export default function Providers() {
     id: provider.id,
     name: provider.name,
     kind: provider.kind,
+    auth: provider.auth,
     base_url: provider.base_url,
     api_key_env: provider.api_key_env,
     models: provider.models,
+    models_fetched_at: provider.models_fetched_at,
+    models_source: provider.models_source,
   })
+
+  const refreshModels = async (provider: AiProvider) => {
+    setRefreshing(provider.id)
+    try {
+      await api.refreshProviderModels(provider.id)
+      queryClient.invalidateQueries({ queryKey: ["providers"] })
+      toast.success(`Model catalog for ${provider.name} refreshed.`)
+    } catch (error) {
+      toast.error((error as Error).message)
+    } finally {
+      setRefreshing(null)
+    }
+  }
 
   return (
     <div className="grid gap-6">
@@ -74,8 +101,8 @@ export default function Providers() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">AI providers</h1>
           <p className="text-sm text-muted-foreground">
-            Endpoints, credentials, and model catalogs used by the experiment wizard
-            {payload.persisted ? "" : " — built-in presets, saved on first edit"}
+            Endpoints, credentials, and model catalogs — the resource side of every experiment
+            {payload.persisted ? "" : " (built-in presets, saved on first edit)"}
           </p>
         </div>
         <Button
@@ -86,9 +113,12 @@ export default function Providers() {
               id: "",
               name: "",
               kind: "openai-compatible",
+              auth: "api_key",
               base_url: "",
               api_key_env: "OPENAI_API_KEY",
               models: [],
+              models_fetched_at: null,
+              models_source: null,
             })
           }}
         >
@@ -105,7 +135,11 @@ export default function Providers() {
                 <span className="min-w-0 flex-1 truncate text-sm font-semibold">
                   {provider.name}
                 </span>
-                {provider.key_present ? (
+                {provider.auth === "cli_login" ? (
+                  <Badge className="gap-1 border-transparent bg-accent text-accent-foreground">
+                    <MonitorCheck className="size-3" /> CLI login
+                  </Badge>
+                ) : provider.key_present ? (
                   <Badge className="gap-1 border-transparent bg-pass-soft text-pass-ink">
                     <KeyRound className="size-3" /> key set
                   </Badge>
@@ -122,13 +156,30 @@ export default function Providers() {
                     {provider.base_url}
                   </span>
                 )}
-                <span className="font-mono">${provider.api_key_env || "—"}</span>
+                {provider.auth === "api_key" && (
+                  <span className="font-mono">${provider.api_key_env || "—"}</span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">
                   {provider.models.length} model{provider.models.length === 1 ? "" : "s"}
+                  {provider.models_fetched_at &&
+                    ` · ${provider.models_source === "catalog" ? "catalog snapshot" : "from API"} ${fmtTime(provider.models_fetched_at)}`}
                 </span>
                 <div className="ml-auto flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    aria-label={`Refresh models for ${provider.name}`}
+                    title="Refresh the model catalog from the provider's API"
+                    disabled={refreshing === provider.id}
+                    onClick={() => refreshModels(provider)}
+                  >
+                    <RefreshCw
+                      className={cn("size-3.5", refreshing === provider.id && "animate-spin")}
+                    />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -168,19 +219,14 @@ export default function Providers() {
         isNew={isNew}
         onClose={() => setEditing(null)}
         onSave={async (draft) => {
-          const others = payload.providers.map(bare).filter((item) => item.id !== draft.id)
           if (isNew && payload.providers.some((item) => item.id === draft.id)) {
             toast.error(`Provider id ${draft.id} already exists.`)
             return
           }
-          const ok = await persist(
-            isNew ? [...payload.providers.map(bare), draft] : [...others, draft].sort(
-              (a, b) =>
-                payload.providers.findIndex((p) => p.id === a.id) -
-                payload.providers.findIndex((p) => p.id === b.id),
-            ),
-            `Provider ${draft.name || draft.id} saved.`,
-          )
+          const next = isNew
+            ? [...payload.providers.map(bare), draft]
+            : payload.providers.map((item) => (item.id === draft.id ? draft : bare(item)))
+          const ok = await persist(next, `Provider ${draft.name || draft.id} saved.`)
           if (ok) setEditing(null)
         }}
       />
@@ -200,45 +246,8 @@ function ProviderEditor({
   onSave: (draft: Draft) => void
 }) {
   const [form, setForm] = useState<Draft | null>(null)
-  const [importing, setImporting] = useState(false)
-
-  const set = (patch: Partial<Draft>) =>
-    setForm((existing) => ({ ...(existing ?? draft!), ...patch }))
-
   const value = form ?? draft
-
-  const importCatalog = async () => {
-    if (!value) return
-    setImporting(true)
-    try {
-      const catalog = await api.vercelCatalog()
-      let models = catalog.models
-      if (value.kind !== "openai-compatible") {
-        const creator =
-          value.kind === "anthropic"
-            ? "anthropic"
-            : value.kind === "openai"
-              ? "openai"
-              : value.kind === "google"
-                ? "google"
-                : "xai"
-        models = catalog.models
-          .filter((model) => model.startsWith(`${creator}/`))
-          .map((model) => model.slice(creator.length + 1))
-      }
-      if (!models.length) {
-        toast.error("No catalog models match this provider kind.")
-        return
-      }
-      const merged = Array.from(new Set([...(value.models ?? []), ...models]))
-      set({ models: merged })
-      toast.success(`Imported ${models.length} models from the Vercel AI Gateway catalog.`)
-    } catch (error) {
-      toast.error((error as Error).message)
-    } finally {
-      setImporting(false)
-    }
-  }
+  const set = (patch: Partial<Draft>) => setForm((existing) => ({ ...(existing ?? draft!), ...patch }))
 
   return (
     <Sheet
@@ -254,7 +263,8 @@ function ProviderEditor({
         <SheetHeader className="border-b">
           <SheetTitle>{isNew ? "Add provider" : `Edit ${draft?.name ?? ""}`}</SheetTitle>
           <SheetDescription>
-            Keys stay in environment variables; the console stores only the variable name.
+            Keys stay in environment variables; the model catalog is refreshed from the
+            provider's own API.
           </SheetDescription>
         </SheetHeader>
         {value && (
@@ -299,6 +309,49 @@ function ProviderEditor({
               </p>
             </div>
             <div className="grid gap-1.5">
+              <Label>Credentials</Label>
+              <RadioGroup
+                value={value.auth}
+                onValueChange={(auth) => set({ auth: auth as Draft["auth"] })}
+                className="grid gap-2"
+              >
+                <label
+                  className={cn(
+                    "flex cursor-pointer items-start gap-3 rounded-md border p-3",
+                    value.auth === "api_key" ? "border-primary bg-accent/60" : "hover:border-primary/40",
+                  )}
+                >
+                  <RadioGroupItem value="api_key" className="mt-0.5" />
+                  <span>
+                    <span className="block text-sm font-medium">API key</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Read from an environment variable; enables catalog refresh from the API.
+                    </span>
+                  </span>
+                </label>
+                <label
+                  className={cn(
+                    "flex cursor-pointer items-start gap-3 rounded-md border p-3",
+                    value.kind === "openai-compatible" && "cursor-not-allowed opacity-50",
+                    value.auth === "cli_login" ? "border-primary bg-accent/60" : "hover:border-primary/40",
+                  )}
+                >
+                  <RadioGroupItem
+                    value="cli_login"
+                    className="mt-0.5"
+                    disabled={value.kind === "openai-compatible"}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">Local CLI login</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Uses the runtime CLI's own login on this machine; the catalog falls back
+                      to a public vendor snapshot.
+                    </span>
+                  </span>
+                </label>
+              </RadioGroup>
+            </div>
+            <div className="grid gap-1.5">
               <Label>Base URL</Label>
               <Input
                 className="font-mono"
@@ -316,40 +369,28 @@ function ProviderEditor({
                 </p>
               )}
             </div>
-            <div className="grid gap-1.5">
-              <Label>API key environment variable</Label>
-              <Input
-                className="font-mono"
-                placeholder="OPENAI_API_KEY"
-                value={value.api_key_env}
-                onChange={(event) => set({ api_key_env: event.target.value })}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <div className="flex items-center justify-between">
-                <Label>Models (one per line)</Label>
-                <Button variant="outline" size="sm" disabled={importing} onClick={importCatalog}>
-                  {importing ? <Loader2 className="animate-spin" /> : <CloudDownload />}
-                  Import from Vercel AI Gateway
-                </Button>
+            {value.auth === "api_key" && (
+              <div className="grid gap-1.5">
+                <Label>API key environment variable</Label>
+                <Input
+                  className="font-mono"
+                  placeholder="OPENAI_API_KEY"
+                  value={value.api_key_env}
+                  onChange={(event) => set({ api_key_env: event.target.value })}
+                />
               </div>
-              <Textarea
-                className="min-h-40 font-mono text-xs"
-                value={value.models.join("\n")}
-                placeholder={"gpt-5.5\nanthropic/claude-opus-4.8"}
-                onChange={(event) => set({ models: event.target.value.split("\n") })}
-              />
-            </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              The model catalog is not edited by hand: save, then use the refresh button on the
+              provider card to pull the list from the API.
+            </p>
             <div className="flex justify-end gap-2 border-t pt-4">
               <Button variant="outline" onClick={onClose}>
                 Cancel
               </Button>
               <Button
                 onClick={() => {
-                  onSave({
-                    ...value,
-                    models: value.models.map((model) => model.trim()).filter(Boolean),
-                  })
+                  onSave(value)
                   setForm(null)
                 }}
               >

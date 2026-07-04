@@ -140,6 +140,14 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 self._handle_save_profiles()
             elif segments == ["api", "providers"]:
                 self._handle_save_providers()
+            elif (
+                len(segments) == 4
+                and segments[:2] == ["api", "providers"]
+                and segments[3] == "refresh-models"
+            ):
+                self._send_json(
+                    providers.refresh_provider_models(self.state.runs_dir, segments[2])
+                )
             else:
                 self._send_error_json("Not found.", HTTPStatus.NOT_FOUND)
         except (LaunchError, LibraryError, ExperimentError, ProviderError) as error:
@@ -203,8 +211,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json(experiments.load_profiles(state.runs_dir))
         elif segments == ["providers"]:
             self._send_json(providers.load_providers(state.runs_dir))
-        elif segments == ["catalog", "vercel"]:
-            self._send_json(providers.fetch_vercel_catalog())
         elif segments == ["experiments"]:
             self._send_json({"experiments": experiments.list_experiments(state.runs_dir, active)})
         elif len(segments) == 2 and segments[0] == "experiments":
