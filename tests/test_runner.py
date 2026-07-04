@@ -814,6 +814,38 @@ class CustomRuntimeSpecTests(unittest.TestCase):
             write_custom_final_output(stdout_path, final_path, parser="headless-json", output_schema=schema_path)
             self.assertEqual(json.loads(final_path.read_text(encoding="utf-8")), {"results": []})
 
+    def test_parse_args_resolves_custom_agents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            root = tmp_path / "runtimes"
+            self.write_runtime(root, "fake", {"id": "fake", "command": "fakecli", "parser": "text"})
+            args = parse_args(
+                [
+                    "--tasks-dir", str(tmp_path), "--runs-dir", str(tmp_path),
+                    "--runtimes-dir", str(root),
+                    "--executor-agent", "custom:fake",
+                    "--evaluator-agent", "codex",
+                ]
+            )
+            self.assertEqual(args.executor_agent, "custom:fake")
+            self.assertEqual(args.executor_runtime_spec.id, "fake")
+            self.assertIsNone(args.evaluator_runtime_spec)
+            self.assertEqual(args.executor_backend, "local")
+
+    def test_parse_args_rejects_unknown_or_invalid_custom_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with self.assertRaises(SystemExit):
+                parse_args(
+                    ["--tasks-dir", str(tmp_path), "--runs-dir", str(tmp_path),
+                     "--runtimes-dir", str(tmp_path), "--executor-agent", "custom:missing"]
+                )
+            with self.assertRaises(SystemExit):
+                parse_args(
+                    ["--tasks-dir", str(tmp_path), "--runs-dir", str(tmp_path),
+                     "--executor-agent", "franken-cli"]
+                )
+
     def test_load_custom_runtime_rejects_bad_configs(self) -> None:
         from starbench.runner.custom_runtime import load_custom_runtime
 

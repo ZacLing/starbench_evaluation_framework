@@ -31,6 +31,7 @@ from .codex_process import (
     write_headless_final_output,
     write_opencode_final_output,
 )
+from .custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .evaluation import aggregate_results, normalize_parallel_results, normalize_single_result, write_aggregate
 from .models import Rubric, TaskRunSpec, TaskSpec
 from .progress import BenchmarkProgress, make_benchmark_progress
@@ -43,6 +44,8 @@ PROJECT_ROOT = Path.cwd()
 DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks"
 DEFAULT_RUNS_DIR = PROJECT_ROOT / "runs"
 DEFAULT_EXECUTOR_SKILLS_DIR = PROJECT_ROOT / "executor_skills"
+DEFAULT_RUNTIMES_DIR = PROJECT_ROOT / "runtimes"
+BUILTIN_AGENTS = {"codex", "claude", "opencode", "grok", "gemini"}
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 IGNORED_EXECUTOR_SKILL_NAMES = {".DS_Store", ".git", "__pycache__"}
 CLAUDE_THINKING_EFFORT_INSTRUCTIONS = {
@@ -1677,21 +1680,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--executor-agent",
-        choices=["codex", "claude", "opencode", "grok", "gemini"],
         default="codex",
         help=(
             "Executor runtime: codex for GPT/OpenAI-family, claude for Claude-family, "
-            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI."
+            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI, "
+            "or custom:<id> for a runtime defined in --runtimes-dir."
         ),
     )
     parser.add_argument(
         "--evaluator-agent",
-        choices=["codex", "claude", "opencode", "grok", "gemini"],
         default="codex",
         help=(
             "Evaluator runtime: codex for GPT/OpenAI-family, claude for Claude-family, "
-            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI."
+            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI, "
+            "or custom:<id> for a runtime defined in --runtimes-dir."
         ),
+    )
+    parser.add_argument(
+        "--runtimes-dir",
+        type=Path,
+        default=DEFAULT_RUNTIMES_DIR,
+        help="Directory containing custom runtime configs (<id>.json) for custom:<id> agents.",
     )
     parser.add_argument(
         "--claude-thinking-effort",
@@ -1809,6 +1818,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.rigor_mode = "select"
     if args.rigor_mode == "select" and not args.rigor:
         parser.error("--rigor-mode select requires at least one --rigor")
+    args.runtimes_dir = args.runtimes_dir.resolve()
+
+    def resolve_runtime_spec(value: str, flag: str) -> CustomRuntimeSpec | None:
+        if value in BUILTIN_AGENTS:
+            return None
+        if value.startswith("custom:"):
+            try:
+                return load_custom_runtime(args.runtimes_dir, value.split(":", 1)[1])
+            except ValueError as exc:
+                parser.error(str(exc))
+        parser.error(f"{flag} must be one of {sorted(BUILTIN_AGENTS)} or custom:<id>, got {value!r}")
+        return None
+
+    args.executor_runtime_spec = resolve_runtime_spec(args.executor_agent, "--executor-agent")
+    args.evaluator_runtime_spec = resolve_runtime_spec(args.evaluator_agent, "--evaluator-agent")
     if args.executor_backend is None:
         args.executor_backend = "docker" if args.executor_agent == "codex" else "local"
     elif args.executor_backend == "docker" and args.executor_agent != "codex":
