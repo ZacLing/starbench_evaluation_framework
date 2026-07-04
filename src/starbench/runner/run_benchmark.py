@@ -28,6 +28,7 @@ from .codex_process import (
     prepare_grok_env,
     prepare_opencode_env,
     prepare_auth_home,
+    run_claude_process_in_docker,
     run_codex_process,
     run_codex_process_in_docker,
     run_custom_process_in_docker,
@@ -489,7 +490,7 @@ async def run_executor(
 ) -> Dict[str, Any]:
     task = task_run.task
     logs = paths["logs"]
-    if agent in {"claude", "opencode", "grok", "gemini"} and executor_backend != "local":
+    if agent in {"opencode", "grok", "gemini"} and executor_backend != "local":
         raise ValueError(f"{agent} executor currently supports --executor-backend local")
     if agent.startswith("custom:") and executor_backend != "local":
         if custom_spec is None or custom_spec.docker_image is None:
@@ -543,31 +544,47 @@ async def run_executor(
                     f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
                 )
     elif agent == "claude":
-        command = build_claude_print_command(
-            claude_bin,
-            cwd=paths["workspace"],
-            model=model,
-            permission_mode="acceptEdits",
-            allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
-            max_turns=claude_max_turns,
-            output_format="stream-json",
-        )
-        env = prepare_claude_env(paths["codex_home"] / "claude_executor", auth_mode)
-        result = await run_codex_process(
-            command,
-            cwd=paths["workspace"],
-            prompt=append_claude_thinking_instruction(
-                build_executor_prompt(
-                    task_run,
-                    executor_skill_location=executor_skill_prompt_location(agent),
-                ),
-                claude_thinking_effort,
+        claude_prompt = append_claude_thinking_instruction(
+            build_executor_prompt(
+                task_run,
+                executor_skill_location=executor_skill_prompt_location(agent),
             ),
-            env=env,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            timeout_seconds=task.timeout_seconds,
+            claude_thinking_effort,
         )
+        if executor_backend == "docker":
+            result = await run_claude_process_in_docker(
+                claude_bin=claude_bin,
+                docker_bin=docker_bin,
+                docker_image=docker_image,
+                workspace=paths["workspace"],
+                prompt=claude_prompt,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+                model=model,
+                allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
+                max_turns=claude_max_turns,
+            )
+        else:
+            command = build_claude_print_command(
+                claude_bin,
+                cwd=paths["workspace"],
+                model=model,
+                permission_mode="acceptEdits",
+                allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
+                max_turns=claude_max_turns,
+                output_format="stream-json",
+            )
+            env = prepare_claude_env(paths["codex_home"] / "claude_executor", auth_mode)
+            result = await run_codex_process(
+                command,
+                cwd=paths["workspace"],
+                prompt=claude_prompt,
+                env=env,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+            )
         if result.status == "success":
             try:
                 write_claude_stream_final_output(logs / "events.jsonl", logs / "final.md")
@@ -1968,7 +1985,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.executor_runtime_spec = resolve_runtime_spec(args.executor_agent, "--executor-agent")
     args.evaluator_runtime_spec = resolve_runtime_spec(args.evaluator_agent, "--evaluator-agent")
     def backend_supports_docker(agent: str, spec: CustomRuntimeSpec | None) -> bool:
-        if agent == "codex":
+        if agent in {"codex", "claude"}:
             return True
         return agent.startswith("custom:") and spec is not None and spec.docker_image is not None
 

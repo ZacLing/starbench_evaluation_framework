@@ -1051,6 +1051,91 @@ async def run_codex_process_in_docker(
     return result
 
 
+CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+
+
+def build_claude_docker_command(
+    *,
+    claude_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    model: str | None,
+    allowed_tools: str | None,
+    max_turns: int | None,
+    auth_env: Dict[str, str],
+    container_name: str | None = None,
+) -> List[str]:
+    inner_command = build_claude_print_command(
+        claude_bin,
+        cwd=Path("/workspace"),
+        model=model,
+        permission_mode="acceptEdits",
+        allowed_tools=allowed_tools,
+        max_turns=max_turns,
+        output_format="stream-json",
+    )
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=list(CLAUDE_DOCKER_ENV_WHITELIST),
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_env={
+            "CLAUDE_CONFIG_DIR": "/workspace/.runner/claude_home",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        },
+    )
+
+
+async def run_claude_process_in_docker(
+    *,
+    claude_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    prompt: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    model: str | None,
+    allowed_tools: str | None,
+    max_turns: int | None,
+) -> ProcessResult:
+    (workspace / ".runner" / "claude_home").mkdir(parents=True, exist_ok=True)
+    auth_env = os.environ.copy()
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
+    command = build_claude_docker_command(
+        claude_bin=claude_bin,
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        model=model,
+        allowed_tools=allowed_tools,
+        max_turns=max_turns,
+        auth_env=auth_env,
+        container_name=container_name,
+    )
+    result = await run_codex_process(
+        command,
+        cwd=workspace,
+        prompt=prompt,
+        env=auth_env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+    if result.timed_out:
+        subprocess.run(
+            split_command(docker_bin) + ["kill", container_name],
+            check=False,
+            capture_output=True,
+        )
+    return result
+
+
 async def run_custom_process_in_docker(
     spec: CustomRuntimeSpec,
     *,

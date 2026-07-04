@@ -1188,6 +1188,14 @@ class RegressionFixTests(unittest.TestCase):
             self.assertEqual(args.executor_backend, "docker")
             args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp, "--executor-agent", "claude"])
             self.assertEqual(args.executor_backend, "local")
+            args = parse_args(
+                [
+                    "--tasks-dir", tmp, "--runs-dir", tmp,
+                    "--executor-agent", "claude", "--executor-backend", "docker",
+                    "--docker-image", "starbench-claude-code:latest",
+                ]
+            )
+            self.assertEqual(args.executor_backend, "docker")
             with self.assertRaises(SystemExit):
                 parse_args(
                     [
@@ -1196,11 +1204,33 @@ class RegressionFixTests(unittest.TestCase):
                         "--runs-dir",
                         tmp,
                         "--executor-agent",
-                        "claude",
+                        "grok",
                         "--executor-backend",
                         "docker",
                     ]
                 )
+
+    def test_claude_docker_command_isolates_config_dir_in_workspace(self) -> None:
+        from starbench.runner.codex_process import build_claude_docker_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            command = build_claude_docker_command(
+                claude_bin="claude",
+                docker_bin="docker",
+                docker_image="starbench-claude-code:latest",
+                workspace=tmp_path,
+                model="claude-opus-4-8",
+                allowed_tools="Read,Bash",
+                max_turns=None,
+                auth_env={"ANTHROPIC_API_KEY": "x"},
+                container_name="starbench-claude-1",
+            )
+            self.assertIn("CLAUDE_CONFIG_DIR=/workspace/.runner/claude_home", command)
+            self.assertIn("ANTHROPIC_API_KEY", command)
+            self.assertIn("starbench-claude-code:latest", command)
+            format_index = command.index("--output-format")
+            self.assertEqual(command[format_index + 1], "stream-json")
 
     def test_parse_args_claude_max_turns_defaults_to_unlimited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
