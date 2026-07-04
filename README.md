@@ -22,6 +22,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - A default `tasks/` directory for user task packages.
 - Two sample task packages under `examples/tasks/`.
 - Unit and closed-loop fake-runner smoke tests that do not call a live model.
+- A local GUI console (`starbench-gui`) for browsing runs, rubric verdicts, and traces, and for launching runs.
 
 ## Quick Start
 
@@ -177,6 +178,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
+- [GUI Console](docs/gui.md)
 - [Task Package Structure](docs/task_package.md)
 - [Runner Reference](docs/runner_reference.md)
 - [Model Runtime Matrix](docs/model_runtime_matrix.md)
