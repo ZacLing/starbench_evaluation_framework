@@ -179,3 +179,84 @@ class RuntimeAdapter(Protocol):
 P1 → P2 → P3 可以各自独立成一个 PR 级交付；P4 穿插进行。建议下一步直接启动
 P1（收益最大、风险最低、为 P2/P3 铺路），P1 完成后 GUI 侧代码量预计净减
 约 200–300 行、runner 侧净减约 400 行分支代码。
+
+## 6. 执行状态（Execution status）
+
+P1–P4 均已交付。每阶段的 commit 与实测验收数字如下（数字用 `wc -l` /
+测试运行器实测，不是估计）。
+
+### P1 — Runtime Registry ✅
+
+- Commits: `35e938b`（Extract execution primitives and runtime adapters from
+  codex_process）、`6b56fa4`（Dispatch executor/judge through the adapter
+  registry）、`5b10c50`（Add registry tests pinning RuntimeInfo to the GUI tables）。
+- 验收：`codex_process.py` 1472 → **103 行**（纯 re-export 兼容壳）；per-runtime
+  代码搬进 `adapters/`（5 内置 + `spec.py`）与 `execution/`；
+  `DEFAULT_DOCKER_IMAGES` 不再手维护，由 `adapters/registry.py` 从每个
+  adapter 的 `RuntimeInfo.docker_image` **派生**；executor/judge 派发收敛为
+  `resolve(agent)` 一行。
+
+### P2 — GUI 读 registry + 注入逻辑后移 ✅
+
+- Commits: `58531e7`（Back GUI runtime tables with the adapter registry and move
+  injection to the backend）、`d203096`（Add an API contracts module and generate
+  the TS client types from it）、`cbc9cd0`（Slim the New-run view: send provider
+  references, drop the protocol switch）。
+- 验收：`gui/agents.py`、`gui/library.py`（`AGENT_BINS`/`AGENT_ENV_KEYS`）、
+  `gui/experiments.py`（`JUDGE_ENV_SENSITIVE`/`DOCKER_CAPABLE_AGENTS`）、
+  `gui/launcher.py`（`AGENT_CHOICES`）全部改为从 `list_builtin()` 派生，删除各自
+  的手维护表；前端 `providerSettings()` 下沉为后端 `gui/injection.py`；新增
+  `gui/contracts.py` + `make gen-types` 生成 `api-types.ts`（由
+  `tests/gui/test_contracts.py` 守卫防漂移）；参考形态 contender 与旧显式形态由
+  `tests/gui/test_equivalence.py` 逐字段断言等价。
+
+### P3 — Runner 拆分与 judge env 隔离 ✅
+
+- Commits: `dd1ab2a`（Split runner into cli/orchestrator/executor/judge and scope
+  run env）、`1f32d61`（Isolate judge env via prefix scopes; downgrade conflict to
+  a warning）、`13c0f2b`（Document executor/judge environment scopes）。
+- 验收：`run_benchmark.py` 2072 → **89 行**（兼容层），逻辑拆入
+  `runner/{cli,orchestrator,executor,judge,summary,env_scope}.py`；judge 子进程用
+  `runner/env_scope.py` 构造的独立 env（clean ambient + judge-only 前缀覆盖），
+  不再继承 executor 注入后的进程环境；“qwen-via-OpenRouter 参赛 + codex 官方
+  评审”从被拒绝变为合法且路由正确（回归测试见 `test_equivalence` /
+  `tests/gui/test_experiments.py` 的 isolated_not_rejected 用例），GUI 计划期冲突
+  降级为 advisory warning。
+
+### P4 — 面向小模型的工程约定 ✅（本阶段）
+
+- Commits: `931ec30`（Split the two giant test files into a module-aligned
+  tree）+ 本阶段后续 doc commits（recipes / DESIGN 速查表 / 本执行状态）。
+- 验收：`tests/test_runner.py`（1951 行）与 `tests/test_gui.py`（1378 行）拆为
+  `tests/{adapters,runner,gui}/` 下 21 个模块对齐文件 + `tests/helpers.py` 共享
+  fixture；两条命令均 **148 passed / 148 OK**（`uv ... pytest tests/ -q` 与
+  `make test`），148 个用例名与 502 行断言逐字节不变；新增 `docs/recipes.md`
+  与 `DESIGN.md` 的「事实源速查表」。
+
+### 仍 > 400 行的文件（本阶段不拆，仅登记 + 拆分建议）
+
+以下为 `wc -l` 实测。本阶段刻意不动这些文件（避免无谓 churn；前端代码本阶段
+不碰）——每行给出后续拆分方向，留待各自触及时执行。
+
+**`src/`**
+
+| 行数 | 文件 | 拆分建议 |
+|---|---|---|
+| 941 | `skill_distiller/distill.py` | 独立 CLI 工具：拆 `distill.py`（编排/argparse）+ `cards.py`（atomic card 渲染）+ `profile.py`（expert profile/specialization 生成）。 |
+| 578 | `gui/experiments.py` | 拆 `planning`（plan/record/detail/matrix）与 `profiles`（load/save/校验）两个服务模块；env 冲突检测已可独立成 `conflicts.py`。 |
+| 565 | `execution/parsers.py` | 按输出格式拆：`parsers/{headless_json,jsonl_events,text,claude_stream,opencode}.py`，共享 helper 进 `parsers/_common.py`。 |
+| 484 | `gui/server.py` | 把 `_route_api_get` / POST `_handle_*` 拆成 `routes_get.py` / `routes_post.py`，`server.py` 只留 handler 骨架与静态服务。 |
+| 465 | `gui/library.py` | 拆 `import_`（task package 安装/校验/zip）、`browse`（fs 浏览/detail）、`preflight`（CLI/auth 检查）三个关注点。 |
+| 447 | `gui/data.py` | 拆 `runs.py`（list/detail/聚合）与 `task_run.py`（task-run detail/raw events/artifact），`_read_json`/`SAFE_ID` 进 `_fs.py`。 |
+
+**`gui-frontend/src/`**（本阶段不碰前端；仅登记）
+
+| 行数 | 文件 | 拆分建议 |
+|---|---|---|
+| 1390 | `pages/NewRun.tsx` | 每步一个组件（TasksStep/ExecutorStep/JudgeStep/ReviewStep）+ `useNewRunForm` hook 收表单状态；页面只做编排。 |
+| 860 | `pages/Agents.tsx` | 拆内置 runtime 列表、自定义 runtime 编辑抽屉、模板选择器为独立组件。 |
+| 724 | `components/ui/sidebar.tsx` | shadcn 生成物；如需瘦身只保留实际用到的子组件。 |
+| 596 | `pages/TaskDetail.tsx` | 拆 rubric 表 / trace 面板 / 产物清单为子组件。 |
+| 555 | `pages/Providers.tsx` | 拆 vendor 分组视图与 provider 编辑表单。 |
+| 510 | `lib/api.ts` | 把仍手写的类型迁进 `contracts.py`（见 recipe 3）后，本文件只剩 fetch 封装。 |
+| 433 | `pages/RunDetail.tsx` | 拆 run 概览卡与 task 表为子组件。 |

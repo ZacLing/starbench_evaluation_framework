@@ -181,6 +181,8 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
+- [Recipes: common changes, one file each](docs/recipes.md)
+- [Architecture Plan & Execution Status](docs/architecture_plan.md)
 - [GUI Console](docs/gui.md)
 - [Task Package Structure](docs/task_package.md)
 - [Runner Reference](docs/runner_reference.md)
