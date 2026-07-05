@@ -3,6 +3,7 @@ import { Shell } from "@/components/shell"
 import Dashboard from "@/pages/Dashboard"
 import Tasks from "@/pages/Tasks"
 import Agents from "@/pages/Agents"
+import Skills from "@/pages/Skills"
 import Providers from "@/pages/Providers"
 import Runs from "@/pages/Runs"
 import RunDetail from "@/pages/RunDetail"
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/agents" element={<Agents />} />
+        <Route path="/skills" element={<Skills />} />
         <Route path="/providers" element={<Providers />} />
         <Route path="/runs" element={<Runs />} />
         <Route path="/runs/:runId" element={<RunDetail />} />

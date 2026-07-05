@@ -17,6 +17,8 @@ import type {
   ProvidersPayload,
   RuntimeCli,
   RuntimeProtocol,
+  Skill,
+  SkillsPayload,
 } from "./api-types"
 
 export type {
@@ -33,6 +35,8 @@ export type {
   ProvidersPayload,
   RuntimeCli,
   RuntimeProtocol,
+  Skill,
+  SkillsPayload,
 }
 
 export interface ExecutorStats {
@@ -186,6 +190,8 @@ export interface TaskRunDetail {
 export interface Meta {
   runs_dir: string
   cwd: string
+  runtimes_dir?: string
+  skills_dir?: string
   tasks_dirs: { dir: string; exists: boolean }[]
   agents: string[]
   judge_modes: string[]
@@ -310,6 +316,11 @@ export interface SharedConfig {
   max_evaluator_parallel?: number | string | null
   claude_max_turns?: number | string | null
   extra_args?: string
+  /* Shared executor skills injected into every agent under test. Groups are
+     kept separate from individual ids so the two never overlap (the runner
+     expands groups and rejects a skill installed twice). */
+  executor_skills?: string[]
+  executor_skill_groups?: string[]
   evaluator_provider_id?: string
   evaluator_gateway?: {
     opencode_provider?: string
@@ -461,6 +472,7 @@ export const api = {
     ),
   agents: () => request<AgentsPayload>("/api/agents"),
   agentTemplates: () => request<{ templates: AgentTemplate[] }>("/api/agents/templates"),
+  skills: () => request<SkillsPayload>("/api/skills"),
   saveAgent: (payload: CustomRuntimePayload) =>
     request<CustomRuntime>("/api/agents", {
       method: "POST",

@@ -56,6 +56,7 @@ import {
   type Profile,
   type ProviderFilter,
   type SharedConfig,
+  type SkillsPayload,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -109,6 +110,7 @@ export default function NewRun() {
   const profilesQuery = useQuery({ queryKey: ["profiles"], queryFn: api.profiles })
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
+  const skillsQuery = useQuery({ queryKey: ["skills"], queryFn: api.skills })
   const libraries = useMemo(
     () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
     [tasklib.data],
@@ -359,6 +361,7 @@ export default function NewRun() {
             }
           }}
           providers={providers}
+          skills={skillsQuery.data}
           shared={shared}
           setShared={setShared}
           setSharedField={setSharedField}
@@ -846,6 +849,7 @@ function StepShared({
   profileId,
   onSelectProfile,
   providers,
+  skills,
   shared,
   setShared,
   setSharedField,
@@ -864,6 +868,7 @@ function StepShared({
   profileId: string | null
   onSelectProfile: (id: string) => void
   providers: AiProvider[]
+  skills?: SkillsPayload
   shared: Partial<SharedConfig>
   setShared: React.Dispatch<React.SetStateAction<Partial<SharedConfig>>>
   setSharedField: (key: keyof SharedConfig, value: unknown) => void
@@ -1095,6 +1100,8 @@ function StepShared({
         </CardContent>
       </Card>
 
+      <ExecutorSkillsBlock skills={skills} shared={shared} setShared={setShared} />
+
       <Card>
         <CardContent className="grid gap-4">
           <span className="text-sm font-semibold">Environment & determinism — shared</span>
@@ -1267,6 +1274,156 @@ function StepShared({
   )
 }
 
+/* ---------- shared: executor skills ---------- */
+
+/* Skills and groups are kept separate in `shared`: checking a group injects the
+   whole group, and its members drop out of the individual list so a skill is
+   never installed twice (which the runner rejects). */
+function ExecutorSkillsBlock({
+  skills,
+  shared,
+  setShared,
+}: {
+  skills?: SkillsPayload
+  shared: Partial<SharedConfig>
+  setShared: React.Dispatch<React.SetStateAction<Partial<SharedConfig>>>
+}) {
+  // Hidden entirely when the library is empty or unreadable — nothing to inject.
+  if (!skills || skills.error || skills.skills.length === 0) return null
+
+  const selectedGroups = shared.executor_skill_groups ?? []
+  const selectedSkills = shared.executor_skills ?? []
+  const coveredByGroup = new Set<string>()
+  for (const group of selectedGroups) {
+    for (const id of skills.groups[group] ?? []) coveredByGroup.add(id)
+  }
+  const selectedTotal = new Set<string>([...coveredByGroup, ...selectedSkills])
+  const groupNames = Object.keys(skills.groups)
+
+  const toggleGroup = (group: string, on: boolean) =>
+    setShared((current) => {
+      const groups = new Set(current.executor_skill_groups ?? [])
+      const individual = new Set(current.executor_skills ?? [])
+      if (on) {
+        groups.add(group)
+        for (const id of skills.groups[group] ?? []) individual.delete(id)
+      } else {
+        groups.delete(group)
+      }
+      return {
+        ...current,
+        executor_skill_groups: [...groups],
+        executor_skills: [...individual],
+      }
+    })
+
+  const toggleSkill = (id: string, on: boolean) =>
+    setShared((current) => {
+      const individual = new Set(current.executor_skills ?? [])
+      if (on) individual.add(id)
+      else individual.delete(id)
+      return { ...current, executor_skills: [...individual] }
+    })
+
+  return (
+    <Card>
+      <CardContent className="grid gap-4">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="text-sm font-semibold">Executor skills — shared</span>
+          <p className="text-xs text-muted-foreground">
+            Expert guidance installed into every agent's workspace for this run. Shared across all
+            agents, like the judge, so the comparison stays fair.
+          </p>
+          <Link to="/skills" className="ml-auto text-xs text-primary hover:underline">
+            Browse skills
+          </Link>
+        </div>
+
+        {groupNames.length > 0 && (
+          <div className="grid gap-2">
+            <Label className="text-xs text-muted-foreground">Groups</Label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {groupNames.map((group) => {
+                const members = skills.groups[group] ?? []
+                const checked = selectedGroups.includes(group)
+                return (
+                  <label
+                    key={group}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors",
+                      checked ? "border-primary bg-accent/60" : "hover:border-primary/40",
+                    )}
+                  >
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={checked}
+                      onCheckedChange={(value) => toggleGroup(group, value === true)}
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">{group}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {members.length} skill{members.length === 1 ? "" : "s"}: {members.join(", ")}
+                      </span>
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="grid gap-2">
+          <Label className="text-xs text-muted-foreground">Individual skills</Label>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {skills.skills.map((skill) => {
+              const inGroup = coveredByGroup.has(skill.id)
+              const checked = inGroup || selectedSkills.includes(skill.id)
+              return (
+                <label
+                  key={skill.id}
+                  className={cn(
+                    "flex items-start gap-3 rounded-md border p-3 transition-colors",
+                    inGroup
+                      ? "cursor-not-allowed opacity-70"
+                      : "cursor-pointer hover:border-primary/40",
+                    checked && "border-primary bg-accent/60",
+                  )}
+                >
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={checked}
+                    disabled={inGroup}
+                    onCheckedChange={(value) => toggleSkill(skill.id, value === true)}
+                  />
+                  <span className="min-w-0">
+                    <span className="block truncate font-mono text-sm font-medium">{skill.id}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {inGroup ? "included via a selected group" : skill.description || "—"}
+                    </span>
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {selectedTotal.size
+              ? `${selectedTotal.size} skill${selectedTotal.size === 1 ? "" : "s"} selected`
+              : "No skills selected — agents run without extra guidance."}
+          </span>
+          {[...selectedTotal].map((id) => (
+            <Badge key={id} variant="outline" className="font-mono text-[11px] text-muted-foreground">
+              {id}
+            </Badge>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 /* ---------- step 4: review ---------- */
 
 function StepReview({
@@ -1292,6 +1449,7 @@ function StepReview({
 }) {
   const repeat = Number(shared.repeat) || 1
   const executions = taskCount * repeat * contenders.length
+  const planSkills = plan.plans?.[0]?.executor_skills ?? []
   return (
     <div className="grid gap-4">
       <Card className="py-4">
@@ -1331,6 +1489,27 @@ function StepReview({
           hint={`seed ${shared.seed ?? "123"} · batch ${shared.batch_size ?? 1} · repeat ${repeat}`}
         />
       </div>
+
+      {planSkills.length > 0 && (
+        <Card className="py-4">
+          <CardContent className="grid gap-2 px-4">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Executor skills
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {planSkills.map((id) => (
+                <Badge
+                  key={id}
+                  variant="outline"
+                  className="font-mono text-[11px] text-muted-foreground"
+                >
+                  {id}
+                </Badge>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {judgeConflicts > 0 && (
         <Alert className="border-warn-ink/40 bg-warn-soft/60">
