@@ -103,8 +103,11 @@ single-operator tool; do not expose it to a network.
   advisory in the plan, not a rejection. Shared config also carries research
   experiments — executor skills and a **Prompt assistance** region whose Expert
   instructions sub-section runs the human-reference sweep (none / selected steps
-  / traverse / ablation); the review step's billing uses the backend execution
-  estimate so any variant fan-out is visible before launch.
+  / traverse / ablation) and whose **Rigor requirements** sub-section (off by
+  default) restates selected rubric requirements as hard requirements in every
+  agent's prompt — a controlled experiment that injects into the existing runs
+  without expanding variants. The review step's billing uses the backend
+  execution estimate so any variant fan-out is visible before launch.
 
 ## Launching runs
 

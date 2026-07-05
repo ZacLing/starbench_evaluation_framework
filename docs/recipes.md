@@ -229,3 +229,107 @@ cd gui-frontend && npm install && npm run build   # SPA compiles; output committ
 
 The committed SPA lives in `src/starbench/gui/static/`; rebuild it with
 `make gui-build` when `gui-frontend/` sources change.
+
+---
+
+## 7. Add expert steps to a task (human_reference.json)
+
+Expert steps power the **Instruction** research sweep: the console can append a
+task's human expert process to the executor prompt (none / one run per step /
+a chosen bundle / a full ablation). They live inside the task package.
+
+**Edit (only file, plus its registration line):** `<task>/human_reference.json`
+
+```json
+{
+  "steps": [
+    {
+      "step_id": "H001",
+      "step_type": "structure",
+      "instruction": "Organize the answer around the required headings before drafting.",
+      "reasoning": "PRIVATE expert trace — never shown to the executor or the GUI."
+    }
+  ]
+}
+```
+
+Register it in `task.json` (default name is already `human_reference.json`, so
+this line is only needed for a non-default filename):
+
+```json
+{ "human_reference": "human_reference.json" }
+```
+
+- `instruction` is executor-facing and is what gets injected. `reasoning` is a
+  **PRIVACY RED LINE**: the runner reads it for validation but it never crosses
+  the API — `gui.data.read_human_reference_steps` is the single reasoning-free
+  reader and the test suite asserts the text never leaks.
+- **Where it shows in the GUI:** New run → *Prompt assistance (research)* →
+  **Expert instructions**. The task card/detail shows an `expert steps ×N`
+  badge; the mode cards (None/Selected steps/Traverse/Ablation) and the step
+  multi-selector appear once a selected task ships steps.
+
+**Verify:**
+
+```bash
+python3 -c "from pathlib import Path; from starbench.gui.data import read_human_reference_steps, _read_json; \
+d=Path('examples/tasks/demo_instruction_reference'); \
+print(read_human_reference_steps(d, _read_json(d/'task.json')))"
+# and a real sweep:
+starbench-run --tasks-dir examples/tasks --task demo_instruction_reference --runs-dir runs \
+  --run-id smoke_instr --executor-agent codex --evaluator-agent codex --auth-mode env \
+  --instruction-mode select --instruction-step H001
+```
+
+---
+
+## 8. Add rigor requirements to a task (rigors.json)
+
+Rigor requirements power the **Rigor** research knob: the console can restate a
+few rubric-level requirements as hard requirements in the executor prompt
+(prefixed with *"Ensure your answer reaches an equivalent level of rigor…"*).
+It is a controlled experiment, not part of the default benchmark score, and it
+does **not** multiply executor variants — the requirements are injected into
+whatever run the instruction mode already produces.
+
+**Edit (only file, plus its registration line):** `<task>/rigors.json`
+
+```json
+{
+  "rigors": [
+    {
+      "id": "U004",
+      "rubric_id": "U004",
+      "requirement": "The memo must include all five exact section headings, each carrying a distinct part of the plan."
+    }
+  ]
+}
+```
+
+Register it in `task.json` (default name is already `rigors.json`, so this line
+is only needed for a non-default filename):
+
+```json
+{ "rigors": "rigors.json" }
+```
+
+- Rewrite each rubric question as an executor-facing "must" requirement; keep
+  `id` equal to the `rubric_id` when you can so experiment commands stay
+  readable. Every rigor field is public content — there is no private field to
+  withhold. See [rigor_prompt_injection.md](rigor_prompt_injection.md) for the
+  conversion rules.
+- **Where it shows in the GUI:** New run → *Prompt assistance (research)* →
+  **Rigor requirements** (off by default). The task card/detail shows a
+  `rigor ×N` badge; turning the knob on reveals the requirement multi-selector.
+
+**Verify:**
+
+```bash
+python3 -c "from pathlib import Path; from starbench.gui.data import read_rigors, _read_json; \
+d=Path('examples/tasks/demo_instruction_reference'); \
+print(read_rigors(d, _read_json(d/'task.json')))"
+# and a real run:
+starbench-run --tasks-dir examples/tasks --task demo_instruction_reference --runs-dir runs \
+  --run-id smoke_rigor --executor-agent codex --evaluator-agent codex --auth-mode env \
+  --rigor U004
+```
