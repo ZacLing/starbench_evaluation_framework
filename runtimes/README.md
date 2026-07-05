@@ -58,8 +58,9 @@ cannot modify the judge workspace.
 
 `qwen-code.json`, `kimi-code.json`, and `trae-agent.json` ship with the
 repository, so these mainstream agents work out of the box (install the CLI,
-build the image for the Docker-enabled ones). Kimi Code CLI does support API
-providers (`OPENAI_BASE_URL` / `OPENAI_API_KEY` override the OpenAI-compatible
-entry in its `~/.kimi/config.toml`), but stays host-local for now: starting it
-in a fresh container without that config file is unverified. Flags drift
-between CLI versions — verify against `<cli> --help` when a run misbehaves.
+build the images with `make docker-images-custom`). Kimi Code CLI reads its
+providers from `~/.kimi/config.toml`; its Docker image bakes in a seeded
+config (`docker/kimi-config.toml`) that `OPENAI_BASE_URL` / `OPENAI_API_KEY`
+override at run time — edit the seed to change the model, since kimi has no
+model flag. Flags drift between CLI versions — verify against `<cli> --help`
+when a run misbehaves.

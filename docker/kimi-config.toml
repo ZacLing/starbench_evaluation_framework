@@ -1,0 +1,15 @@
+# Seed configuration for containerized Kimi Code CLI runs. At run time,
+# OPENAI_BASE_URL and OPENAI_API_KEY override base_url/api_key (documented
+# kimi-cli behavior for openai_* providers). Kimi has no model flag: edit the
+# model id below to change which model the container uses.
+default_model = "starbench-openai"
+
+[providers.starbench-openai]
+type = "openai_legacy"
+base_url = "https://api.openai.com/v1"
+api_key = "placeholder-overridden-by-OPENAI_API_KEY"
+
+[models.starbench-openai]
+provider = "starbench-openai"
+model = "gpt-5.5"
+max_context_size = 128000

@@ -93,9 +93,8 @@ export default function Agents() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
           <p className="text-sm text-muted-foreground">
-            The coding-agent CLIs that can compete or judge. Editable runtimes are{" "}
-            <code className="font-mono text-xs">runtimes/&lt;id&gt;.json</code> specs shared
-            with the CLI.
+            The coding-agent CLIs that can compete or judge. Any headless CLI can be added
+            as a runtime; runs execute in Docker whenever the runtime supports it.
           </p>
         </div>
         <Button
@@ -145,8 +144,9 @@ export default function Agents() {
           ),
         )}
       </div>
-      <p className="font-mono text-xs text-muted-foreground">
-        spec runtimes: {payload.runtimes_dir}
+      <p className="text-xs text-muted-foreground">
+        Runtime definitions:{" "}
+        <span className="font-mono">{payload.runtimes_dir}</span>
       </p>
 
       <RuntimeEditor
@@ -199,17 +199,25 @@ function BuiltinCard({
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          <Badge variant="outline" className="text-[11px]">
-            built-in
-          </Badge>
-          {agent.docker_capable && (
-            <Badge variant="outline" className="gap-1 text-[11px]" title={agent.docker_image}>
-              <Container className="size-3" /> Docker
-            </Badge>
-          )}
+          <IsolationBadge dockerImage={agent.docker_image} />
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function IsolationBadge({ dockerImage }: { dockerImage?: string | null }) {
+  return dockerImage ? (
+    <Badge variant="outline" className="gap-1 text-[11px]" title={dockerImage}>
+      <Container className="size-3" /> Docker
+    </Badge>
+  ) : (
+    <Badge
+      className="gap-1 border-transparent bg-warn-soft text-[11px] text-warn-ink"
+      title="No Docker image configured — tasks execute directly on this machine, without container isolation."
+    >
+      <Laptop className="size-3" /> local execution
+    </Badge>
   )
 }
 
@@ -230,7 +238,10 @@ function CustomCard({
       <CardContent className="grid gap-2.5 px-4">
         <div className="flex items-center gap-2.5">
           <AgentIcon agent={agent.id} icon={agent.icon} size={22} />
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+          <span
+            className="min-w-0 flex-1 truncate text-sm font-semibold"
+            title={`CLI: --executor-agent ${agent.id}`}
+          >
             {agent.label ?? agent.spec_id}
           </span>
           <CliBadge cli={agent.cli} />
@@ -263,25 +274,7 @@ function CustomCard({
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          <Badge
-            variant="outline"
-            className="font-mono text-[11px]"
-            title={`CLI: --executor-agent ${agent.id}`}
-          >
-            {agent.spec_id}
-          </Badge>
-          {agent.docker_image ? (
-            <Badge variant="outline" className="gap-1 text-[11px]" title={agent.docker_image}>
-              <Container className="size-3" /> Docker
-            </Badge>
-          ) : (
-            <Badge
-              className="gap-1 border-transparent bg-warn-soft text-[11px] text-warn-ink"
-              title="No Docker image in this spec — tasks execute directly on this machine, without container isolation."
-            >
-              <Laptop className="size-3" /> local execution
-            </Badge>
-          )}
+          <IsolationBadge dockerImage={agent.docker_image} />
           <div className="ml-auto flex gap-1">
             <Button
               variant="ghost"
@@ -489,8 +482,8 @@ function RuntimeEditor({
           <SheetTitle>{isNew ? "Add runtime" : `Edit ${draft?.label || draft?.id}`}</SheetTitle>
           <SheetDescription>
             Saved as <code className="font-mono">runtimes/&lt;id&gt;.json</code> — the same
-            spec the CLI reads. Verify flags against the installed CLI's --help; they drift
-            between versions.
+            file the command-line runner reads. Verify flags against the installed CLI's
+            --help; they drift between versions.
           </SheetDescription>
         </SheetHeader>
         {value && (

@@ -310,12 +310,10 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
         "docs_url": "https://moonshotai.github.io/kimi-cli/en/customization/print-mode.html",
         "description": (
             "Moonshot AI's terminal agent. Print mode reads the prompt from stdin; "
-            "output is the final message as plain text. Speaks to API providers "
-            "through an OpenAI-compatible entry in ~/.kimi/config.toml (run /login "
-            "once); OPENAI_BASE_URL / OPENAI_API_KEY override that entry per run. "
-            "No model flag — the model comes from the CLI's config. Host-local for "
-            "now: starting in a fresh container without its config file is "
-            "unverified."
+            "output is the final message as plain text. OPENAI_BASE_URL / "
+            "OPENAI_API_KEY override the OpenAI-compatible provider in its config "
+            "(~/.kimi/config.toml locally; the Docker image ships a seeded config). "
+            "No model flag — the model comes from that config."
         ),
         "spec": {
             "id": "kimi-code",
@@ -328,6 +326,10 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
             "protocol": "openai",
             "base_url_env": "OPENAI_BASE_URL",
             "api_key_env": "OPENAI_API_KEY",
+            "docker": {
+                "image": "starbench-kimi:latest",
+                "env_passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+            },
         },
     },
     {

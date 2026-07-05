@@ -3,10 +3,22 @@
   "label": "Kimi Code CLI",
   "icon": "kimi",
   "command": "kimi",
-  "args": ["--print", "--output-format", "text", "--final-message-only"],
+  "args": [
+    "--print",
+    "--output-format",
+    "text",
+    "--final-message-only"
+  ],
   "prompt_via": "stdin",
   "parser": "text",
   "protocol": "openai",
   "base_url_env": "OPENAI_BASE_URL",
-  "api_key_env": "OPENAI_API_KEY"
+  "api_key_env": "OPENAI_API_KEY",
+  "docker": {
+    "image": "starbench-kimi:latest",
+    "env_passthrough": [
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL"
+    ]
+  }
 }

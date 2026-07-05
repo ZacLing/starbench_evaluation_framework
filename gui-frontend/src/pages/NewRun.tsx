@@ -839,15 +839,6 @@ function ContenderCard({
               {custom ? (custom.label ?? custom.spec_id) : AGENT_LABELS[draft.runtime]}
             </span>
           </span>
-          {custom && (
-            <Badge
-              variant="outline"
-              className="font-mono text-[11px] text-muted-foreground"
-              title={`CLI: --executor-agent ${custom.id}`}
-            >
-              {custom.spec_id}
-            </Badge>
-          )}
           {custom?.cli && !custom.cli.present && (
             <Badge
               className="border-transparent bg-warn-soft text-[11px] text-warn-ink"

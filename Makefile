@@ -17,9 +17,10 @@ docker-images: docker-build
 	docker build -t starbench-grok:latest -f docker/grok.Dockerfile .
 	docker build -t starbench-opencode:latest -f docker/opencode.Dockerfile .
 
-# Images for the custom-runtime templates (Qwen Code, Trae Agent).
+# Images for the bundled runtime definitions (Qwen Code, Kimi Code, Trae Agent).
 docker-images-custom:
 	docker build -t starbench-qwen:latest -f docker/qwen-code.Dockerfile .
+	docker build -t starbench-kimi:latest -f docker/kimi-cli.Dockerfile .
 	docker build -t starbench-trae-agent:latest -f docker/trae-agent.Dockerfile .
 
 # Rebuild the console frontend into src/starbench/gui/static (output is committed;
