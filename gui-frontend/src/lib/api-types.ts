@@ -107,6 +107,19 @@ export interface SkillsPayload {
   error?: string
 }
 
+export interface HumanReferenceStepDetail {
+  step_id: string
+  step_type: string
+  instruction: string
+}
+
+export interface ExecutionEstimate {
+  per_contender: number
+  total: number
+  mode: string
+  note: string
+}
+
 export interface ExperimentPlanItem {
   label: string
   agent: string

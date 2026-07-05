@@ -1,6 +1,7 @@
 """Experiment planning, recording and custom-runtime contenders in gui.experiments."""
 from __future__ import annotations
 
+import json
 import shutil
 import tempfile
 import unittest
@@ -369,6 +370,177 @@ class ExperimentCustomRuntimeTest(unittest.TestCase):
             experiments.plan_experiment(
                 payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
             )
+
+
+class ExperimentInstructionTest(unittest.TestCase):
+    """Instruction ablation: forwarding, the execution estimate, and the two
+    runner semantics verified against runner.task_loader.build_task_runs."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_instr_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+        self.tasks_dir = self.tmp / "tasks"
+        self.tasks_dir.mkdir()
+        self._write_task("task_a", ["H001", "H002"])
+        self._write_task("task_b", ["H001", "H002", "H003"])
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_task(self, task_id, step_ids) -> None:
+        pkg = self.tasks_dir / task_id
+        write_json(pkg / "task.json", {"id": task_id, "name": task_id})
+        write_json(
+            pkg / "rubrics.json",
+            {"rubrics": [{"id": "R001", "fail_fast": True, "expected": True, "question": "?"}]},
+        )
+        (pkg / "prompt.md").write_text("# go", encoding="utf-8")
+        if step_ids is not None:
+            write_json(
+                pkg / "human_reference.json",
+                {
+                    "steps": [
+                        {
+                            "step_id": sid,
+                            "step_type": "structure",
+                            "instruction": f"do {sid}",
+                            # Private trace — must never surface in a plan.
+                            "reasoning": f"secret-{sid}",
+                        }
+                        for sid in step_ids
+                    ]
+                },
+            )
+
+    def payload(self, tasks, *, shared_extra=None, contenders=None, name="exp_instr"):
+        shared = {
+            "evaluator_agent": "codex",
+            "evaluator_model": "gpt-5.5",
+            "evaluator_auth_mode": "global",
+            "judge_mode": "single",
+            "executor_backend": "local",
+            "seed": 1,
+            "repeat": 1,
+        }
+        if shared_extra:
+            shared.update(shared_extra)
+        return {
+            "name": name,
+            "tasks_dir": str(self.tasks_dir),
+            "tasks": tasks,
+            "shared": shared,
+            "contenders": contenders
+            or [{"label": "GPT", "agent": "codex", "model": "gpt-5.5", "auth_mode": "global"}],
+        }
+
+    def test_instruction_mode_and_steps_forwarded_to_every_contender(self) -> None:
+        payload = self.payload(
+            ["task_a", "task_b"],
+            shared_extra={"instruction_mode": "select", "instruction_steps": ["H001"]},
+            contenders=[
+                {"label": "GPT", "agent": "codex", "model": "gpt-5.5", "auth_mode": "global"},
+                {"label": "Claude", "agent": "claude", "model": "claude-opus-4-8", "auth_mode": "global"},
+            ],
+        )
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        self.assertEqual(len(plan["plans"]), 2)
+        for item in plan["plans"]:
+            joined = " ".join(item["argv"])
+            self.assertIn("--instruction-mode select", joined)
+            self.assertIn("--instruction-step H001", joined)
+
+    def test_estimate_none_mode(self) -> None:
+        est = experiments.plan_experiment(
+            self.payload(["task_a", "task_b"]), runs_dir=self.runs_dir
+        )["execution_estimate"]
+        self.assertEqual(est["mode"], "none")
+        self.assertEqual(est["per_contender"], 2)  # one run per task
+        self.assertEqual(est["total"], 2)  # × one contender
+
+    def test_estimate_select_mode(self) -> None:
+        est = experiments.plan_experiment(
+            self.payload(
+                ["task_a", "task_b"],
+                shared_extra={"instruction_mode": "select", "instruction_steps": ["H001"]},
+            ),
+            runs_dir=self.runs_dir,
+        )["execution_estimate"]
+        self.assertEqual(est["mode"], "select")
+        self.assertEqual(est["per_contender"], 2)  # one combined run per task
+
+    def test_estimate_traverse_mode(self) -> None:
+        est = experiments.plan_experiment(
+            self.payload(["task_a", "task_b"], shared_extra={"instruction_mode": "traverse"}),
+            runs_dir=self.runs_dir,
+        )["execution_estimate"]
+        self.assertEqual(est["mode"], "traverse")
+        self.assertEqual(est["per_contender"], 5)  # 2 + 3 expert steps
+
+    def test_estimate_ablation_mode(self) -> None:
+        est = experiments.plan_experiment(
+            self.payload(["task_a", "task_b"], shared_extra={"instruction_mode": "ablation"}),
+            runs_dir=self.runs_dir,
+        )["execution_estimate"]
+        self.assertEqual(est["mode"], "ablation")
+        # task_a: 1 baseline + 2 steps + 1 all-steps = 4; task_b: 1 + 3 + 1 = 5 -> 9
+        self.assertEqual(est["per_contender"], 9)
+
+    def test_estimate_scales_with_repeat_and_contenders(self) -> None:
+        payload = self.payload(
+            ["task_a", "task_b"],
+            shared_extra={"instruction_mode": "ablation", "repeat": 3},
+            contenders=[
+                {"label": "GPT", "agent": "codex", "model": "gpt-5.5", "auth_mode": "global"},
+                {"label": "Claude", "agent": "claude", "model": "claude-opus-4-8", "auth_mode": "global"},
+            ],
+        )
+        est = experiments.plan_experiment(payload, runs_dir=self.runs_dir)["execution_estimate"]
+        self.assertEqual(est["per_contender"], 27)  # 9 variants × 3 repeats
+        self.assertEqual(est["total"], 54)  # × 2 contenders
+
+    def test_select_unknown_step_rejected(self) -> None:
+        payload = self.payload(
+            ["task_a", "task_b"],
+            shared_extra={"instruction_mode": "select", "instruction_steps": ["H999"]},
+        )
+        with self.assertRaisesRegex(ExperimentError, "none of the selected tasks"):
+            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+
+    def test_select_step_present_in_only_one_task_is_allowed_at_plan_time(self) -> None:
+        # Verified semantics (multi-task select): H003 exists in task_b but not
+        # task_a. The plan-time guard only requires a step to exist in >=1 selected
+        # task; the runner enforces the stricter every-task rule at launch and
+        # rejects the run naming task_a. The console does not pre-empt that here.
+        payload = self.payload(
+            ["task_a", "task_b"],
+            shared_extra={"instruction_mode": "select", "instruction_steps": ["H003"]},
+        )
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        self.assertIn("--instruction-step H003", " ".join(plan["plans"][0]["argv"]))
+
+    def test_traverse_estimate_flags_stepless_tasks(self) -> None:
+        # Verified semantics (traverse/ablation without human_reference): a
+        # stepless task is REJECTED by the runner, not run as a baseline. The
+        # estimate counts 0 for it and the note says so honestly.
+        self._write_task("task_c", None)  # no human_reference.json
+        est = experiments.plan_experiment(
+            self.payload(["task_a", "task_c"], shared_extra={"instruction_mode": "traverse"}),
+            runs_dir=self.runs_dir,
+        )["execution_estimate"]
+        self.assertEqual(est["per_contender"], 2)  # task_a's 2 steps; task_c contributes 0
+        self.assertIn("reject", est["note"].lower())
+
+    def test_plan_never_exposes_reasoning(self) -> None:
+        """PRIVACY RED LINE: no private reasoning trace reaches the plan payload."""
+        payload = self.payload(
+            ["task_a", "task_b"],
+            shared_extra={"instruction_mode": "select", "instruction_steps": ["H001"]},
+        )
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        serialized = json.dumps(plan)
+        self.assertNotIn("secret-H001", serialized)
+        self.assertNotIn("reasoning", serialized)
 
 
 if __name__ == "__main__":

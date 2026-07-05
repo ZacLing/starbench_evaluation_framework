@@ -21,6 +21,7 @@ JUDGE_MODES = ("both", "single", "parallel")
 AUTH_MODES = ("env", "global", "copy-auth")
 BACKENDS = ("local", "docker")
 THINKING_EFFORTS = ("none", "low", "medium", "high")
+INSTRUCTION_MODES = ("none", "traverse", "select", "ablation")
 
 
 class LaunchError(ValueError):
@@ -183,6 +184,20 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
     skill_root = str(payload.get("executor_skill_root") or "").strip()
     if skill_root:
         argv += ["--executor-skill-root", skill_root]
+
+    # Instruction ablation: a research sweep over a task's human_reference expert
+    # steps. `none` is the baseline and passes no flag; the other modes append
+    # the expert instructions to the executor prompt (never the private
+    # `reasoning`). `--instruction-step` ids are repeated — they bundle the
+    # chosen steps in `select` mode and narrow the sweep in `ablation` mode.
+    instruction_mode = str(payload.get("instruction_mode") or "none").strip()
+    if instruction_mode and instruction_mode != "none":
+        argv += [
+            "--instruction-mode",
+            _require_choice(instruction_mode, INSTRUCTION_MODES, "Instruction mode"),
+        ]
+    for step_id in _string_list(payload.get("instruction_steps"), "Instruction steps"):
+        argv += ["--instruction-step", step_id]
 
     extra = str(payload.get("extra_args") or "").strip()
     if extra:

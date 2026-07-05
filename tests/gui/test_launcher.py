@@ -102,6 +102,39 @@ class LauncherTest(unittest.TestCase):
                 self.payload(tasks_dir=str(self.tmp / "nope")), runs_dir=self.runs_dir
             )
 
+    def test_instruction_none_passes_no_flag(self) -> None:
+        argv = build_run_argv(
+            self.payload(instruction_mode="none"), runs_dir=self.runs_dir
+        )
+        self.assertNotIn("--instruction-mode", argv)
+        self.assertNotIn("--instruction-step", argv)
+
+    def test_instruction_mode_and_steps_pass_through(self) -> None:
+        argv = build_run_argv(
+            self.payload(
+                instruction_mode="select", instruction_steps=["H001", "H004"]
+            ),
+            runs_dir=self.runs_dir,
+        )
+        joined = " ".join(argv)
+        self.assertIn("--instruction-mode select", joined)
+        # Each id becomes its own repeated --instruction-step flag.
+        self.assertEqual(argv.count("--instruction-step"), 2)
+        self.assertIn("--instruction-step H001", joined)
+        self.assertIn("--instruction-step H004", joined)
+
+    def test_instruction_ablation_mode_passes_through(self) -> None:
+        argv = build_run_argv(
+            self.payload(instruction_mode="ablation"), runs_dir=self.runs_dir
+        )
+        self.assertIn("--instruction-mode ablation", " ".join(argv))
+
+    def test_instruction_mode_rejects_unknown_value(self) -> None:
+        with self.assertRaises(LaunchError):
+            build_run_argv(
+                self.payload(instruction_mode="bogus"), runs_dir=self.runs_dir
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

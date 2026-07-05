@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..adapters import list_builtin
-from .data import SAFE_ID, _read_json, list_task_packages, rigor_count
+from .data import (
+    SAFE_ID,
+    _read_json,
+    list_task_packages,
+    read_human_reference_steps,
+    rigor_count,
+)
 
 MAX_IMPORT_BYTES = 20 * 1024 * 1024
 MAX_DIR_ENTRIES = 200
@@ -287,12 +293,11 @@ def task_package_detail(tasks_dir: Path, dir_name: str) -> Dict[str, Any]:
         else []
     )
 
-    human_reference = _read_json(package_dir / "human_reference.json")
-    steps = (
-        human_reference.get("steps")
-        if isinstance(human_reference, dict) and isinstance(human_reference.get("steps"), list)
-        else []
-    )
+    # Expert steps as a public detail list (step_id/step_type/instruction). The
+    # reader deliberately drops `reasoning` — the PRIVACY RED LINE — so it can
+    # never reach this response. `human_reference_step_count` stays for any
+    # consumer that only wants the number.
+    steps = read_human_reference_steps(package_dir, spec)
 
     return {
         "dir": str(tasks_dir),
@@ -303,7 +308,8 @@ def task_package_detail(tasks_dir: Path, dir_name: str) -> Dict[str, Any]:
         "allow_web_search": spec.get("allow_web_search"),
         "prompt": prompt_text,
         "rubrics": rubrics,
-        "human_reference_steps": len(steps),
+        "human_reference_steps": steps,
+        "human_reference_step_count": len(steps),
         "rigor_count": rigor_count(package_dir, spec),
     }
 

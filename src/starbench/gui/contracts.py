@@ -159,6 +159,39 @@ class SkillsPayload(_SkillsPayloadBase, total=False):
 
 
 # ---------------------------------------------------------------------------
+# Instruction ablation (task detail + experiment plan)
+# ---------------------------------------------------------------------------
+
+class HumanReferenceStepDetail(TypedDict):
+    """One public expert step from a task's ``human_reference.json``.
+
+    PRIVACY RED LINE: only these three public fields ever cross the wire. The
+    step's ``reasoning`` (the private expert trace) is loaded by the runner for
+    metadata validation but MUST NEVER appear in any API response. Do not add a
+    ``reasoning`` key here — ``gui.data.read_human_reference_steps`` is the single
+    reasoning-free reader and the test suite asserts the text never leaks.
+    """
+
+    step_id: str
+    step_type: str
+    instruction: str
+
+
+class ExecutionEstimate(TypedDict):
+    """How many executor variants an instruction sweep expands into before launch.
+
+    ``per_contender`` = Σ per-task variants × repeat; ``total`` = that × the
+    number of contenders. ``note`` is a plain-language summary of the variant
+    construction for the Review billing.
+    """
+
+    per_contender: int
+    total: int
+    mode: str
+    note: str
+
+
+# ---------------------------------------------------------------------------
 # Experiments (/api/experiments)
 # ---------------------------------------------------------------------------
 
@@ -214,6 +247,8 @@ GENERATED_TYPES = [
     "ProvidersPayload",
     "Skill",
     "SkillsPayload",
+    "HumanReferenceStepDetail",
+    "ExecutionEstimate",
     "ExperimentPlanItem",
     "Contender",
 ]

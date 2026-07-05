@@ -17,12 +17,12 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..adapters import DEFAULT_DOCKER_IMAGES, list_builtin
 from . import injection, providers as providers_module, skills as skills_module
 from .agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
-from .data import SAFE_ID, _read_json, run_overview
+from .data import SAFE_ID, _read_json, read_human_reference_steps, run_overview
 from .launcher import LaunchError, build_run_argv
 from .skills import DEFAULT_SKILLS_DIR, SkillError
 
@@ -234,6 +234,117 @@ def _resolve_contender_reference(
     return resolved
 
 
+# ---------------------------------------------------------------------------
+# Instruction ablation: plan-time step resolution and execution estimate
+# ---------------------------------------------------------------------------
+
+INSTRUCTION_MODES = ("none", "traverse", "select", "ablation")
+
+
+def _resolve_selected_steps(
+    tasks_dir_value: Any, task_selectors: Any
+) -> List[Tuple[str, List[str]]]:
+    """Resolve the tasks that will run to their public expert-step ids.
+
+    Returns one ``(task_id, [step_id, ...])`` pair per task, in directory order.
+    A selector matches by either task id or directory name (the runner accepts
+    both for ``--task``). An empty selector list means "every task in the
+    directory", mirroring the runner discovering all tasks when no ``--task`` is
+    passed. Only public step ids are read here — never the private ``reasoning``.
+    """
+    tasks_dir = Path(str(tasks_dir_value)) if tasks_dir_value else None
+    if tasks_dir is None or not tasks_dir.is_dir():
+        return []
+    ordered: List[Tuple[str, List[str]]] = []
+    by_selector: Dict[str, Tuple[str, List[str]]] = {}
+    for entry in sorted(tasks_dir.iterdir()):
+        task_json = entry / "task.json"
+        if not entry.is_dir() or not task_json.exists():
+            continue
+        spec = _read_json(task_json)
+        if not isinstance(spec, dict):
+            continue
+        step_ids = [step["step_id"] for step in read_human_reference_steps(entry, spec)]
+        record = (str(spec.get("id", entry.name)), step_ids)
+        by_selector[record[0]] = record
+        by_selector[entry.name] = record
+        ordered.append(record)
+    selectors = [str(item) for item in (task_selectors or []) if isinstance(item, str)]
+    if not selectors:
+        return ordered
+    return [by_selector[selector] for selector in selectors if selector in by_selector]
+
+
+def _instruction_variants_for_task(mode: str, step_count: int) -> int:
+    """Executor variants the runner expands for one task under an instruction mode.
+
+    Faithful to ``runner.task_loader.build_task_runs``:
+    - ``none`` / ``select`` -> exactly one run per task.
+    - ``traverse`` -> one run per expert step (0 when the task ships none, which
+      the runner rejects rather than running as a baseline).
+    - ``ablation`` -> baseline + one run per step + one combined ``all_instructions``
+      run (the combined run exists only when the task has more than one step);
+      0 when the task ships no steps (the runner rejects it).
+    """
+    if mode in ("none", "select"):
+        return 1
+    if mode == "traverse":
+        return step_count
+    if mode == "ablation":
+        if step_count == 0:
+            return 0
+        return 1 + step_count + (1 if step_count > 1 else 0)
+    return 1
+
+
+def _instruction_execution_estimate(
+    resolved_steps: List[Tuple[str, List[str]]],
+    *,
+    mode: str,
+    repeat: int,
+    contender_count: int,
+) -> Dict[str, Any]:
+    """How many executor variants each contender (and the whole experiment) runs.
+
+    ``per_contender`` = Σ over selected tasks of the mode's variant count × repeat;
+    ``total`` = ``per_contender`` × the number of contenders. Tasks that ship no
+    expert steps contribute nothing in the step-requiring modes because the
+    runner rejects them there (the honest count, not a silent baseline).
+    """
+    step_counts = [len(step_ids) for _, step_ids in resolved_steps]
+    variants_per_contender = sum(_instruction_variants_for_task(mode, count) for count in step_counts)
+    per_contender = variants_per_contender * repeat
+    stepless = sum(1 for count in step_counts if count == 0)
+    repeat_suffix = f" × {repeat} repeat(s)" if repeat > 1 else ""
+
+    if mode == "none":
+        note = f"Baseline: one run per task{repeat_suffix}."
+    elif mode == "select":
+        note = f"One combined-instruction run per task{repeat_suffix}."
+    elif mode == "traverse":
+        note = f"One run per expert step, summed across tasks{repeat_suffix}."
+    elif mode == "ablation":
+        note = (
+            "Per task: baseline + one run per step + a combined all-steps run "
+            f"(the combined run only when a task has more than one step){repeat_suffix}."
+        )
+    else:  # pragma: no cover - guarded earlier
+        note = ""
+
+    if stepless and mode in ("select", "traverse", "ablation"):
+        note += (
+            f" {stepless} selected task(s) ship no expert steps; the runner "
+            f"rejects those in {mode} mode rather than running a baseline."
+        )
+
+    return {
+        "per_contender": per_contender,
+        "total": per_contender * contender_count,
+        "mode": mode,
+        "note": note,
+    }
+
+
 def plan_experiment(
     payload: Dict[str, Any],
     *,
@@ -270,6 +381,40 @@ def plan_experiment(
         )
     except SkillError as error:
         raise ExperimentError(str(error))
+
+    # Instruction ablation is shared across contenders (a controlled comparison,
+    # like the shared judge and skills). Resolve the selected tasks' public expert
+    # steps once so we can validate the step choice and estimate how many executor
+    # variants each contender expands into. Only public step ids are read here —
+    # never the private `reasoning`.
+    instruction_mode = str(shared.get("instruction_mode") or "none").strip() or "none"
+    if instruction_mode not in INSTRUCTION_MODES:
+        raise ExperimentError(
+            f"Instruction mode must be one of {', '.join(INSTRUCTION_MODES)}."
+        )
+    instruction_steps = [
+        str(step).strip()
+        for step in (shared.get("instruction_steps") or [])
+        if isinstance(step, str) and str(step).strip()
+    ]
+    resolved_steps = _resolve_selected_steps(payload.get("tasks_dir"), payload.get("tasks"))
+    if instruction_mode == "select":
+        if not instruction_steps:
+            raise ExperimentError(
+                "Selected-steps mode needs at least one expert step chosen."
+            )
+        known_step_ids = {
+            step_id for _, step_ids in resolved_steps for step_id in step_ids
+        }
+        # Plan-time guard catches the gross error (a step that no selected task
+        # ships). The runner enforces the stricter rule — every chosen step must
+        # exist in EVERY selected task, or it rejects the run naming the task.
+        unknown_steps = [step for step in instruction_steps if step not in known_step_ids]
+        if unknown_steps:
+            raise ExperimentError(
+                "These expert steps exist in none of the selected tasks: "
+                f"{', '.join(unknown_steps)}. Pick steps at least one selected task ships."
+            )
 
     # Resolve provider references (the reference shape) into the explicit fields
     # the rest of this function consumes. Providers live in <runs-dir>/providers.
@@ -392,6 +537,9 @@ def plan_experiment(
             "opencode_base_url": gateway.get("opencode_base_url"),
             "opencode_api_key_env": gateway.get("opencode_api_key_env"),
             "extra_args": str(shared.get("extra_args") or ""),
+            # Shared instruction ablation: same mode/steps for every contender.
+            "instruction_mode": instruction_mode,
+            "instruction_steps": instruction_steps,
             # Shared executor skills: forward ids and groups as-is (the runner
             # expands groups) plus the library root the console validated against.
             "executor_skills": executor_skill_ids or [],
@@ -463,7 +611,24 @@ def plan_experiment(
                 "argv": argv,
             }
         )
-    return {"name": name, "shared": shared, "plans": plans}
+
+    try:
+        repeat = int(shared.get("repeat") or 1)
+    except (TypeError, ValueError):
+        repeat = 1
+    repeat = max(repeat, 1)
+    execution_estimate = _instruction_execution_estimate(
+        resolved_steps,
+        mode=instruction_mode,
+        repeat=repeat,
+        contender_count=len(plans),
+    )
+    return {
+        "name": name,
+        "shared": shared,
+        "plans": plans,
+        "execution_estimate": execution_estimate,
+    }
 
 
 def record_experiment(

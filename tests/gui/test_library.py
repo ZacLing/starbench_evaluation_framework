@@ -180,6 +180,67 @@ class LibraryBrowseAndDetailTest(unittest.TestCase):
         with self.assertRaises(LibraryError):
             library.task_package_detail(self.tasks_dir, "../outside")
 
+    def test_human_reference_steps_are_public_detail(self) -> None:
+        write_json(
+            self.tasks_dir / "demo" / "human_reference.json",
+            {
+                "steps": [
+                    {
+                        "step_id": "H001",
+                        "step_type": "structure",
+                        "instruction": "Organize the answer around the required headings.",
+                        "reasoning": "PRIVATE-TRACE-ALPHA should never be exposed.",
+                    },
+                    {
+                        "step_id": "H002",
+                        "step_type": "coverage",
+                        "instruction": "Check every required entity is present.",
+                        "reasoning": "PRIVATE-TRACE-BETA is also private.",
+                    },
+                ]
+            },
+        )
+        detail = library.task_package_detail(self.tasks_dir, "demo")
+        # Upgraded from a bare count to a public detail list.
+        self.assertEqual(
+            detail["human_reference_steps"],
+            [
+                {
+                    "step_id": "H001",
+                    "step_type": "structure",
+                    "instruction": "Organize the answer around the required headings.",
+                },
+                {
+                    "step_id": "H002",
+                    "step_type": "coverage",
+                    "instruction": "Check every required entity is present.",
+                },
+            ],
+        )
+        # Back-compat count field is retained.
+        self.assertEqual(detail["human_reference_step_count"], 2)
+
+    def test_reasoning_never_appears_in_detail_json(self) -> None:
+        """PRIVACY RED LINE: `reasoning` must never reach any API response."""
+        secret = "REASONING-SECRET-DO-NOT-LEAK-42"
+        write_json(
+            self.tasks_dir / "demo" / "human_reference.json",
+            {
+                "steps": [
+                    {
+                        "step_id": "H001",
+                        "step_type": "structure",
+                        "instruction": "Do the thing.",
+                        "reasoning": secret,
+                    }
+                ]
+            },
+        )
+        detail = library.task_package_detail(self.tasks_dir, "demo")
+        serialized = json.dumps(detail)
+        self.assertNotIn(secret, serialized)
+        self.assertNotIn("reasoning", serialized)
+
 
 class PreflightTest(unittest.TestCase):
     def test_preflight_reports_cli_and_auth_checks(self) -> None:

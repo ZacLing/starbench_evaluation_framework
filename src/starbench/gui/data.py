@@ -432,6 +432,37 @@ def rigor_count(package_dir: Path, spec: Dict[str, Any]) -> int:
     return 0
 
 
+def read_human_reference_steps(package_dir: Path, spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Public human-reference step metadata for a task package.
+
+    Reads the human_reference file task.json points at (default
+    ``human_reference.json``) and returns one dict per step with ONLY the three
+    public fields: ``step_id``, ``step_type`` and ``instruction``.
+
+    PRIVACY RED LINE: the ``reasoning`` field (the private expert trace) is
+    deliberately never read into the returned dicts, so it can never reach any
+    API response. This is the single reasoning-free reader the console uses; do
+    not add ``reasoning`` here. A missing file, unreadable JSON or an unexpected
+    shape all yield an empty list — never an exception.
+    """
+    name = str(spec.get("human_reference", "human_reference.json"))
+    payload = _read_json(package_dir / name)
+    if not isinstance(payload, dict) or not isinstance(payload.get("steps"), list):
+        return []
+    steps: List[Dict[str, Any]] = []
+    for item in payload["steps"]:
+        if not isinstance(item, dict) or item.get("step_id") is None:
+            continue
+        steps.append(
+            {
+                "step_id": str(item.get("step_id")),
+                "step_type": str(item.get("step_type", "")),
+                "instruction": str(item.get("instruction", "")),
+            }
+        )
+    return steps
+
+
 def list_task_packages(tasks_dir: Path) -> List[Dict[str, Any]]:
     packages: List[Dict[str, Any]] = []
     if not tasks_dir.is_dir():
