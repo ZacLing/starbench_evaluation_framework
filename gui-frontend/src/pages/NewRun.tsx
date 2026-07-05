@@ -754,7 +754,7 @@ function StepContenders({
                         : "no provider configured"}
                   </span>
                   {option.cliMissing && (
-                    <span className="text-[11px] text-warn-ink">CLI not found on PATH</span>
+                    <span className="text-[11px] text-warn-ink">CLI missing</span>
                   )}
                   <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary">
                     <Plus className="size-3" /> Add
@@ -835,8 +835,11 @@ function ContenderCard({
             </Badge>
           )}
           {custom?.cli && !custom.cli.present && (
-            <Badge className="border-transparent bg-warn-soft text-[11px] text-warn-ink">
-              `{custom.cli.bin}` not on PATH
+            <Badge
+              className="border-transparent bg-warn-soft text-[11px] text-warn-ink"
+              title={`\`${custom.cli.bin}\` is not on PATH`}
+            >
+              CLI missing
             </Badge>
           )}
           {provider?.auth === "cli_login" && (

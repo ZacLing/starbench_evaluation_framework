@@ -336,8 +336,11 @@ function CliBadge({ cli }: { cli?: { bin: string; present: boolean; path: string
       <CheckCircle2 className="size-3" /> CLI found
     </Badge>
   ) : (
-    <Badge className="gap-1 border-transparent bg-warn-soft text-[11px] text-warn-ink">
-      <AlertTriangle className="size-3" /> `{cli.bin}` missing
+    <Badge
+      className="gap-1 border-transparent bg-warn-soft text-[11px] text-warn-ink"
+      title={`\`${cli.bin}\` is not on PATH`}
+    >
+      <AlertTriangle className="size-3" /> missing
     </Badge>
   )
 }
