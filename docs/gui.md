@@ -100,7 +100,11 @@ single-operator tool; do not expose it to a network.
   injected variables under a `STARBENCH_EXECUTOR_ENV_*` / `STARBENCH_JUDGE_ENV_*`
   prefix that the runner unpacks separately), so an agent's injected endpoint no
   longer reroutes the judge; a variable read by both is surfaced as an amber
-  advisory in the plan, not a rejection.
+  advisory in the plan, not a rejection. Shared config also carries research
+  experiments — executor skills and a **Prompt assistance** region whose Expert
+  instructions sub-section runs the human-reference sweep (none / selected steps
+  / traverse / ablation); the review step's billing uses the backend execution
+  estimate so any variant fan-out is visible before launch.
 
 ## Launching runs
 
