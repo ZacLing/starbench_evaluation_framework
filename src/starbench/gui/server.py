@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from . import agents, data, experiments, library, providers
+from . import agents, data, experiments, library, providers, skills
 from .agents import AgentError, DEFAULT_RUNTIMES_DIR
 from .experiments import ExperimentError
 from .launcher import (
@@ -28,6 +28,7 @@ from .launcher import (
 )
 from .library import LibraryError
 from .providers import ProviderError
+from .skills import DEFAULT_SKILLS_DIR, SkillError
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -50,11 +51,13 @@ class ConsoleState:
         tasks_dirs: Sequence[Path],
         cwd: Path,
         runtimes_dir: Optional[Path] = None,
+        skills_dir: Optional[Path] = None,
     ) -> None:
         self.runs_dir = runs_dir
         self.tasks_dirs = list(tasks_dirs)
         self.cwd = cwd
         self.runtimes_dir = (runtimes_dir or DEFAULT_RUNTIMES_DIR).resolve()
+        self.skills_dir = (skills_dir or DEFAULT_SKILLS_DIR).resolve()
         self.registry = LaunchRegistry()
 
 
@@ -125,7 +128,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._route_api_get(segments[1:], query)
         except data.NotFound as error:
             self._send_error_json(str(error), HTTPStatus.NOT_FOUND)
-        except (LibraryError, ExperimentError, ProviderError, AgentError) as error:
+        except (LibraryError, ExperimentError, ProviderError, AgentError, SkillError) as error:
             self._send_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except BrokenPipeError:
             pass
@@ -174,7 +177,14 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 )
             else:
                 self._send_error_json("Not found.", HTTPStatus.NOT_FOUND)
-        except (LaunchError, LibraryError, ExperimentError, ProviderError, AgentError) as error:
+        except (
+            LaunchError,
+            LibraryError,
+            ExperimentError,
+            ProviderError,
+            AgentError,
+            SkillError,
+        ) as error:
             self._send_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except BrokenPipeError:
             pass
@@ -221,6 +231,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json(agents.list_agents(state.runtimes_dir))
         elif segments == ["agents", "templates"]:
             self._send_json({"templates": agents.agent_templates()})
+        elif segments == ["skills"]:
+            self._send_json(skills.list_skills(state.skills_dir))
         elif segments == ["launches"]:
             self._send_json({"launches": state.registry.list()})
         elif segments == ["profiles"]:
@@ -302,6 +314,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             "runs_dir": str(state.runs_dir),
             "cwd": str(state.cwd),
             "runtimes_dir": str(state.runtimes_dir),
+            "skills_dir": str(state.skills_dir),
             "tasks_dirs": [
                 {"dir": str(path), "exists": path.is_dir()} for path in state.tasks_dirs
             ],
@@ -351,7 +364,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             raise ExperimentError("Request body must be a JSON object.")
         state = self.state
         plan = experiments.plan_experiment(
-            payload, runs_dir=state.runs_dir, runtimes_dir=state.runtimes_dir
+            payload,
+            runs_dir=state.runs_dir,
+            runtimes_dir=state.runtimes_dir,
+            skills_dir=state.skills_dir,
         )
         if payload.get("dry_run"):
             self._send_json({**plan, "dry_run": True})
@@ -422,6 +438,7 @@ def build_state(
     tasks_dirs: Optional[Sequence[Path]] = None,
     cwd: Optional[Path] = None,
     runtimes_dir: Optional[Path] = None,
+    skills_dir: Optional[Path] = None,
 ) -> ConsoleState:
     cwd = (cwd or Path.cwd()).resolve()
     runs_dir = runs_dir if runs_dir.is_absolute() else cwd / runs_dir
@@ -433,7 +450,9 @@ def build_state(
         resolved.append(path.resolve())
     if runtimes_dir is not None and not runtimes_dir.is_absolute():
         runtimes_dir = cwd / runtimes_dir
-    return ConsoleState(runs_dir.resolve(), resolved, cwd, runtimes_dir)
+    if skills_dir is not None and not skills_dir.is_absolute():
+        skills_dir = cwd / skills_dir
+    return ConsoleState(runs_dir.resolve(), resolved, cwd, runtimes_dir, skills_dir)
 
 
 def serve(state: ConsoleState, host: str, port: int) -> Tuple[ThreadingHTTPServer, threading.Thread]:
@@ -459,12 +478,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         default=None,
         help="Directory of custom runtime specs (defaults to the repo's runtimes/).",
     )
+    parser.add_argument(
+        "--skills-dir",
+        type=Path,
+        default=None,
+        help="Executor skill library root (defaults to the repo's executor_skills/).",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8321)
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser tab.")
     args = parser.parse_args(argv)
 
-    state = build_state(args.runs_dir, args.tasks_dir, runtimes_dir=args.runtimes_dir)
+    state = build_state(
+        args.runs_dir,
+        args.tasks_dir,
+        runtimes_dir=args.runtimes_dir,
+        skills_dir=args.skills_dir,
+    )
     server = ThreadingHTTPServer((args.host, args.port), make_handler(state))
     url = f"http://{args.host}:{server.server_address[1]}/"
     print(f"StarBench Console serving {state.runs_dir}")

@@ -20,10 +20,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..adapters import DEFAULT_DOCKER_IMAGES, list_builtin
-from . import injection, providers as providers_module
+from . import injection, providers as providers_module, skills as skills_module
 from .agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
 from .data import SAFE_ID, _read_json, run_overview
 from .launcher import LaunchError, build_run_argv
+from .skills import DEFAULT_SKILLS_DIR, SkillError
 
 # All per-runtime facts below derive from the adapter registry (single source
 # of truth); the GUI keeps no hand-maintained copies.
@@ -234,7 +235,11 @@ def _resolve_contender_reference(
 
 
 def plan_experiment(
-    payload: Dict[str, Any], *, runs_dir: Path, runtimes_dir: Path = DEFAULT_RUNTIMES_DIR
+    payload: Dict[str, Any],
+    *,
+    runs_dir: Path,
+    runtimes_dir: Path = DEFAULT_RUNTIMES_DIR,
+    skills_dir: Path = DEFAULT_SKILLS_DIR,
 ) -> Dict[str, Any]:
     """Validate an experiment request and build one launch plan per contender."""
     name = str(payload.get("name") or "").strip()
@@ -253,6 +258,18 @@ def plan_experiment(
         raise ExperimentError("At least one contender runtime is required.")
     if len(contenders) > 12:
         raise ExperimentError("At most 12 contenders per experiment.")
+
+    # Executor skills are shared across contenders (a controlled comparison, like
+    # the shared judge). Validate the selection now — an unknown skill or group
+    # is a plan-time error — and keep the group-expanded id list for the summary.
+    executor_skill_ids = shared.get("executor_skills")
+    executor_skill_group_ids = shared.get("executor_skill_groups")
+    try:
+        expanded_skill_ids = skills_module.validate_selection(
+            skills_dir, executor_skill_ids, executor_skill_group_ids
+        )
+    except SkillError as error:
+        raise ExperimentError(str(error))
 
     # Resolve provider references (the reference shape) into the explicit fields
     # the rest of this function consumes. Providers live in <runs-dir>/providers.
@@ -375,6 +392,11 @@ def plan_experiment(
             "opencode_base_url": gateway.get("opencode_base_url"),
             "opencode_api_key_env": gateway.get("opencode_api_key_env"),
             "extra_args": str(shared.get("extra_args") or ""),
+            # Shared executor skills: forward ids and groups as-is (the runner
+            # expands groups) plus the library root the console validated against.
+            "executor_skills": executor_skill_ids or [],
+            "executor_skill_groups": executor_skill_group_ids or [],
+            "executor_skill_root": str(skills_dir) if expanded_skill_ids else "",
         }
         try:
             argv = build_run_argv(launch_payload, runs_dir=runs_dir)
@@ -434,6 +456,9 @@ def plan_experiment(
                 # Scoped views the server ships as STARBENCH_{EXECUTOR,JUDGE}_ENV_*.
                 "executor_env_spec": executor_env_spec,
                 "judge_env_spec": judge_env,
+                # Group-expanded skill ids injected into this contender (shared
+                # across contenders); surfaced in the Review summary.
+                "executor_skills": expanded_skill_ids,
                 "warnings": warnings,
                 "argv": argv,
             }

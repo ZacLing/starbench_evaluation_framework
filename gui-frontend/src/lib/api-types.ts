@@ -89,6 +89,24 @@ export interface ProvidersPayload {
   persisted?: boolean
 }
 
+export interface Skill {
+  id: string
+  description: string
+  source_path: string
+  file_count: number
+  size_bytes: number
+  sha256: string | null
+  leakage_level: string | null
+  groups: string[]
+}
+
+export interface SkillsPayload {
+  root: string
+  skills: Skill[]
+  groups: Record<string, string[]>
+  error?: string
+}
+
 export interface ExperimentPlanItem {
   label: string
   agent: string
@@ -99,6 +117,7 @@ export interface ExperimentPlanItem {
   warnings: string[]
   argv: string[]
   docker_image?: string
+  executor_skills?: string[]
 }
 
 export interface Contender {

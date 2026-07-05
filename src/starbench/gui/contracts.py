@@ -132,6 +132,33 @@ class ProvidersPayload(_ProvidersPayloadBase, total=False):
 
 
 # ---------------------------------------------------------------------------
+# Executor skills (/api/skills)
+# ---------------------------------------------------------------------------
+
+class Skill(TypedDict):
+    id: str
+    description: str
+    source_path: str
+    file_count: int
+    size_bytes: int
+    sha256: Optional[str]
+    leakage_level: Optional[str]
+    groups: List[str]
+
+
+class _SkillsPayloadBase(TypedDict):
+    root: str
+    skills: List[Skill]
+    # Group name -> the skill ids it bundles.
+    groups: Dict[str, List[str]]
+
+
+class SkillsPayload(_SkillsPayloadBase, total=False):
+    # Present only when the library on disk could not be read.
+    error: str
+
+
+# ---------------------------------------------------------------------------
 # Experiments (/api/experiments)
 # ---------------------------------------------------------------------------
 
@@ -150,6 +177,8 @@ class _ExperimentPlanItemBase(TypedDict):
 
 class ExperimentPlanItem(_ExperimentPlanItemBase, total=False):
     docker_image: str
+    # Final, group-expanded skill ids injected into every contender (shared).
+    executor_skills: List[str]
 
 
 class _ContenderBase(TypedDict):
@@ -183,6 +212,8 @@ GENERATED_TYPES = [
     "AgentsPayload",
     "AiProvider",
     "ProvidersPayload",
+    "Skill",
+    "SkillsPayload",
     "ExperimentPlanItem",
     "Contender",
 ]

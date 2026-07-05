@@ -58,6 +58,22 @@ def _optional_int(value: Any, label: str, minimum: int = 1) -> Optional[int]:
     return number
 
 
+def _string_list(value: Any, label: str) -> List[str]:
+    """Coerce a payload value into a clean list of non-empty strings."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise LaunchError(f"{label} must be a list of names.")
+    cleaned: List[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise LaunchError(f"{label} must be a list of names.")
+        text = item.strip()
+        if text:
+            cleaned.append(text)
+    return cleaned
+
+
 def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
     """Translate the launch form payload into a starbench-run argv.
 
@@ -155,6 +171,18 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
         number = _optional_int(payload.get(key), flag, minimum)
         if number is not None:
             argv += [flag, str(number)]
+
+    # Executor skills: the console picks skills and groups by name; the runner
+    # installs them into the executor's workspace. Groups are passed through as
+    # groups (the runner expands them), so the console must not also list a
+    # group's members individually or the runner rejects the duplicate.
+    for skill_id in _string_list(payload.get("executor_skills"), "Executor skills"):
+        argv += ["--executor-skill", skill_id]
+    for group_id in _string_list(payload.get("executor_skill_groups"), "Executor skill groups"):
+        argv += ["--executor-skill-group", group_id]
+    skill_root = str(payload.get("executor_skill_root") or "").strip()
+    if skill_root:
+        argv += ["--executor-skill-root", skill_root]
 
     extra = str(payload.get("extra_args") or "").strip()
     if extra:
