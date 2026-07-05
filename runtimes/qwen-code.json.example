@@ -1,0 +1,15 @@
+{
+  "id": "qwen-code",
+  "command": "qwen",
+  "args": ["--output-format", "json", "--yolo"],
+  "judge_args": ["--output-format", "json", "--approval-mode", "plan"],
+  "model_flag": "-m",
+  "prompt_via": "stdin",
+  "prompt_flag": "-p",
+  "parser": "headless-json",
+  "env": {},
+  "docker": {
+    "image": "starbench-qwen:latest",
+    "env_passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"]
+  }
+}

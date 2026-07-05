@@ -7,10 +7,12 @@ import subprocess
 import shlex
 import shutil
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from .custom_runtime import CustomRuntimeSpec
 from .models import ProcessResult
 
 
@@ -113,9 +115,13 @@ def build_claude_print_command(
     permission_mode: str | None = None,
     allowed_tools: str | None = None,
     max_turns: int | None = None,
+    output_format: str = "json",
 ) -> List[str]:
     command = split_command(claude_bin)
-    command.extend(["-p", "--output-format", "json", "--no-session-persistence"])
+    command.extend(["-p", "--output-format", output_format, "--no-session-persistence"])
+    if output_format == "stream-json":
+        # Claude Code print mode requires --verbose for stream-json output.
+        command.append("--verbose")
     if model:
         command.extend(["--model", model])
     if permission_mode:
@@ -198,13 +204,35 @@ def build_gemini_headless_command(
     return command
 
 
+def build_custom_command(
+    spec: CustomRuntimeSpec,
+    *,
+    role: str,
+    model: str | None,
+    prompt: str,
+) -> List[str]:
+    if role not in {"executor", "judge"}:
+        raise ValueError(f"Unknown custom runtime role: {role}")
+    command = split_command(spec.command)
+    command.extend(spec.judge_args if role == "judge" else spec.args)
+    if model and spec.model_flag:
+        command.extend([spec.model_flag, model])
+    if spec.prompt_via == "arg":
+        command.extend([spec.prompt_flag, prompt])
+    return command
+
+
 def prepare_claude_env(claude_home: Path, auth_mode: str) -> Dict[str, str]:
     if auth_mode not in {"env", "global"}:
         raise ValueError("Claude agent currently supports --auth-mode env or global")
     env = os.environ.copy()
+    env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+    if auth_mode == "global":
+        # Keep the host CLAUDE_CONFIG_DIR: Claude Code login credentials are
+        # bound to the config dir, so overriding it would break host login.
+        return env
     claude_home.mkdir(parents=True, exist_ok=True)
     env["CLAUDE_CONFIG_DIR"] = str(claude_home)
-    env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
     return env
 
 
@@ -275,7 +303,17 @@ def _extract_claude_payload(stdout_path: Path) -> Dict[str, Any]:
     data = json.loads(stdout_path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError("Claude output was not a JSON object")
+    _raise_on_claude_error_result(data)
     return data
+
+
+def _raise_on_claude_error_result(result_event: Dict[str, Any]) -> None:
+    # Claude Code can exit 0 while reporting a failed run (e.g. "Not logged
+    # in"). Treat is_error results as failures instead of grading them.
+    if result_event.get("is_error"):
+        result_text = result_event.get("result")
+        detail = result_text if isinstance(result_text, str) and result_text else result_event.get("subtype", "unknown error")
+        raise ValueError(f"Claude reported an error result: {detail}")
 
 
 def write_claude_final_output(stdout_path: Path, final_path: Path, *, output_schema: Path | None = None) -> None:
@@ -292,6 +330,162 @@ def write_claude_final_output(stdout_path: Path, final_path: Path, *, output_sch
         final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     else:
         final_path.write_text(str(data.get("result", "")), encoding="utf-8")
+
+
+def _read_jsonl_events(path: Path) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def write_claude_stream_final_output(stdout_path: Path, final_path: Path) -> None:
+    """Extract the final assistant text from Claude Code stream-json events."""
+    result_event: Dict[str, Any] | None = None
+    for event in _read_jsonl_events(stdout_path):
+        if event.get("type") == "result":
+            result_event = event
+    if result_event is None:
+        raise ValueError("Claude stream-json output did not include a result event")
+    _raise_on_claude_error_result(result_event)
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    result_text = result_event.get("result")
+    final_path.write_text(result_text if isinstance(result_text, str) else "", encoding="utf-8")
+
+
+_CLAUDE_FILE_CHANGE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+
+def _claude_tool_result_text(block: Dict[str, Any]) -> str | None:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            str(part.get("text", ""))
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        ]
+        if parts:
+            return "".join(parts)
+    return None
+
+
+def append_claude_compat_events(events_path: Path) -> None:
+    """Append Codex-style item.completed events derived from Claude stream-json events.
+
+    This keeps trace_summary.json comparable across runtimes: agent messages,
+    reasoning, command executions, file changes, and usage all become visible
+    to summarize_events just like Codex/OpenCode traces.
+    """
+    events = _read_jsonl_events(events_path)
+
+    tool_results: Dict[str, Dict[str, Any]] = {}
+    for event in events:
+        if event.get("type") != "user":
+            continue
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            tool_use_id = block.get("tool_use_id")
+            if not isinstance(tool_use_id, str):
+                continue
+            text = _claude_tool_result_text(block)
+            if text is None:
+                tool_use_result = event.get("tool_use_result")
+                if isinstance(tool_use_result, dict) and isinstance(tool_use_result.get("stdout"), str):
+                    text = tool_use_result["stdout"]
+            tool_results[tool_use_id] = {
+                "output": text,
+                "is_error": bool(block.get("is_error", False)),
+            }
+
+    compat_events: List[Dict[str, Any]] = []
+    usage: Any = None
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "result":
+            usage = event.get("usage")
+            continue
+        if event_type != "assistant":
+            continue
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            block_type = block.get("type")
+            if block_type == "text":
+                compat_events.append(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "agent_message", "id": block.get("id"), "text": block.get("text")},
+                    }
+                )
+            elif block_type == "thinking":
+                compat_events.append(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "reasoning", "id": block.get("id"), "text": block.get("thinking")},
+                    }
+                )
+            elif block_type == "tool_use":
+                tool = block.get("name")
+                input_data = block.get("input")
+                input_data = input_data if isinstance(input_data, dict) else {}
+                tool_use_id = block.get("id")
+                result = tool_results.get(tool_use_id) if isinstance(tool_use_id, str) else None
+                status = None
+                if result is not None:
+                    status = "failed" if result["is_error"] else "completed"
+                if tool == "Bash":
+                    compat_events.append(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "command_execution",
+                                "id": tool_use_id,
+                                "command": input_data.get("command"),
+                                "status": status,
+                                "exit_code": None,
+                                "aggregated_output": result["output"] if result else None,
+                            },
+                        }
+                    )
+                elif tool in _CLAUDE_FILE_CHANGE_TOOLS:
+                    file_path = input_data.get("file_path") or input_data.get("notebook_path")
+                    compat_events.append(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "file_change",
+                                "id": tool_use_id,
+                                "status": status,
+                                "changes": [{"path": file_path}] if file_path else [],
+                            },
+                        }
+                    )
+
+    if usage is not None:
+        compat_events.append({"type": "turn.completed", "usage": usage})
+    if not compat_events:
+        return
+    with events_path.open("a", encoding="utf-8") as handle:
+        for event in compat_events:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
 def _extract_json_object(text: str) -> Any:
@@ -578,21 +772,87 @@ def normalize_headless_events(stdout_path: Path, *, provider: str) -> None:
     )
 
 
-def build_docker_codex_command(
+def _extract_last_agent_message_text(events_path: Path) -> str:
+    text: str | None = None
+    for event in _read_jsonl_events(events_path):
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            candidate = item.get("text")
+            if isinstance(candidate, str) and candidate.strip():
+                text = candidate
+    if text is None:
+        raise ValueError("JSONL events output did not include an agent_message with text")
+    return text
+
+
+def write_custom_final_output(
+    stdout_path: Path,
+    final_path: Path,
+    *,
+    parser: str,
+    output_schema: Path | None = None,
+) -> None:
+    if parser == "headless-json":
+        write_headless_final_output(stdout_path, final_path, output_schema=output_schema)
+        return
+    if parser == "jsonl-events":
+        text = _extract_last_agent_message_text(stdout_path)
+    elif parser == "text":
+        text = stdout_path.read_text(encoding="utf-8").strip()
+        if not text:
+            raise ValueError("Custom text runtime produced empty stdout")
+    else:
+        raise ValueError(f"Unknown custom runtime parser: {parser}")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_schema is None:
+        final_path.write_text(text, encoding="utf-8")
+        return
+    structured = _extract_json_object(text)
+    final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def normalize_custom_events(stdout_path: Path, *, parser: str, provider: str) -> None:
+    if parser == "headless-json":
+        normalize_headless_events(stdout_path, provider=provider)
+        return
+    if parser == "jsonl-events":
+        return
+    if parser != "text":
+        raise ValueError(f"Unknown custom runtime parser: {parser}")
+    raw = stdout_path.read_text(encoding="utf-8")
+    events = [
+        {"type": f"{provider}.raw", "payload": {"stdout": raw}},
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "id": f"{provider}-final", "text": raw.strip()},
+        },
+        {"type": "turn.completed", "usage": None},
+    ]
+    stdout_path.write_text(
+        "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
+        encoding="utf-8",
+    )
+
+
+def build_docker_agent_command(
     *,
     docker_bin: str,
     docker_image: str,
     workspace: Path,
-    codex_home: Path,
     inner_command: Iterable[str],
+    env_whitelist: List[str],
     auth_env: Dict[str, str],
+    container_name: str | None = None,
+    extra_mounts: Dict[str, str] | None = None,
+    extra_env: Dict[str, str] | None = None,
 ) -> List[str]:
     workspace = workspace.resolve()
-    codex_home = codex_home.resolve()
     command = split_command(docker_bin)
+    command.append("run")
+    if container_name:
+        command.extend(["--name", container_name])
     command.extend(
         [
-            "run",
             "--rm",
             "-i",
             "--read-only",
@@ -609,20 +869,42 @@ def build_docker_codex_command(
             "/tmp:rw,nosuid,nodev,size=1g",
             "--mount",
             f"type=bind,src={workspace},dst=/workspace",
-            "--mount",
-            f"type=bind,src={codex_home},dst=/codex-home",
-            "-w",
-            "/workspace",
-            "-e",
-            "CODEX_HOME=/codex-home",
         ]
     )
-    for key in ("CODEX_API_KEY", "OPENAI_API_KEY"):
+    for host_path, container_path in (extra_mounts or {}).items():
+        command.extend(["--mount", f"type=bind,src={Path(host_path).resolve()},dst={container_path}"])
+    command.extend(["-w", "/workspace"])
+    for key, value in (extra_env or {}).items():
+        command.extend(["-e", f"{key}={value}"])
+    for key in env_whitelist:
         if auth_env.get(key):
             command.extend(["-e", key])
     command.append(docker_image)
     command.extend(inner_command)
     return command
+
+
+def build_docker_codex_command(
+    *,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    codex_home: Path,
+    inner_command: Iterable[str],
+    auth_env: Dict[str, str],
+    container_name: str | None = None,
+) -> List[str]:
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"],
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_mounts={str(codex_home.resolve()): "/codex-home"},
+        extra_env={"CODEX_HOME": "/codex-home"},
+    )
 
 
 async def _pump_stream(stream: asyncio.StreamReader, path: Path) -> None:
@@ -733,6 +1015,7 @@ async def run_codex_process_in_docker(
         allow_web_search=allow_web_search,
         include_trace_config=include_trace_config,
     )
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
     command = build_docker_codex_command(
         docker_bin=docker_bin,
         docker_image=docker_image,
@@ -740,6 +1023,7 @@ async def run_codex_process_in_docker(
         codex_home=docker_auth_home,
         inner_command=inner_command,
         auth_env=auth_env,
+        container_name=container_name,
     )
     result = await run_codex_process(
         command,
@@ -750,9 +1034,148 @@ async def run_codex_process_in_docker(
         stderr_path=stderr_path,
         timeout_seconds=timeout_seconds,
     )
+    if result.timed_out:
+        # Killing the docker CLI client does not stop the container itself;
+        # without this the timed-out container keeps running and writing into
+        # the mounted workspace.
+        subprocess.run(
+            split_command(docker_bin) + ["kill", container_name],
+            check=False,
+            capture_output=True,
+        )
 
     container_final_on_host = workspace / ".runner" / "final.md"
     if container_final_on_host.exists():
         host_final_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(container_final_on_host, host_final_path)
+    return result
+
+
+CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+
+
+def build_claude_docker_command(
+    *,
+    claude_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    model: str | None,
+    allowed_tools: str | None,
+    max_turns: int | None,
+    auth_env: Dict[str, str],
+    container_name: str | None = None,
+) -> List[str]:
+    inner_command = build_claude_print_command(
+        claude_bin,
+        cwd=Path("/workspace"),
+        model=model,
+        permission_mode="acceptEdits",
+        allowed_tools=allowed_tools,
+        max_turns=max_turns,
+        output_format="stream-json",
+    )
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=list(CLAUDE_DOCKER_ENV_WHITELIST),
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_env={
+            "CLAUDE_CONFIG_DIR": "/workspace/.runner/claude_home",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        },
+    )
+
+
+async def run_claude_process_in_docker(
+    *,
+    claude_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    prompt: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    model: str | None,
+    allowed_tools: str | None,
+    max_turns: int | None,
+) -> ProcessResult:
+    (workspace / ".runner" / "claude_home").mkdir(parents=True, exist_ok=True)
+    auth_env = os.environ.copy()
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
+    command = build_claude_docker_command(
+        claude_bin=claude_bin,
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        model=model,
+        allowed_tools=allowed_tools,
+        max_turns=max_turns,
+        auth_env=auth_env,
+        container_name=container_name,
+    )
+    result = await run_codex_process(
+        command,
+        cwd=workspace,
+        prompt=prompt,
+        env=auth_env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+    if result.timed_out:
+        subprocess.run(
+            split_command(docker_bin) + ["kill", container_name],
+            check=False,
+            capture_output=True,
+        )
+    return result
+
+
+async def run_custom_process_in_docker(
+    spec: CustomRuntimeSpec,
+    *,
+    docker_bin: str,
+    workspace: Path,
+    prompt: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    model: str | None = None,
+) -> ProcessResult:
+    if not spec.docker_image:
+        raise ValueError(f"Custom runtime {spec.id} has no docker image configured")
+    inner_command = build_custom_command(spec, role="executor", model=model, prompt=prompt)
+    auth_env = os.environ.copy()
+    auth_env.update(spec.env)
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
+    command = build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=spec.docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=list(spec.docker_env_passthrough),
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_env=dict(spec.env),
+    )
+    result = await run_codex_process(
+        command,
+        cwd=workspace,
+        prompt=prompt if spec.prompt_via == "stdin" else "",
+        env=auth_env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+    if result.timed_out:
+        subprocess.run(
+            split_command(docker_bin) + ["kill", container_name],
+            check=False,
+            capture_output=True,
+        )
     return result

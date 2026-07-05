@@ -13,7 +13,12 @@ def load_json(path: Path) -> Dict[str, Any]:
 
 def normalize_single_result(path: Path) -> List[RubricResult]:
     data = load_json(path)
-    items = data.get("results", data if isinstance(data, list) else [])
+    if isinstance(data, list):
+        items: Any = data
+    elif isinstance(data, dict):
+        items = data.get("results", [])
+    else:
+        items = None
     if not isinstance(items, list):
         raise ValueError(f"Single judge output has no results array: {path}")
     return [RubricResult.from_dict(item) for item in items]

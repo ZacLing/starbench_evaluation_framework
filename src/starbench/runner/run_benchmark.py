@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import random
 import shutil
 from datetime import datetime, timezone
@@ -11,9 +12,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from .codex_process import (
+    append_claude_compat_events,
     append_opencode_compat_events,
     build_claude_print_command,
     build_codex_exec_command,
+    build_custom_command,
+    normalize_custom_events,
+    write_custom_final_output,
     build_gemini_headless_command,
     build_grok_headless_command,
     build_opencode_run_command,
@@ -23,12 +28,16 @@ from .codex_process import (
     prepare_grok_env,
     prepare_opencode_env,
     prepare_auth_home,
+    run_claude_process_in_docker,
     run_codex_process,
     run_codex_process_in_docker,
+    run_custom_process_in_docker,
     write_claude_final_output,
+    write_claude_stream_final_output,
     write_headless_final_output,
     write_opencode_final_output,
 )
+from .custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .evaluation import aggregate_results, normalize_parallel_results, normalize_single_result, write_aggregate
 from .models import Rubric, TaskRunSpec, TaskSpec
 from .progress import BenchmarkProgress, make_benchmark_progress
@@ -41,6 +50,8 @@ PROJECT_ROOT = Path.cwd()
 DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks"
 DEFAULT_RUNS_DIR = PROJECT_ROOT / "runs"
 DEFAULT_EXECUTOR_SKILLS_DIR = PROJECT_ROOT / "executor_skills"
+DEFAULT_RUNTIMES_DIR = PROJECT_ROOT / "runtimes"
+BUILTIN_AGENTS = {"codex", "claude", "opencode", "grok", "gemini"}
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 IGNORED_EXECUTOR_SKILL_NAMES = {".DS_Store", ".git", "__pycache__"}
 CLAUDE_THINKING_EFFORT_INSTRUCTIONS = {
@@ -49,6 +60,24 @@ CLAUDE_THINKING_EFFORT_INSTRUCTIONS = {
     "medium": "Before responding, think through the task carefully, including constraints, edge cases, and verification steps.",
     "high": "Before responding, think deeply about the task. Build a complete plan, inspect relevant evidence, consider failure modes and alternatives, and self-check the final deliverable before finishing.",
 }
+CLAUDE_EXECUTOR_BASE_TOOLS = "Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS"
+CLAUDE_EXECUTOR_WEB_TOOLS = "WebSearch,WebFetch"
+# Judges must be read-only across runtimes; OpenCode's built-in plan agent
+# matches the read-only sandboxes used for Codex/Grok/Gemini judges.
+OPENCODE_JUDGE_AGENT = "plan"
+
+
+def claude_executor_allowed_tools(allow_web_search: bool) -> str:
+    if allow_web_search:
+        return f"{CLAUDE_EXECUTOR_BASE_TOOLS},{CLAUDE_EXECUTOR_WEB_TOOLS}"
+    return CLAUDE_EXECUTOR_BASE_TOOLS
+
+
+def rubric_launch_order(rubrics: Sequence[Rubric], *, seed: int, run_task_id: str) -> List[Rubric]:
+    """Deterministic per-task rubric launch order, independent of async scheduling."""
+    order = list(rubrics)
+    random.Random(f"{seed}:{run_task_id}").shuffle(order)
+    return order
 
 
 def json_dump(path: Path, data: Dict[str, Any]) -> None:
@@ -259,7 +288,7 @@ def executor_skill_install_root(paths: Dict[str, Path], executor_backend: str, e
         return paths["workspace"] / ".gemini" / "skills"
     if executor_agent == "claude":
         return paths["workspace"] / ".claude" / "skills"
-    if executor_agent == "opencode":
+    if executor_agent == "opencode" or executor_agent.startswith("custom:"):
         return paths["workspace"] / ".starbench" / "executor_skills"
     raise ValueError(f"Unknown executor backend: {executor_backend}")
 
@@ -273,7 +302,7 @@ def executor_skill_prompt_location(executor_agent: str) -> str:
         return "./.gemini/skills/<skill-id>/"
     if executor_agent == "claude":
         return "./.claude/skills/<skill-id>/"
-    if executor_agent == "opencode":
+    if executor_agent == "opencode" or executor_agent.startswith("custom:"):
         return "./.starbench/executor_skills/<skill-id>/"
     return "./<skill-id>/"
 
@@ -451,45 +480,115 @@ async def run_executor(
     opencode_base_url: str | None,
     opencode_api_key_env: str | None,
     claude_thinking_effort: str,
+    claude_max_turns: int | None,
     auth_mode: str,
     model: str | None,
     executor_backend: str,
     docker_bin: str,
     docker_image: str,
+    custom_spec: CustomRuntimeSpec | None = None,
 ) -> Dict[str, Any]:
     task = task_run.task
     logs = paths["logs"]
-    if agent in {"claude", "opencode", "grok", "gemini"} and executor_backend != "local":
+    if agent in {"opencode", "grok", "gemini"} and executor_backend != "local":
         raise ValueError(f"{agent} executor currently supports --executor-backend local")
+    if agent.startswith("custom:") and executor_backend != "local":
+        if custom_spec is None or custom_spec.docker_image is None:
+            raise ValueError(f"{agent} executor requires a docker section for --executor-backend docker")
 
-    if agent == "claude":
-        command = build_claude_print_command(
-            claude_bin,
-            cwd=paths["workspace"],
-            model=model,
-            permission_mode="acceptEdits",
-            allowed_tools="Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS",
-            max_turns=20,
+    if agent.startswith("custom:"):
+        if custom_spec is None:
+            raise ValueError(f"Custom runtime spec missing for {agent}")
+        prompt_text = build_executor_prompt(
+            task_run, executor_skill_location=executor_skill_prompt_location(agent)
         )
-        env = prepare_claude_env(paths["codex_home"] / "claude_executor", auth_mode)
-        result = await run_codex_process(
-            command,
-            cwd=paths["workspace"],
-            prompt=append_claude_thinking_instruction(
-                build_executor_prompt(
-                    task_run,
-                    executor_skill_location=executor_skill_prompt_location(agent),
-                ),
-                claude_thinking_effort,
-            ),
-            env=env,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            timeout_seconds=task.timeout_seconds,
-        )
+        if executor_backend == "docker":
+            result = await run_custom_process_in_docker(
+                custom_spec,
+                docker_bin=docker_bin,
+                workspace=paths["workspace"],
+                prompt=prompt_text,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+                model=model,
+            )
+        else:
+            command = build_custom_command(custom_spec, role="executor", model=model, prompt=prompt_text)
+            env = os.environ.copy()
+            env.update(custom_spec.env)
+            result = await run_codex_process(
+                command,
+                cwd=paths["workspace"],
+                prompt=prompt_text if custom_spec.prompt_via == "stdin" else "",
+                env=env,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+            )
         if result.status == "success":
             try:
-                write_claude_final_output(logs / "events.jsonl", logs / "final.md")
+                write_custom_final_output(logs / "events.jsonl", logs / "final.md", parser=custom_spec.parser)
+                normalize_custom_events(logs / "events.jsonl", parser=custom_spec.parser, provider=custom_spec.id)
+            except Exception as exc:
+                result = result.__class__(
+                    command=result.command,
+                    exit_code=result.exit_code,
+                    status="failed",
+                    timed_out=result.timed_out,
+                    started_at=result.started_at,
+                    ended_at=result.ended_at,
+                    duration_seconds=result.duration_seconds,
+                )
+                (logs / "stderr.log").open("a", encoding="utf-8").write(
+                    f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
+    elif agent == "claude":
+        claude_prompt = append_claude_thinking_instruction(
+            build_executor_prompt(
+                task_run,
+                executor_skill_location=executor_skill_prompt_location(agent),
+            ),
+            claude_thinking_effort,
+        )
+        if executor_backend == "docker":
+            result = await run_claude_process_in_docker(
+                claude_bin=claude_bin,
+                docker_bin=docker_bin,
+                docker_image=docker_image,
+                workspace=paths["workspace"],
+                prompt=claude_prompt,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+                model=model,
+                allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
+                max_turns=claude_max_turns,
+            )
+        else:
+            command = build_claude_print_command(
+                claude_bin,
+                cwd=paths["workspace"],
+                model=model,
+                permission_mode="acceptEdits",
+                allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
+                max_turns=claude_max_turns,
+                output_format="stream-json",
+            )
+            env = prepare_claude_env(paths["codex_home"] / "claude_executor", auth_mode)
+            result = await run_codex_process(
+                command,
+                cwd=paths["workspace"],
+                prompt=claude_prompt,
+                env=env,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+            )
+        if result.status == "success":
+            try:
+                write_claude_stream_final_output(logs / "events.jsonl", logs / "final.md")
+                append_claude_compat_events(logs / "events.jsonl")
             except Exception as exc:
                 result = result.__class__(
                     command=result.command,
@@ -703,6 +802,7 @@ async def run_single_judge(
     timeout_seconds: int,
     executor_timing: Dict[str, Any] | None = None,
     semaphore: asyncio.Semaphore | None = None,
+    custom_spec: CustomRuntimeSpec | None = None,
 ) -> Dict[str, Any]:
     judges = paths["judges"]
     final_path = judges / "single_result.json"
@@ -711,14 +811,20 @@ async def run_single_judge(
         judge_workspace = prepare_evaluator_workspace(paths, "single")
         judge_final_path = judge_workspace / "single_result.json"
         prompt = build_single_judge_prompt(task)
-        if agent == "claude":
+        if agent.startswith("custom:"):
+            if custom_spec is None:
+                raise ValueError(f"Custom runtime spec missing for {agent}")
+            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
+            command = build_custom_command(custom_spec, role="judge", model=model, prompt=prompt)
+            env = os.environ.copy()
+            env.update(custom_spec.env)
+        elif agent == "claude":
             command = build_claude_print_command(
                 claude_bin,
                 cwd=judge_workspace,
                 model=model,
                 output_schema=SCHEMAS_DIR / "single_result.schema.json",
                 allowed_tools="Read,Glob,Grep,Bash,LS",
-                max_turns=20,
             )
             env = prepare_claude_env(paths["codex_home"] / "judge_single_claude", auth_mode)
         elif agent == "opencode":
@@ -727,7 +833,7 @@ async def run_single_judge(
                 opencode_bin,
                 cwd=judge_workspace,
                 model=model_name,
-                agent="build",
+                agent=OPENCODE_JUDGE_AGENT,
             )
             env = prepare_opencode_env(
                 paths["codex_home"] / "judge_single_opencode",
@@ -768,18 +874,46 @@ async def run_single_judge(
                 include_trace_config=False,
             )
             env = prepare_auth_home(paths["codex_home"] / "judge_single", auth_mode)
+        prompt_over_stdin = not (
+            agent == "grok"
+            or (agent.startswith("custom:") and custom_spec is not None and custom_spec.prompt_via == "arg")
+        )
         process_result = await run_codex_process(
             command,
             cwd=judge_workspace,
-            prompt="" if agent == "grok" else append_claude_thinking_instruction(
+            prompt=append_claude_thinking_instruction(
                 prompt,
                 claude_thinking_effort if agent == "claude" else "none",
-            ),
+            ) if prompt_over_stdin else "",
             env=env,
             stdout_path=judges / "single_events.jsonl",
             stderr_path=judges / "single_stderr.log",
             timeout_seconds=timeout_seconds,
         )
+        if agent.startswith("custom:") and process_result.status == "success":
+            try:
+                write_custom_final_output(
+                    judges / "single_events.jsonl",
+                    judge_final_path,
+                    parser=custom_spec.parser,
+                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
+                )
+                normalize_custom_events(
+                    judges / "single_events.jsonl", parser=custom_spec.parser, provider=custom_spec.id
+                )
+            except Exception as exc:
+                process_result = process_result.__class__(
+                    command=process_result.command,
+                    exit_code=process_result.exit_code,
+                    status="failed",
+                    timed_out=process_result.timed_out,
+                    started_at=process_result.started_at,
+                    ended_at=process_result.ended_at,
+                    duration_seconds=process_result.duration_seconds,
+                )
+                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
+                    f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
+                )
         if agent == "claude" and process_result.status == "success":
             try:
                 write_claude_final_output(
@@ -896,6 +1030,7 @@ async def run_parallel_judges(
     launch_order: Sequence[Rubric],
     progress: BenchmarkProgress | None = None,
     run_task_id: str | None = None,
+    custom_spec: CustomRuntimeSpec | None = None,
 ) -> Dict[str, Any]:
     async def run_one(rubric: Rubric) -> None:
         async with semaphore:
@@ -906,14 +1041,20 @@ async def run_parallel_judges(
             judge_workspace = prepare_evaluator_workspace(paths, f"parallel_{rubric.id}")
             judge_final_path = judge_workspace / "result.json"
             prompt = build_parallel_judge_prompt(task, rubric)
-            if agent == "claude":
+            if agent.startswith("custom:"):
+                if custom_spec is None:
+                    raise ValueError(f"Custom runtime spec missing for {agent}")
+                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
+                command = build_custom_command(custom_spec, role="judge", model=model, prompt=prompt)
+                env = os.environ.copy()
+                env.update(custom_spec.env)
+            elif agent == "claude":
                 command = build_claude_print_command(
                     claude_bin,
                     cwd=judge_workspace,
                     model=model,
                     output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
                     allowed_tools="Read,Glob,Grep,Bash,LS",
-                    max_turns=10,
                 )
                 env = prepare_claude_env(paths["codex_home"] / f"judge_{rubric.id}_claude", auth_mode)
             elif agent == "opencode":
@@ -922,7 +1063,7 @@ async def run_parallel_judges(
                     opencode_bin,
                     cwd=judge_workspace,
                     model=model_name,
-                    agent="build",
+                    agent=OPENCODE_JUDGE_AGENT,
                 )
                 env = prepare_opencode_env(
                     paths["codex_home"] / f"judge_{rubric.id}_opencode",
@@ -963,18 +1104,46 @@ async def run_parallel_judges(
                     include_trace_config=False,
                 )
                 env = prepare_auth_home(paths["codex_home"] / f"judge_{rubric.id}", auth_mode)
+            prompt_over_stdin = not (
+                agent == "grok"
+                or (agent.startswith("custom:") and custom_spec is not None and custom_spec.prompt_via == "arg")
+            )
             process_result = await run_codex_process(
                 command,
                 cwd=judge_workspace,
-                prompt="" if agent == "grok" else append_claude_thinking_instruction(
+                prompt=append_claude_thinking_instruction(
                     prompt,
                     claude_thinking_effort if agent == "claude" else "none",
-                ),
+                ) if prompt_over_stdin else "",
                 env=env,
                 stdout_path=rubric_dir / "events.jsonl",
                 stderr_path=rubric_dir / "stderr.log",
                 timeout_seconds=timeout_seconds,
             )
+            if agent.startswith("custom:") and process_result.status == "success":
+                try:
+                    write_custom_final_output(
+                        rubric_dir / "events.jsonl",
+                        judge_final_path,
+                        parser=custom_spec.parser,
+                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
+                    )
+                    normalize_custom_events(
+                        rubric_dir / "events.jsonl", parser=custom_spec.parser, provider=custom_spec.id
+                    )
+                except Exception as exc:
+                    process_result = process_result.__class__(
+                        command=process_result.command,
+                        exit_code=process_result.exit_code,
+                        status="failed",
+                        timed_out=process_result.timed_out,
+                        started_at=process_result.started_at,
+                        ended_at=process_result.ended_at,
+                        duration_seconds=process_result.duration_seconds,
+                    )
+                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
+                        f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
+                    )
             if agent == "claude" and process_result.status == "success":
                 try:
                     write_claude_final_output(
@@ -1327,7 +1496,12 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
 
     run_id = args.run_id or datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ")
     run_root = args.runs_dir / run_id
-    run_root.mkdir(parents=True, exist_ok=False)
+    try:
+        run_root.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        raise SystemExit(
+            f"Run directory already exists: {run_root}. Choose a new --run-id or remove the old run."
+        )
     selected_instruction_step_ids = task_runs[0].instruction_step_ids if args.instruction_mode == "select" and task_runs else []
     instruction_variants: List[Dict[str, Any]] = []
     seen_instruction_variants = set()
@@ -1354,7 +1528,11 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "evaluator_auth_mode": args.evaluator_auth_mode,
         "executor_agent": args.executor_agent,
         "evaluator_agent": args.evaluator_agent,
+        "runtimes_dir": str(args.runtimes_dir),
+        "executor_runtime": args.executor_runtime_spec.public_metadata() if args.executor_runtime_spec else None,
+        "evaluator_runtime": args.evaluator_runtime_spec.public_metadata() if args.evaluator_runtime_spec else None,
         "claude_thinking_effort": args.claude_thinking_effort,
+        "claude_max_turns": args.claude_max_turns,
         "opencode_provider": args.opencode_provider,
         "opencode_base_url": args.opencode_base_url,
         "opencode_api_key_env": args.opencode_api_key_env,
@@ -1423,25 +1601,48 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
 
             async def execute_record(record: Dict[str, Any]) -> Dict[str, Any]:
                 progress.executor_started(run_task_id=record["run_task_id"], task_id=record["task"].id)
-                status = await run_executor(
-                    record["task_run"],
-                    record["paths"],
-                    agent=args.executor_agent,
-                    codex_bin=args.codex_bin,
-                    claude_bin=args.claude_bin,
-                    grok_bin=args.grok_bin,
-                    gemini_bin=args.gemini_bin,
-                    opencode_bin=args.opencode_bin,
-                    opencode_provider=args.opencode_provider,
-                    opencode_base_url=args.opencode_base_url,
-                    opencode_api_key_env=args.opencode_api_key_env,
-                    claude_thinking_effort=args.claude_thinking_effort,
-                    auth_mode=args.executor_auth_mode,
-                    model=args.executor_model,
-                    executor_backend=args.executor_backend,
-                    docker_bin=args.docker_bin,
-                    docker_image=args.docker_image,
-                )
+                try:
+                    status = await run_executor(
+                        record["task_run"],
+                        record["paths"],
+                        agent=args.executor_agent,
+                        codex_bin=args.codex_bin,
+                        claude_bin=args.claude_bin,
+                        grok_bin=args.grok_bin,
+                        gemini_bin=args.gemini_bin,
+                        opencode_bin=args.opencode_bin,
+                        opencode_provider=args.opencode_provider,
+                        opencode_base_url=args.opencode_base_url,
+                        opencode_api_key_env=args.opencode_api_key_env,
+                        claude_thinking_effort=args.claude_thinking_effort,
+                        claude_max_turns=args.claude_max_turns,
+                        auth_mode=args.executor_auth_mode,
+                        model=args.executor_model,
+                        executor_backend=args.executor_backend,
+                        docker_bin=args.docker_bin,
+                        docker_image=args.docker_image,
+                        custom_spec=args.executor_runtime_spec,
+                    )
+                except Exception as exc:
+                    # One crashing task must not abort the whole run.
+                    logs = record["paths"]["logs"]
+                    with (logs / "stderr.log").open("a", encoding="utf-8") as handle:
+                        handle.write(f"\nExecutor crashed: {type(exc).__name__}: {exc}\n")
+                    status = {
+                        "command": [],
+                        "exit_code": None,
+                        "status": "failed",
+                        "timed_out": False,
+                        "started_at": None,
+                        "ended_at": None,
+                        "duration_seconds": None,
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "executor_backend": args.executor_backend,
+                        "docker_image": args.docker_image if args.executor_backend == "docker" else None,
+                        "usage": None,
+                        "artifact_file_count": 0,
+                    }
+                    json_dump(logs / "status.json", status)
                 progress.executor_finished(
                     run_task_id=record["run_task_id"],
                     task_id=record["task"].id,
@@ -1460,25 +1661,38 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                 executor_timing = executor_timing_from_status(executor_status)
                 if args.judge_mode in ("single", "both"):
                     progress.evaluator_started(run_task_id=record["run_task_id"], mode="single")
-                    modes["single"] = await run_single_judge(
-                        task,
-                        paths,
-                        agent=args.evaluator_agent,
-                        codex_bin=args.codex_bin,
-                        claude_bin=args.claude_bin,
-                        grok_bin=args.grok_bin,
-                        gemini_bin=args.gemini_bin,
-                        opencode_bin=args.opencode_bin,
-                        opencode_provider=args.opencode_provider,
-                        opencode_base_url=args.opencode_base_url,
-                        opencode_api_key_env=args.opencode_api_key_env,
-                        claude_thinking_effort=args.claude_thinking_effort,
-                        auth_mode=args.evaluator_auth_mode,
-                        model=args.evaluator_model,
-                        timeout_seconds=args.evaluator_timeout_seconds,
-                        executor_timing=executor_timing,
-                        semaphore=evaluator_semaphore,
-                    )
+                    try:
+                        modes["single"] = await run_single_judge(
+                            task,
+                            paths,
+                            agent=args.evaluator_agent,
+                            codex_bin=args.codex_bin,
+                            claude_bin=args.claude_bin,
+                            grok_bin=args.grok_bin,
+                            gemini_bin=args.gemini_bin,
+                            opencode_bin=args.opencode_bin,
+                            opencode_provider=args.opencode_provider,
+                            opencode_base_url=args.opencode_base_url,
+                            opencode_api_key_env=args.opencode_api_key_env,
+                            claude_thinking_effort=args.claude_thinking_effort,
+                            auth_mode=args.evaluator_auth_mode,
+                            model=args.evaluator_model,
+                            timeout_seconds=args.evaluator_timeout_seconds,
+                            executor_timing=executor_timing,
+                            semaphore=evaluator_semaphore,
+                            custom_spec=args.evaluator_runtime_spec,
+                        )
+                    except Exception as exc:
+                        modes["single"] = {
+                            "status": {"status": "failed", "error": f"{type(exc).__name__}: {exc}"},
+                            "aggregate": {
+                                "mode": "single",
+                                "overall_pass": False,
+                                "error": f"{type(exc).__name__}: {exc}",
+                                "executor_timing": executor_timing,
+                                "results": [],
+                            },
+                        }
                     progress.evaluator_finished(
                         run_task_id=record["run_task_id"],
                         mode="single",
@@ -1486,30 +1700,43 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         aggregate=modes["single"].get("aggregate"),
                     )
                 if args.judge_mode in ("parallel", "both"):
-                    rubric_order = list(task.rubrics)
-                    rng.shuffle(rubric_order)
-                    modes["parallel"] = await run_parallel_judges(
-                        task,
-                        paths,
-                        agent=args.evaluator_agent,
-                        codex_bin=args.codex_bin,
-                        claude_bin=args.claude_bin,
-                        grok_bin=args.grok_bin,
-                        gemini_bin=args.gemini_bin,
-                        opencode_bin=args.opencode_bin,
-                        opencode_provider=args.opencode_provider,
-                        opencode_base_url=args.opencode_base_url,
-                        opencode_api_key_env=args.opencode_api_key_env,
-                        claude_thinking_effort=args.claude_thinking_effort,
-                        auth_mode=args.evaluator_auth_mode,
-                        model=args.evaluator_model,
-                        timeout_seconds=args.evaluator_timeout_seconds,
-                        executor_timing=executor_timing,
-                        semaphore=evaluator_semaphore,
-                        launch_order=rubric_order,
-                        progress=progress,
-                        run_task_id=record["run_task_id"],
+                    rubric_order = rubric_launch_order(
+                        task.rubrics, seed=args.seed, run_task_id=record["run_task_id"]
                     )
+                    try:
+                        modes["parallel"] = await run_parallel_judges(
+                            task,
+                            paths,
+                            agent=args.evaluator_agent,
+                            codex_bin=args.codex_bin,
+                            claude_bin=args.claude_bin,
+                            grok_bin=args.grok_bin,
+                            gemini_bin=args.gemini_bin,
+                            opencode_bin=args.opencode_bin,
+                            opencode_provider=args.opencode_provider,
+                            opencode_base_url=args.opencode_base_url,
+                            opencode_api_key_env=args.opencode_api_key_env,
+                            claude_thinking_effort=args.claude_thinking_effort,
+                            auth_mode=args.evaluator_auth_mode,
+                            model=args.evaluator_model,
+                            timeout_seconds=args.evaluator_timeout_seconds,
+                            executor_timing=executor_timing,
+                            semaphore=evaluator_semaphore,
+                            launch_order=rubric_order,
+                            progress=progress,
+                            run_task_id=record["run_task_id"],
+                            custom_spec=args.evaluator_runtime_spec,
+                        )
+                    except Exception as exc:
+                        modes["parallel"] = {
+                            "aggregate": {
+                                "mode": "parallel",
+                                "overall_pass": False,
+                                "error": f"{type(exc).__name__}: {exc}",
+                                "executor_timing": executor_timing,
+                                "results": [],
+                            },
+                        }
                 result = {
                     "run_task_id": record["run_task_id"],
                     "task_id": task.id,
@@ -1604,21 +1831,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--executor-agent",
-        choices=["codex", "claude", "opencode", "grok", "gemini"],
         default="codex",
         help=(
             "Executor runtime: codex for GPT/OpenAI-family, claude for Claude-family, "
-            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI."
+            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI, "
+            "or custom:<id> for a runtime defined in --runtimes-dir."
         ),
     )
     parser.add_argument(
         "--evaluator-agent",
-        choices=["codex", "claude", "opencode", "grok", "gemini"],
         default="codex",
         help=(
             "Evaluator runtime: codex for GPT/OpenAI-family, claude for Claude-family, "
-            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI."
+            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI, "
+            "or custom:<id> for a runtime defined in --runtimes-dir."
         ),
+    )
+    parser.add_argument(
+        "--runtimes-dir",
+        type=Path,
+        default=DEFAULT_RUNTIMES_DIR,
+        help="Directory containing custom runtime configs (<id>.json) for custom:<id> agents.",
     )
     parser.add_argument(
         "--claude-thinking-effort",
@@ -1627,6 +1860,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "Prompt-level thinking instruction for Claude Code. Claude Code does not expose a "
             "native reasoning-effort flag, so this maps to explicit think/deep-think instructions."
+        ),
+    )
+    parser.add_argument(
+        "--claude-max-turns",
+        type=int,
+        default=None,
+        help=(
+            "Optional agentic turn cap for the Claude Code executor. Defaults to no cap so "
+            "Claude runs are comparable with other runtimes."
         ),
     )
     parser.add_argument(
@@ -1658,13 +1900,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--executor-backend",
         choices=["local", "docker"],
-        default="docker",
-        help="Run executor directly on the host or inside a per-task Docker container.",
+        default=None,
+        help=(
+            "Run executor directly on the host or inside a per-task Docker container. "
+            "Defaults to docker for the codex runtime and local for other runtimes "
+            "(Docker support is currently Codex-only)."
+        ),
     )
     parser.add_argument("--docker-bin", default="docker", help="Docker executable or shell-like command prefix.")
     parser.add_argument(
         "--docker-image",
-        default="codex-bench:latest",
+        default="starbench-codex:latest",
         help="Image used when --executor-backend docker is selected.",
     )
     parser.add_argument("--evaluator-timeout-seconds", type=int, default=900)
@@ -1723,6 +1969,35 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.rigor_mode = "select"
     if args.rigor_mode == "select" and not args.rigor:
         parser.error("--rigor-mode select requires at least one --rigor")
+    args.runtimes_dir = args.runtimes_dir.resolve()
+
+    def resolve_runtime_spec(value: str, flag: str) -> CustomRuntimeSpec | None:
+        if value in BUILTIN_AGENTS:
+            return None
+        if value.startswith("custom:"):
+            try:
+                return load_custom_runtime(args.runtimes_dir, value.split(":", 1)[1])
+            except ValueError as exc:
+                parser.error(str(exc))
+        parser.error(f"{flag} must be one of {sorted(BUILTIN_AGENTS)} or custom:<id>, got {value!r}")
+        return None
+
+    args.executor_runtime_spec = resolve_runtime_spec(args.executor_agent, "--executor-agent")
+    args.evaluator_runtime_spec = resolve_runtime_spec(args.evaluator_agent, "--evaluator-agent")
+    def backend_supports_docker(agent: str, spec: CustomRuntimeSpec | None) -> bool:
+        if agent in {"codex", "claude"}:
+            return True
+        return agent.startswith("custom:") and spec is not None and spec.docker_image is not None
+
+    if args.executor_backend is None:
+        args.executor_backend = "docker" if args.executor_agent == "codex" else "local"
+    elif args.executor_backend == "docker" and not backend_supports_docker(
+        args.executor_agent, args.executor_runtime_spec
+    ):
+        parser.error(
+            f"--executor-agent {args.executor_agent} currently requires --executor-backend local; "
+            "Docker isolation supports codex or a custom runtime with a docker section."
+        )
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
     args.tasks_dir = args.tasks_dir.resolve()

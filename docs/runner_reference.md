@@ -74,6 +74,7 @@ Use this runtime convention:
 | Other OpenAI-compatible models, such as Doubao or Qwen | OpenCode, `--executor-agent opencode` / `--evaluator-agent opencode` |
 | xAI Grok Build models | Grok Build, `--executor-agent grok` / `--evaluator-agent grok` |
 | Gemini CLI models | Gemini CLI, `--executor-agent gemini` / `--evaluator-agent gemini` |
+| Any other headless agent CLI | Custom runtime, `--executor-agent custom:<id>` / `--evaluator-agent custom:<id>` |
 
 Codex is the default executor and evaluator runtime, and is the expected runtime for GPT/OpenAI-family models:
 
@@ -92,7 +93,15 @@ Claude Code is the expected runtime for Claude-family models:
 --evaluator-model claude-opus-4-8
 ```
 
-Claude Code runs through `claude -p --output-format json`. Evaluators use Claude Code structured output with `--json-schema`, and Starbench writes the resulting `structured_output` into the same judge result files used by Codex evaluators.
+Claude Code executors run through `claude -p --output-format stream-json`, so the full event trace (reasoning, commands, file changes, usage) is captured and normalized into the same Codex-style `trace_summary.json` items used by other runtimes. Evaluators run through `claude -p --output-format json` with `--json-schema` structured output, and Starbench writes the resulting `structured_output` into the same judge result files used by Codex evaluators. Runs that exit 0 but report `is_error` (for example "Not logged in") are treated as failed instead of being graded.
+
+Claude Code executors have no agentic turn cap by default, matching other runtimes. Set one explicitly if needed:
+
+```bash
+--claude-max-turns 30
+```
+
+When a task package sets `allow_web_search: true`, the Claude executor tool allowlist additionally includes `WebSearch` and `WebFetch`; otherwise both stay disabled.
 
 Claude Code does not currently expose a native CLI equivalent of Codex `model_reasoning_effort`. Starbench provides a prompt-level control:
 
@@ -109,16 +118,12 @@ export ANTHROPIC_BASE_URL=https://your-anthropic-compatible-gateway
 export ANTHROPIC_AUTH_TOKEN=...
 ```
 
-Claude executor support currently uses `--executor-backend local`. If the host does not have `claude`, build the helper image and use the Docker wrapper:
+Claude executor support currently uses `--executor-backend local` (this is the automatic default for non-Codex runtimes). With `--auth-mode global`, Starbench keeps the host `CLAUDE_CONFIG_DIR` so the host `claude` login is used directly; with `--auth-mode env`, each task gets an isolated config dir and credentials must come from `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`.
+
+If the host does not have `claude`, build the helper image and point `--claude-bin` at a small wrapper script that forwards `claude "$@"` into `docker run` (mount the task workspace and pass through `ANTHROPIC_*` variables). Native Docker isolation for non-Codex runtimes is planned but not yet implemented:
 
 ```bash
 docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
-
-starbench-run \
-  --executor-agent claude \
-  --evaluator-agent claude \
-  --claude-bin /absolute/path/to/tmp/claude-code-docker.sh \
-  --executor-backend local
 ```
 
 OpenCode is the expected runtime for other OpenAI-compatible models, including models that do not expose an Anthropic Messages API, such as Doubao:
@@ -191,6 +196,24 @@ StarBench invokes Gemini with `--output-format json`, `--skip-trust`, and `-p ""
 
 Grok Build and Gemini CLI executor support currently requires `--executor-backend local`. Docker support is still Codex-only because the bundled Docker image installs Codex and mounts a `CODEX_HOME`.
 
+Custom runtimes plug in any other headless agent CLI through a declarative
+config file — no Python adapter:
+
+```bash
+starbench-run \
+  --executor-agent custom:qwen-code \
+  --evaluator-agent custom:qwen-code \
+  --runtimes-dir runtimes \
+  --executor-model qwen3-coder \
+  --evaluator-model qwen3-coder
+```
+
+`--runtimes-dir` (default `runtimes/`) holds one `<id>.json` per runtime
+declaring the command, prompt delivery (`stdin` or argv), one of three output
+parsers (`headless-json`, `jsonl-events`, `text`), static env, and an
+optional docker image. Configs are validated at argument parsing. Field
+reference and parser contracts: [runtimes/README.md](../runtimes/README.md).
+
 ## Judge Modes
 
 - `--judge-mode single`: one evaluator sees all rubrics for a task.
@@ -207,17 +230,24 @@ Control evaluator concurrency:
 
 ## Executor Backend
 
-Default:
+The default follows the executor runtime: `docker` for Codex, `local` for all other runtimes. Docker can be selected explicitly for Codex, Claude Code, and custom runtimes that declare a `docker` section; other combinations are rejected at argument parsing.
 
 ```bash
---executor-backend docker
+# Claude Code in Docker (auth via environment):
+docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
+starbench-run \
+  --executor-agent claude \
+  --executor-backend docker \
+  --docker-image starbench-claude-code:latest \
+  --executor-auth-mode env
 ```
-
-Alternative for local debugging:
 
 ```bash
---executor-backend local
+--executor-backend docker   # codex default
+--executor-backend local    # other runtimes, or codex local debugging
 ```
+
+On executor timeout, Starbench kills the Docker container itself (not just the `docker run` client), so timed-out tasks cannot keep writing into the workspace.
 
 Docker executor options:
 

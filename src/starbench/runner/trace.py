@@ -17,7 +17,14 @@ def read_jsonl(path: Path) -> List[Dict[str, Any]]:
         line = line.rstrip("\n")
         if not line.strip():
             continue
-        events.append(json.loads(line))
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            # Agent CLIs can interleave warnings or crash text with JSONL events,
+            # especially on failed runs. Skip unparseable lines instead of
+            # aborting the whole benchmark.
+            continue
+        events.append(event)
     return events
 
 
