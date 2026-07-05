@@ -127,3 +127,25 @@ generous first column, right-aligned numerics.
 Motion only for state: expanding evidence, tab underline, running-pulse dot, skeleton
 shimmer, toast entry. No page-load choreography. All of it collapses to instant under
 `prefers-reduced-motion: reduce`.
+
+## Where facts live / 事实源速查表
+
+Every fact below has **one** home. To change it you open exactly the file in the
+right column — the derived copies (GUI agent tables, launcher/CLI choices,
+default docker-image map, generated TS types) follow automatically. If you find
+yourself editing a second place to keep something "in sync", that is a bug in the
+architecture, not a step to remember. The `recipes.md` steps map one-to-one onto
+these rows.
+
+| 要改 X (the fact) | 去这个文件 (the single source) | 谁自动跟随 (derived, do not touch) |
+|---|---|---|
+| **Runtime metadata** — label, protocol, bin, credential env keys, docker env whitelist, judge-sensitive env | Built-in: `RuntimeInfo` in `src/starbench/adapters/<id>.py`; register in `adapters/registry.py`. Custom: `runtimes/<id>.json` | `gui/agents.py`, `gui/library.py` (`AGENT_BINS`/`AGENT_ENV_KEYS`), `gui/experiments.py` (`JUDGE_ENV_SENSITIVE`), `gui/launcher.py` (`AGENT_CHOICES`), `runner/cli.py` — all derive from `list_builtin()` |
+| **Injection channel** — how a provider's endpoint/key wires into a runtime | The `injection=InjectionChannel(...)` on that runtime's `RuntimeInfo` (`adapters/<id>.py`). A *new channel kind* is added in `gui/injection.py` | frontend `NewRun.tsx` (no longer holds `providerSettings()`) |
+| **Docker image (default per runtime)** | `RuntimeInfo.docker_image` in `adapters/<id>.py` | `adapters/registry.py` `DEFAULT_DOCKER_IMAGES`, `gui/experiments.py` `DOCKER_CAPABLE_AGENTS` |
+| **Docker image (the build itself)** | `docker/<id>.Dockerfile` + its `Makefile` `docker-images*` line | — |
+| **Output parser** — how stdout becomes `final.md` + comparable events | `src/starbench/execution/parsers.py`; the owning adapter's finalize step points at the helper | every runtime that shares that output format |
+| **API shape** — an `/api` request/response field | `src/starbench/gui/contracts.py`, then `make gen-types` | `gui-frontend/src/lib/api-types.ts` (generated, committed), `lib/api.ts` |
+| **Provider preset** — endpoint + credential env name + model catalog | `BUILTIN_PROVIDERS` in `src/starbench/gui/providers.py` | `key_present` / catalog snapshot (computed at read time) |
+| **Evaluator (judge) prompt** | `build_single_judge_prompt` / `build_parallel_judge_prompt` in `src/starbench/runner/prompts.py` | every runtime's judge (the prompt text is runtime-independent) |
+| **Task package format** — task.json / rubrics / references | Loader: `src/starbench/runner/task_loader.py`. Authoring contract: [`docs/task_package.md`](task_package.md) | GUI import/preflight in `gui/library.py` |
+| **Run artifact layout** — a task root's `workspace/` / `logs/` / `judges/` paths | `materialize_task` in `src/starbench/runner/executor.py` (the only writer) | `gui/data.py` readers, `runner/judge.py` (mirrors names when staging the judge workspace) |
