@@ -262,6 +262,35 @@ Docker executor options:
 
 For Docker runs, `copy-auth` or `env` is recommended.
 
+## Environment Scopes (executor vs judge)
+
+A single `starbench-run` process runs both the executor and the judge, so their
+environments must be kept apart: a contender's `OPENAI_BASE_URL` must not reroute
+an OpenAI-family judge in the same run. The runner therefore builds two base
+environments from its own process environment:
+
+- Plain (unprefixed) variables are visible to **both** sides. Running the CLI
+  directly from a terminal — where nothing is prefixed — leaves executor and
+  judge with the ambient environment, exactly as before.
+- Variables named `STARBENCH_EXECUTOR_ENV_<VAR>` are stripped of the prefix and
+  placed in the **executor** scope only; `STARBENCH_JUDGE_ENV_<VAR>` variables go
+  to the **judge** scope only. The prefix names themselves are removed from the
+  ambient environment, so nothing leaks between scopes or into child processes.
+
+Adapters build their run environment on top of the side's base env (never a bare
+`os.environ.copy()`), so the isolation holds for local and Docker runs alike.
+Only *values* travel in environment variables — never on the command line (`ps`
+visible) or in a temp file. The console uses these prefixes to route each
+contender's and the judge's injected endpoint/credentials to the correct side;
+running the CLI by hand you would set them the same way if you needed one
+variable seen by only one side, e.g.:
+
+```bash
+STARBENCH_EXECUTOR_ENV_OPENAI_BASE_URL=https://openrouter.ai/api/v1 \
+  starbench-run --executor-agent opencode --evaluator-agent codex ...
+# executor talks to OpenRouter; the Codex judge keeps the official endpoint.
+```
+
 ## Human Reference Instructions
 
 Run a baseline with no extra instructions:

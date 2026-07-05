@@ -95,10 +95,12 @@ single-operator tool; do not expose it to a network.
   an agent under test, since self-grading biases scores. Docker isolation
   covers every built-in runtime — each in its own image, resolved per runtime
   (`make docker-images`) — and custom runtimes with a Docker image in their
-  spec; the rest run locally and are labeled honestly. Because the executor
-  and the judge share one process environment per run, the console rejects
-  plans where an agent's injected endpoint variables would silently reroute
-  the judge.
+  spec; the rest run locally and are labeled honestly. The executor and the
+  judge run under isolated environment scopes (the console ships each side's
+  injected variables under a `STARBENCH_EXECUTOR_ENV_*` / `STARBENCH_JUDGE_ENV_*`
+  prefix that the runner unpacks separately), so an agent's injected endpoint no
+  longer reroutes the judge; a variable read by both is surfaced as an amber
+  advisory in the plan, not a rejection.
 
 ## Launching runs
 
