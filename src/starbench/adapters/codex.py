@@ -40,8 +40,10 @@ from .base import (
 CODEX_DOCKER_ENV_WHITELIST = ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"]
 
 
-def prepare_auth_home(codex_home: Path, auth_mode: str) -> Dict[str, str]:
-    env = os.environ.copy()
+def prepare_auth_home(
+    codex_home: Path, auth_mode: str, *, base_env: Dict[str, str] | None = None
+) -> Dict[str, str]:
+    env = dict(base_env) if base_env is not None else os.environ.copy()
     if auth_mode == "global":
         return env
 
@@ -58,9 +60,11 @@ def prepare_auth_home(codex_home: Path, auth_mode: str) -> Dict[str, str]:
     return env
 
 
-def prepare_isolated_auth_home(codex_home: Path, auth_mode: str) -> Dict[str, str]:
+def prepare_isolated_auth_home(
+    codex_home: Path, auth_mode: str, *, base_env: Dict[str, str] | None = None
+) -> Dict[str, str]:
     """Prepare an isolated CODEX_HOME even when the caller selected global auth."""
-    env = os.environ.copy()
+    env = dict(base_env) if base_env is not None else os.environ.copy()
     codex_home.mkdir(parents=True, exist_ok=True)
     env["CODEX_HOME"] = str(codex_home)
 
@@ -167,11 +171,12 @@ async def run_codex_process_in_docker(
     allow_web_search: bool = False,
     include_trace_config: bool = True,
     output_schema: Path | None = None,
+    base_env: Dict[str, str] | None = None,
 ) -> ProcessResult:
     runner_dir = workspace / ".runner"
     runner_dir.mkdir(parents=True, exist_ok=True)
     docker_auth_home = codex_home / "docker"
-    auth_env = prepare_isolated_auth_home(docker_auth_home, auth_mode)
+    auth_env = prepare_isolated_auth_home(docker_auth_home, auth_mode, base_env=base_env)
     container_schema = None
     if output_schema is not None:
         raise ValueError("Docker Codex process currently supports executor runs only; evaluator schemas are host-local.")
@@ -271,7 +276,7 @@ class CodexAdapter(RuntimeAdapter):
                 allow_web_search=task.allow_web_search,
                 include_trace_config=True,
             )
-            env = prepare_auth_home(paths["codex_home"], ctx.auth_mode)
+            env = prepare_auth_home(paths["codex_home"], ctx.auth_mode, base_env=ctx.base_env)
             return await run_codex_process(
                 command,
                 cwd=paths["workspace"],
@@ -298,6 +303,7 @@ class CodexAdapter(RuntimeAdapter):
                 model=ctx.model,
                 allow_web_search=task.allow_web_search,
                 include_trace_config=True,
+                base_env=ctx.base_env,
             )
         raise ValueError(f"Unknown executor backend: {ctx.executor_backend}")
 
@@ -324,7 +330,7 @@ class CodexAdapter(RuntimeAdapter):
             model=model,
             include_trace_config=False,
         )
-        env = prepare_auth_home(judge_home_base, ctx.auth_mode)
+        env = prepare_auth_home(judge_home_base, ctx.auth_mode, base_env=ctx.base_env)
         return await run_codex_process(
             command,
             cwd=judge_workspace,

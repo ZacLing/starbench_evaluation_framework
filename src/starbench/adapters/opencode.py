@@ -105,10 +105,11 @@ def prepare_opencode_env(
     base_url: str | None = None,
     model: str | None = None,
     api_key_env: str | None = None,
+    base_env: Dict[str, str] | None = None,
 ) -> Dict[str, str]:
     if auth_mode not in {"env", "global"}:
         raise ValueError("OpenCode agent currently supports --auth-mode env or global")
-    env = os.environ.copy()
+    env = dict(base_env) if base_env is not None else os.environ.copy()
     if auth_mode == "env":
         opencode_home.mkdir(parents=True, exist_ok=True)
         env["OPENCODE_CONFIG_DIR"] = str(opencode_home)
@@ -163,10 +164,12 @@ def build_opencode_docker_command(
     )
 
 
-def opencode_docker_export_env(workspace: Path) -> Dict[str, str]:
+def opencode_docker_export_env(
+    workspace: Path, *, base_env: Dict[str, str] | None = None
+) -> Dict[str, str]:
     """Environment for running `opencode export` on the host against the
     session state a containerized run left inside the workspace mount."""
-    env = os.environ.copy()
+    env = dict(base_env) if base_env is not None else os.environ.copy()
     home = workspace / ".runner" / "opencode_home"
     env["HOME"] = str(home)
     env["XDG_CONFIG_HOME"] = str(home / ".config")
@@ -190,9 +193,10 @@ async def run_opencode_process_in_docker(
     provider: str | None = None,
     base_url: str | None = None,
     api_key_env: str | None = None,
+    base_env: Dict[str, str] | None = None,
 ) -> ProcessResult:
     (workspace / ".runner" / "opencode_home").mkdir(parents=True, exist_ok=True)
-    auth_env = os.environ.copy()
+    auth_env = dict(base_env) if base_env is not None else os.environ.copy()
     container_name = f"starbench-{uuid.uuid4().hex[:12]}"
     command = build_opencode_docker_command(
         opencode_bin=opencode_bin,
@@ -271,8 +275,9 @@ class OpenCodeAdapter(RuntimeAdapter):
                 provider=ctx.opencode_provider,
                 base_url=ctx.opencode_base_url,
                 api_key_env=ctx.opencode_api_key_env,
+                base_env=ctx.base_env,
             )
-            env = opencode_docker_export_env(paths["workspace"])
+            env = opencode_docker_export_env(paths["workspace"], base_env=ctx.base_env)
         else:
             command = build_opencode_run_command(
                 opencode_bin,
@@ -287,6 +292,7 @@ class OpenCodeAdapter(RuntimeAdapter):
                 base_url=ctx.opencode_base_url,
                 model=model_name,
                 api_key_env=ctx.opencode_api_key_env,
+                base_env=ctx.base_env,
             )
             result = await run_codex_process(
                 command,
@@ -338,6 +344,7 @@ class OpenCodeAdapter(RuntimeAdapter):
             base_url=ctx.opencode_base_url,
             model=model_name,
             api_key_env=ctx.opencode_api_key_env,
+            base_env=ctx.base_env,
         )
         prompt = append_json_schema_instruction(base_prompt, schema_path)
         result = await run_codex_process(

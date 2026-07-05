@@ -127,8 +127,17 @@ class RuntimeInfo:
 
 @dataclass(frozen=True)
 class ExecutorContext:
-    """Everything an adapter needs to run the executor side of a task."""
+    """Everything an adapter needs to run the executor side of a task.
 
+    ``base_env`` is the environment the adapter builds its run env on top of —
+    the executor's scoped base (clean ambient + executor-only overrides) computed
+    by the orchestrator (see ``runner.env_scope``). Adapters use it instead of
+    ``os.environ.copy()`` so a contender's injected endpoint/credentials never
+    leak into the judge run. Standalone CLI runs pass the ambient environment,
+    so behaviour is unchanged.
+    """
+
+    base_env: Dict[str, str]
     bins: Dict[str, str]
     docker_bin: str
     docker_image: str
@@ -144,8 +153,13 @@ class ExecutorContext:
 
 @dataclass(frozen=True)
 class JudgeContext:
-    """Everything an adapter needs to run the judge side of a task."""
+    """Everything an adapter needs to run the judge side of a task.
 
+    ``base_env`` is the judge's scoped base env (clean ambient + judge-only
+    overrides); see :class:`ExecutorContext` and ``runner.env_scope``.
+    """
+
+    base_env: Dict[str, str]
     bins: Dict[str, str]
     auth_mode: str
     model: str | None

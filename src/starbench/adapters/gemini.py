@@ -37,10 +37,12 @@ from .base import (
 GEMINI_DOCKER_ENV_WHITELIST = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"]
 
 
-def prepare_gemini_env(gemini_home: Path, auth_mode: str) -> Dict[str, str]:
+def prepare_gemini_env(
+    gemini_home: Path, auth_mode: str, *, base_env: Dict[str, str] | None = None
+) -> Dict[str, str]:
     if auth_mode not in {"env", "global"}:
         raise ValueError("Gemini agent currently supports --auth-mode env or global")
-    env = os.environ.copy()
+    env = dict(base_env) if base_env is not None else os.environ.copy()
     gemini_home.mkdir(parents=True, exist_ok=True)
     return env
 
@@ -101,9 +103,10 @@ async def run_gemini_process_in_docker(
     stderr_path: Path,
     timeout_seconds: int,
     model: str | None,
+    base_env: Dict[str, str] | None = None,
 ) -> ProcessResult:
     (workspace / ".runner" / "gemini_home").mkdir(parents=True, exist_ok=True)
-    auth_env = os.environ.copy()
+    auth_env = dict(base_env) if base_env is not None else os.environ.copy()
     container_name = f"starbench-{uuid.uuid4().hex[:12]}"
     command = build_gemini_docker_command(
         gemini_bin=gemini_bin,
@@ -180,6 +183,7 @@ class GeminiAdapter(RuntimeAdapter):
                 stderr_path=logs / "stderr.log",
                 timeout_seconds=task.timeout_seconds,
                 model=ctx.model,
+                base_env=ctx.base_env,
             )
         else:
             command = build_gemini_headless_command(
@@ -187,7 +191,9 @@ class GeminiAdapter(RuntimeAdapter):
                 model=ctx.model,
                 approval_mode="yolo",
             )
-            env = prepare_gemini_env(paths["codex_home"] / "gemini_executor", ctx.auth_mode)
+            env = prepare_gemini_env(
+                paths["codex_home"] / "gemini_executor", ctx.auth_mode, base_env=ctx.base_env
+            )
             result = await run_codex_process(
                 command,
                 cwd=paths["workspace"],
@@ -224,7 +230,9 @@ class GeminiAdapter(RuntimeAdapter):
             approval_mode="plan",
         )
         env = prepare_gemini_env(
-            judge_home_base.parent / f"{judge_home_base.name}_gemini", ctx.auth_mode
+            judge_home_base.parent / f"{judge_home_base.name}_gemini",
+            ctx.auth_mode,
+            base_env=ctx.base_env,
         )
         prompt = append_json_schema_instruction(base_prompt, schema_path)
         result = await run_codex_process(

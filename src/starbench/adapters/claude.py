@@ -50,10 +50,12 @@ CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANT
 CLAUDE_JUDGE_ALLOWED_TOOLS = "Read,Glob,Grep,Bash,LS"
 
 
-def prepare_claude_env(claude_home: Path, auth_mode: str) -> Dict[str, str]:
+def prepare_claude_env(
+    claude_home: Path, auth_mode: str, *, base_env: Dict[str, str] | None = None
+) -> Dict[str, str]:
     if auth_mode not in {"env", "global"}:
         raise ValueError("Claude agent currently supports --auth-mode env or global")
-    env = os.environ.copy()
+    env = dict(base_env) if base_env is not None else os.environ.copy()
     env.setdefault("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
     if auth_mode == "global":
         # Keep the host CLAUDE_CONFIG_DIR: Claude Code login credentials are
@@ -142,9 +144,10 @@ async def run_claude_process_in_docker(
     model: str | None,
     allowed_tools: str | None,
     max_turns: int | None,
+    base_env: Dict[str, str] | None = None,
 ) -> ProcessResult:
     (workspace / ".runner" / "claude_home").mkdir(parents=True, exist_ok=True)
-    auth_env = os.environ.copy()
+    auth_env = dict(base_env) if base_env is not None else os.environ.copy()
     container_name = f"starbench-{uuid.uuid4().hex[:12]}"
     command = build_claude_docker_command(
         claude_bin=claude_bin,
@@ -226,6 +229,7 @@ class ClaudeAdapter(RuntimeAdapter):
                 model=ctx.model,
                 allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
                 max_turns=ctx.claude_max_turns,
+                base_env=ctx.base_env,
             )
         else:
             command = build_claude_print_command(
@@ -237,7 +241,9 @@ class ClaudeAdapter(RuntimeAdapter):
                 max_turns=ctx.claude_max_turns,
                 output_format="stream-json",
             )
-            env = prepare_claude_env(paths["codex_home"] / "claude_executor", ctx.auth_mode)
+            env = prepare_claude_env(
+                paths["codex_home"] / "claude_executor", ctx.auth_mode, base_env=ctx.base_env
+            )
             result = await run_codex_process(
                 command,
                 cwd=paths["workspace"],
@@ -276,7 +282,9 @@ class ClaudeAdapter(RuntimeAdapter):
             allowed_tools=CLAUDE_JUDGE_ALLOWED_TOOLS,
         )
         env = prepare_claude_env(
-            judge_home_base.parent / f"{judge_home_base.name}_claude", ctx.auth_mode
+            judge_home_base.parent / f"{judge_home_base.name}_claude",
+            ctx.auth_mode,
+            base_env=ctx.base_env,
         )
         result = await run_codex_process(
             command,

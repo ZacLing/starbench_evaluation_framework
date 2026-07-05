@@ -94,9 +94,10 @@ async def run_custom_process_in_docker(
     stderr_path: Path,
     timeout_seconds: int,
     model: str | None = None,
+    base_env: Dict[str, str] | None = None,
 ) -> ProcessResult:
     (workspace / ".runner" / "custom_home").mkdir(parents=True, exist_ok=True)
-    auth_env = os.environ.copy()
+    auth_env = dict(base_env) if base_env is not None else os.environ.copy()
     auth_env.update(spec.env)
     container_name = f"starbench-{uuid.uuid4().hex[:12]}"
     command = build_custom_docker_command(
@@ -180,10 +181,11 @@ class SpecAdapter(RuntimeAdapter):
                 stderr_path=logs / "stderr.log",
                 timeout_seconds=task.timeout_seconds,
                 model=ctx.model,
+                base_env=ctx.base_env,
             )
         else:
             command = build_custom_command(spec, role="executor", model=ctx.model, prompt=prompt_text)
-            env = os.environ.copy()
+            env = dict(ctx.base_env)
             env.update(spec.env)
             result = await run_codex_process(
                 command,
@@ -218,7 +220,7 @@ class SpecAdapter(RuntimeAdapter):
         spec = self.spec
         prompt = append_json_schema_instruction(base_prompt, schema_path)
         command = build_custom_command(spec, role="judge", model=model, prompt=prompt)
-        env = os.environ.copy()
+        env = dict(ctx.base_env)
         env.update(spec.env)
         prompt_over_stdin = spec.prompt_via != "arg"
         result = await run_codex_process(

@@ -36,10 +36,12 @@ from .base import (
 GROK_DOCKER_ENV_WHITELIST = ["XAI_API_KEY"]
 
 
-def prepare_grok_env(grok_home: Path, auth_mode: str) -> Dict[str, str]:
+def prepare_grok_env(
+    grok_home: Path, auth_mode: str, *, base_env: Dict[str, str] | None = None
+) -> Dict[str, str]:
     if auth_mode not in {"env", "global"}:
         raise ValueError("Grok agent currently supports --auth-mode env or global")
-    env = os.environ.copy()
+    env = dict(base_env) if base_env is not None else os.environ.copy()
     grok_home.mkdir(parents=True, exist_ok=True)
     return env
 
@@ -119,9 +121,10 @@ async def run_grok_process_in_docker(
     stderr_path: Path,
     timeout_seconds: int,
     model: str | None,
+    base_env: Dict[str, str] | None = None,
 ) -> ProcessResult:
     (workspace / ".runner" / "grok_home").mkdir(parents=True, exist_ok=True)
-    auth_env = os.environ.copy()
+    auth_env = dict(base_env) if base_env is not None else os.environ.copy()
     container_name = f"starbench-{uuid.uuid4().hex[:12]}"
     command = build_grok_docker_command(
         grok_bin=grok_bin,
@@ -195,6 +198,7 @@ class GrokAdapter(RuntimeAdapter):
                 stderr_path=logs / "stderr.log",
                 timeout_seconds=task.timeout_seconds,
                 model=ctx.model,
+                base_env=ctx.base_env,
             )
         else:
             command = build_grok_headless_command(
@@ -205,7 +209,9 @@ class GrokAdapter(RuntimeAdapter):
                 permission_mode="bypassPermissions",
                 sandbox="workspace",
             )
-            env = prepare_grok_env(paths["codex_home"] / "grok_executor", ctx.auth_mode)
+            env = prepare_grok_env(
+                paths["codex_home"] / "grok_executor", ctx.auth_mode, base_env=ctx.base_env
+            )
             result = await run_codex_process(
                 command,
                 cwd=paths["workspace"],
@@ -246,7 +252,9 @@ class GrokAdapter(RuntimeAdapter):
             sandbox="read-only",
         )
         env = prepare_grok_env(
-            judge_home_base.parent / f"{judge_home_base.name}_grok", ctx.auth_mode
+            judge_home_base.parent / f"{judge_home_base.name}_grok",
+            ctx.auth_mode,
+            base_env=ctx.base_env,
         )
         # Grok takes the prompt on argv; stdin stays empty.
         result = await run_codex_process(
