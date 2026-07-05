@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useLocation, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
@@ -45,6 +45,7 @@ import {
   api,
   type AiProvider,
   type Contender,
+  type CustomRuntime,
   type ExperimentPlanItem,
   type Profile,
   type SharedConfig,
@@ -97,8 +98,41 @@ interface ContenderSettings {
   env?: Record<string, { value?: string; from_env?: string }>
 }
 
-function providerSettings(runtime: string, provider: AiProvider): ContenderSettings {
+/* Endpoint the provider exposes for a given wire protocol. */
+function providerEndpoint(protocol: string, provider: AiProvider): string {
+  switch (protocol) {
+    case "openai":
+      return provider.base_url || DEFAULT_OPENAI_BASE_URLS[provider.kind] || ""
+    case "anthropic":
+      return provider.kind === "anthropic"
+        ? provider.base_url
+        : (provider.anthropic_base_url ?? "")
+    case "gemini":
+      return provider.kind === "google" ? provider.base_url : (provider.gemini_base_url ?? "")
+    default:
+      return ""
+  }
+}
+
+function providerSettings(
+  runtime: string,
+  provider: AiProvider,
+  custom?: CustomRuntime,
+): ContenderSettings {
   const authMode = provider.auth === "cli_login" ? "global" : "env"
+  if (runtime.startsWith("custom:") && custom) {
+    /* Custom runtimes declare which env vars carry the endpoint and key. */
+    const env: Record<string, { value?: string; from_env?: string }> = {}
+    const endpoint = providerEndpoint(custom.protocol ?? "none", provider)
+    if (custom.base_url_env && endpoint) env[custom.base_url_env] = { value: endpoint }
+    if (custom.api_key_env && provider.api_key_env)
+      env[custom.api_key_env] = { from_env: provider.api_key_env }
+    return {
+      auth_mode: authMode,
+      gateway: {},
+      env: Object.keys(env).length ? env : undefined,
+    }
+  }
   if (runtime === "opencode") {
     return {
       auth_mode: authMode,
@@ -168,11 +202,36 @@ export default function NewRun() {
   const tasklib = useQuery({ queryKey: ["tasklib"], queryFn: api.tasklib })
   const profilesQuery = useQuery({ queryKey: ["profiles"], queryFn: api.profiles })
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
   const libraries = useMemo(
     () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
     [tasklib.data],
   )
   const providers = providersQuery.data?.providers ?? []
+  const customRuntimes = useMemo(
+    () => (agentsQuery.data?.custom ?? []).filter((agent) => !agent.error),
+    [agentsQuery.data],
+  )
+  const customByRuntime = useMemo(() => {
+    const map: Record<string, CustomRuntime> = {}
+    for (const agent of customRuntimes) map[agent.id] = agent
+    return map
+  }, [customRuntimes])
+  const runtimeLabel = useCallback(
+    (runtime: string) =>
+      customByRuntime[runtime]?.label ??
+      customByRuntime[runtime]?.spec_id ??
+      AGENT_LABELS[runtime] ??
+      runtime,
+    [customByRuntime],
+  )
+  const dockerCapable = useCallback(
+    (runtime: string) =>
+      runtime === "codex" ||
+      runtime === "claude" ||
+      Boolean(customByRuntime[runtime]?.docker_capable),
+    [customByRuntime],
+  )
 
   const [step, setStep] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -213,7 +272,7 @@ export default function NewRun() {
 
   const addContender = (runtime: string) => {
     contenderCounter += 1
-    const compatible = compatibleProviders(runtime, providers)
+    const compatible = compatibleProviders(runtime, providers, customByRuntime[runtime]?.protocol)
     const provider = compatible.find((item) => item.models.length) ?? compatible[0]
     setContenders((current) => [
       ...current,
@@ -234,14 +293,20 @@ export default function NewRun() {
 
   const apiContenders = useCallback((): Contender[] => {
     return contenders.flatMap((draft) => {
+      const custom = customByRuntime[draft.runtime]
       const provider = providers.find((item) => item.id === draft.provider_id)
-      if (!provider) return []
-      const settings = providerSettings(draft.runtime, provider)
+      const providerless = custom && (custom.protocol ?? "none") === "none"
+      if (!provider && !providerless) return []
+      const settings: ContenderSettings = provider
+        ? providerSettings(draft.runtime, provider, custom)
+        : { auth_mode: "global", gateway: {} }
+      /* A custom runtime without a model flag cannot receive a model choice. */
+      const model = custom && !custom.model_flag ? "" : draft.model.trim()
       return [
         {
-          label: `${AGENT_LABELS[draft.runtime] ?? draft.runtime} ${draft.model || "default"}`.trim(),
+          label: `${runtimeLabel(draft.runtime)} ${model || "default"}`.trim(),
           agent: draft.runtime,
-          model: draft.model.trim(),
+          model,
           auth_mode: settings.auth_mode,
           thinking_effort: perFields.includes("thinking_effort") ? draft.thinking_effort : "none",
           ...settings.gateway,
@@ -250,7 +315,7 @@ export default function NewRun() {
         },
       ]
     })
-  }, [contenders, providers, perFields])
+  }, [contenders, providers, perFields, customByRuntime, runtimeLabel])
 
   /* Authoritative plan preview on the review step. */
   const [plan, setPlan] = useState<{ plans: ExperimentPlanItem[] | null; error: string | null }>({
@@ -281,7 +346,12 @@ export default function NewRun() {
     }
   }, [step, expName, tasksDir, tasks, shared, apiContenders, contenders.length])
 
-  if (tasklib.isPending || profilesQuery.isPending || providersQuery.isPending) {
+  if (
+    tasklib.isPending ||
+    profilesQuery.isPending ||
+    providersQuery.isPending ||
+    agentsQuery.isPending
+  ) {
     return <Skeleton className="h-96" />
   }
   if (tasklib.isError) return <ErrorNote message={(tasklib.error as Error).message} />
@@ -351,6 +421,9 @@ export default function NewRun() {
       {step === 1 && (
         <StepContenders
           providers={providers}
+          customRuntimes={customRuntimes}
+          customByRuntime={customByRuntime}
+          dockerCapable={dockerCapable}
           contenders={contenders}
           perFields={perFields}
           backend={String(shared.executor_backend ?? "local")}
@@ -384,7 +457,16 @@ export default function NewRun() {
           perFields={perFields}
           setPerFields={setPerFields}
           judgeConflicts={judgeConflicts.length}
-          hasNonCodex={contenders.some((draft) => draft.runtime !== "codex")}
+          customRuntimes={customRuntimes}
+          customByRuntime={customByRuntime}
+          runtimeLabel={runtimeLabel}
+          localRuntimeNames={[
+            ...new Set(
+              contenders
+                .filter((draft) => !dockerCapable(draft.runtime))
+                .map((draft) => runtimeLabel(draft.runtime)),
+            ),
+          ]}
         />
       )}
       {step === 3 && (
@@ -397,6 +479,7 @@ export default function NewRun() {
           shared={shared}
           plan={plan}
           judgeConflicts={judgeConflicts.length}
+          runtimeLabel={runtimeLabel}
         />
       )}
 
@@ -585,8 +668,20 @@ function StepTasks({
 
 /* ---------- step 2: contenders (pure references to providers) ---------- */
 
+interface RuntimeOption {
+  id: string
+  label: string
+  note: string
+  icon?: string
+  protocol?: string | null
+  cliMissing?: boolean
+}
+
 function StepContenders({
   providers,
+  customRuntimes,
+  customByRuntime,
+  dockerCapable,
   contenders,
   perFields,
   backend,
@@ -595,6 +690,9 @@ function StepContenders({
   onRemove,
 }: {
   providers: AiProvider[]
+  customRuntimes: CustomRuntime[]
+  customByRuntime: Record<string, CustomRuntime>
+  dockerCapable: (runtime: string) => boolean
   contenders: ContenderDraft[]
   perFields: string[]
   backend: string
@@ -602,38 +700,62 @@ function StepContenders({
   onUpdate: (key: string, patch: Partial<ContenderDraft>) => void
   onRemove: (key: string) => void
 }) {
+  const options: RuntimeOption[] = [
+    ...RUNTIMES.map((runtime) => ({
+      id: runtime,
+      label: AGENT_LABELS[runtime],
+      note: AGENT_NOTES[runtime],
+    })),
+    ...customRuntimes.map((agent) => ({
+      id: agent.id,
+      label: agent.label ?? agent.spec_id,
+      note: agent.command ?? "",
+      icon: agent.icon,
+      protocol: agent.protocol ?? "none",
+      cliMissing: agent.cli ? !agent.cli.present : false,
+    })),
+  ]
   return (
     <div className="grid gap-4">
       <Card>
         <CardContent className="grid gap-3">
-          <div>
+          <div className="flex flex-wrap items-baseline gap-2">
             <Label>Add agents</Label>
             <p className="text-xs text-muted-foreground">
               The agents are the coding CLIs under test. Each one is configured with a
               model from your AI providers and runs the same tasks under the same judge.
             </p>
+            <Link to="/agents" className="ml-auto text-xs text-primary hover:underline">
+              Manage runtimes
+            </Link>
           </div>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-            {RUNTIMES.map((runtime) => {
-              const compatible = compatibleProviders(runtime, providers)
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
+            {options.map((option) => {
+              const compatible = compatibleProviders(option.id, providers, option.protocol)
               const modelCount = compatible.reduce((sum, item) => sum + item.models.length, 0)
+              const ownLogin = option.protocol === "none"
               return (
                 <button
-                  key={runtime}
+                  key={option.id}
                   type="button"
-                  onClick={() => onAdd(runtime)}
+                  onClick={() => onAdd(option.id)}
                   className="grid justify-items-center gap-1.5 rounded-md border p-3 text-center transition-colors hover:border-primary/50 hover:bg-accent/40"
                 >
-                  <AgentIcon agent={runtime} size={26} />
-                  <span className="text-sm font-medium">{AGENT_LABELS[runtime]}</span>
-                  <span className="text-[11px] leading-tight text-muted-foreground">
-                    {AGENT_NOTES[runtime]}
+                  <AgentIcon agent={option.id} icon={option.icon} size={26} />
+                  <span className="text-sm font-medium">{option.label}</span>
+                  <span className="max-w-full truncate text-[11px] leading-tight text-muted-foreground">
+                    {option.note}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
-                    {compatible.length
-                      ? `${modelCount} models from ${compatible.length} provider${compatible.length > 1 ? "s" : ""}`
-                      : "no provider configured"}
+                    {ownLogin
+                      ? "own login / config"
+                      : compatible.length
+                        ? `${modelCount} models from ${compatible.length} provider${compatible.length > 1 ? "s" : ""}`
+                        : "no provider configured"}
                   </span>
+                  {option.cliMissing && (
+                    <span className="text-[11px] text-warn-ink">CLI not found on PATH</span>
+                  )}
                   <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary">
                     <Plus className="size-3" /> Add
                   </span>
@@ -652,6 +774,8 @@ function StepContenders({
               index={index}
               draft={draft}
               providers={providers}
+              custom={customByRuntime[draft.runtime]}
+              dockerCapable={dockerCapable(draft.runtime)}
               perFields={perFields}
               backend={backend}
               onUpdate={(patch) => onUpdate(draft.key, patch)}
@@ -672,6 +796,8 @@ function ContenderCard({
   index,
   draft,
   providers,
+  custom,
+  dockerCapable,
   perFields,
   backend,
   onUpdate,
@@ -680,23 +806,39 @@ function ContenderCard({
   index: number
   draft: ContenderDraft
   providers: AiProvider[]
+  custom?: CustomRuntime
+  dockerCapable: boolean
   perFields: string[]
   backend: string
   onUpdate: (patch: Partial<ContenderDraft>) => void
   onRemove: () => void
 }) {
   const provider = providers.find((item) => item.id === draft.provider_id)
-  const dockerDowngraded = backend === "docker" && draft.runtime !== "codex"
-  const hasCompatibleProvider = compatibleProviders(draft.runtime, providers).length > 0
+  const dockerDowngraded = backend === "docker" && !dockerCapable
+  const ownLogin = custom ? (custom.protocol ?? "none") === "none" : false
+  const hasCompatibleProvider =
+    compatibleProviders(draft.runtime, providers, custom?.protocol).length > 0
   return (
     <Card className="py-4">
       <CardContent className="grid gap-3 px-4">
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-xs text-muted-foreground">#{index + 1}</span>
           <span className="flex items-center gap-2">
-            <AgentIcon agent={draft.runtime} size={22} />
-            <span className="text-sm font-semibold">{AGENT_LABELS[draft.runtime]}</span>
+            <AgentIcon agent={draft.runtime} icon={custom?.icon} size={22} />
+            <span className="text-sm font-semibold">
+              {custom ? (custom.label ?? custom.spec_id) : AGENT_LABELS[draft.runtime]}
+            </span>
           </span>
+          {custom && (
+            <Badge variant="outline" className="font-mono text-[11px] text-muted-foreground">
+              custom:{custom.spec_id}
+            </Badge>
+          )}
+          {custom?.cli && !custom.cli.present && (
+            <Badge className="border-transparent bg-warn-soft text-[11px] text-warn-ink">
+              `{custom.cli.bin}` not on PATH
+            </Badge>
+          )}
           {provider?.auth === "cli_login" && (
             <Badge variant="outline" className="text-[11px] text-muted-foreground">
               CLI login
@@ -704,7 +846,7 @@ function ContenderCard({
           )}
           {dockerDowngraded && (
             <Badge className="border-transparent bg-warn-soft text-[11px] text-warn-ink">
-              runs locally — Docker is Codex-only
+              runs locally — no Docker support
             </Badge>
           )}
           <Button
@@ -719,9 +861,14 @@ function ContenderCard({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Label className="text-xs text-muted-foreground">Model</Label>
-          {hasCompatibleProvider ? (
+          {ownLogin ? (
+            <span className="text-xs text-muted-foreground">
+              Uses the CLI's own login and configuration on this machine.
+            </span>
+          ) : hasCompatibleProvider ? (
             <ProviderModelPicker
               agent={draft.runtime}
+              protocol={custom?.protocol}
               providerId={draft.provider_id}
               model={draft.model}
               onChange={({ provider: next, model }) =>
@@ -734,6 +881,12 @@ function ContenderCard({
             </span>
           )}
         </div>
+        {custom && !ownLogin && !custom.model_flag && (
+          <p className="text-xs text-muted-foreground">
+            This runtime has no model flag; the provider's endpoint and key are injected via $
+            {custom.base_url_env || "—"} but the model choice stays with the CLI's config.
+          </p>
+        )}
         {draft.runtime === "codex" && provider && provider.kind !== "openai" && (
           <p className="text-xs text-muted-foreground">
             Routed through {provider.name}; the endpoint must support the OpenAI Responses API.
@@ -784,7 +937,10 @@ function StepShared({
   perFields,
   setPerFields,
   judgeConflicts,
-  hasNonCodex,
+  customRuntimes,
+  customByRuntime,
+  runtimeLabel,
+  localRuntimeNames,
 }: {
   profiles: Profile[]
   persisted: boolean
@@ -798,13 +954,19 @@ function StepShared({
   perFields: string[]
   setPerFields: (fields: string[]) => void
   judgeConflicts: number
-  hasNonCodex: boolean
+  customRuntimes: CustomRuntime[]
+  customByRuntime: Record<string, CustomRuntime>
+  runtimeLabel: (runtime: string) => string
+  localRuntimeNames: string[]
 }) {
   const queryClient = useQueryClient()
   const [saving, setSaving] = useState(false)
   const judgeProvider = providers.find(
     (item) => item.id === String(shared.evaluator_provider_id ?? ""),
   )
+  const judgeRuntime = String(shared.evaluator_agent ?? "codex")
+  const judgeCustom = customByRuntime[judgeRuntime]
+  const judgeOwnLogin = judgeCustom ? (judgeCustom.protocol ?? "none") === "none" : false
 
   const saveToProfile = async () => {
     if (!profileId) return
@@ -871,35 +1033,103 @@ function StepShared({
           </div>
           <div className="grid gap-3">
             <div className="grid gap-1.5">
-              <Label>Judge model (from a provider)</Label>
-              <ProviderModelPicker
-                providerId={judgeProvider?.id}
-                model={String(shared.evaluator_model ?? "")}
-                onChange={({ provider, model }) =>
+              <Label>Judge runtime</Label>
+              <Select
+                value={judgeRuntime}
+                onValueChange={(runtime) => {
+                  const custom = customByRuntime[runtime]
                   setShared((current) => ({
                     ...current,
-                    evaluator_provider_id: provider.id,
-                    evaluator_agent: provider.agent,
-                    evaluator_model: model,
-                    evaluator_auth_mode: provider.auth === "cli_login" ? "global" : "env",
-                    evaluator_gateway:
-                      provider.kind === "openai-compatible"
-                        ? {
-                            opencode_provider: provider.id,
-                            opencode_base_url: provider.base_url || undefined,
-                            opencode_api_key_env: provider.api_key_env || undefined,
-                          }
-                        : null,
+                    evaluator_agent: runtime,
+                    evaluator_provider_id: undefined,
+                    evaluator_model: "",
+                    evaluator_auth_mode:
+                      custom && (custom.protocol ?? "none") === "none" ? "global" : "env",
+                    evaluator_gateway: null,
+                    judge_env: null,
                   }))
-                }
-              />
-              {judgeProvider && (
-                <p className="text-xs text-muted-foreground">
-                  Runtime <code className="font-mono">{judgeProvider.agent}</code> · credentials
-                  from the {judgeProvider.name} provider
-                </p>
-              )}
+                }}
+              >
+                <SelectTrigger className="w-64">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RUNTIMES.map((runtime) => (
+                    <SelectItem key={runtime} value={runtime}>
+                      <span className="flex items-center gap-2">
+                        <AgentIcon agent={runtime} size={14} />
+                        {AGENT_LABELS[runtime]}
+                      </span>
+                    </SelectItem>
+                  ))}
+                  {customRuntimes.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      <span className="flex items-center gap-2">
+                        <AgentIcon agent={agent.id} icon={agent.icon} size={14} />
+                        {agent.label ?? agent.spec_id}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                The judge is an agent too — scores are only as trustworthy as the runtime
+                grading them.
+              </p>
             </div>
+            {judgeOwnLogin ? (
+              <p className="text-xs text-muted-foreground">
+                {runtimeLabel(judgeRuntime)} uses its own login and configuration; no provider
+                applies.
+              </p>
+            ) : (
+              <div className="grid gap-1.5">
+                <Label>Judge model (from a provider)</Label>
+                <ProviderModelPicker
+                  agent={judgeRuntime}
+                  protocol={judgeCustom?.protocol}
+                  filter={
+                    judgeRuntime === "codex"
+                      ? (provider) => provider.kind === "openai"
+                      : undefined
+                  }
+                  providerId={judgeProvider?.id}
+                  model={String(shared.evaluator_model ?? "")}
+                  onChange={({ provider, model }) => {
+                    const settings = providerSettings(judgeRuntime, provider, judgeCustom)
+                    setShared((current) => ({
+                      ...current,
+                      evaluator_agent: judgeRuntime,
+                      evaluator_provider_id: provider.id,
+                      evaluator_model: model,
+                      evaluator_auth_mode: settings.auth_mode,
+                      evaluator_gateway:
+                        judgeRuntime === "opencode"
+                          ? {
+                              opencode_provider: String(
+                                settings.gateway.opencode_provider ?? "",
+                              ),
+                              opencode_base_url: settings.gateway.opencode_base_url,
+                              opencode_api_key_env: settings.gateway.opencode_api_key_env,
+                            }
+                          : null,
+                      judge_env: settings.env ?? null,
+                    }))
+                  }}
+                />
+                {judgeRuntime === "codex" && (
+                  <p className="text-xs text-muted-foreground">
+                    The Codex judge runs on the official OpenAI endpoint only: codex gateway
+                    overrides are process-wide and would also reroute Codex contenders.
+                  </p>
+                )}
+                {judgeProvider && (
+                  <p className="text-xs text-muted-foreground">
+                    Credentials from the {judgeProvider.name} provider
+                  </p>
+                )}
+              </div>
+            )}
             <div className="grid max-w-52 gap-1.5">
               <Label htmlFor="judge-timeout">Judge timeout (s)</Label>
               <Input
@@ -1009,13 +1239,14 @@ function StepShared({
               />
             </div>
           </div>
-          {String(shared.executor_backend) === "docker" && hasNonCodex && (
+          {String(shared.executor_backend) === "docker" && localRuntimeNames.length > 0 && (
             <Alert className="border-warn-ink/40 bg-warn-soft/60">
               <AlertTriangle className="size-4" />
-              <AlertTitle>Docker applies to Codex agents only</AlertTitle>
+              <AlertTitle>Some agents will run without Docker</AlertTitle>
               <AlertDescription>
-                The CLI currently supports Docker isolation for the Codex runtime; other
-                agents will run on this machine and are labeled accordingly.
+                Docker isolation covers Codex, Claude Code, and custom runtimes with a Docker
+                image. These agents run directly on this machine:{" "}
+                {localRuntimeNames.join(", ")}.
               </AlertDescription>
             </Alert>
           )}
@@ -1074,6 +1305,7 @@ function StepReview({
   shared,
   plan,
   judgeConflicts,
+  runtimeLabel,
 }: {
   expName: string
   setExpName: (name: string) => void
@@ -1083,6 +1315,7 @@ function StepReview({
   shared: Partial<SharedConfig>
   plan: { plans: ExperimentPlanItem[] | null; error: string | null }
   judgeConflicts: number
+  runtimeLabel: (runtime: string) => string
 }) {
   const repeat = Number(shared.repeat) || 1
   const executions = taskCount * repeat * contenders.length
@@ -1116,7 +1349,7 @@ function StepReview({
         <SummaryTile
           label="Judge"
           value={`${String(shared.evaluator_model ?? "") || "runtime default"}`}
-          hint={`${String(shared.evaluator_agent ?? "codex")} · ${String(shared.judge_mode ?? "single")} judge`}
+          hint={`${runtimeLabel(String(shared.evaluator_agent ?? "codex"))} · ${String(shared.judge_mode ?? "single")} judge`}
           warn={judgeConflicts > 0 ? "same model as an agent" : undefined}
         />
         <SummaryTile

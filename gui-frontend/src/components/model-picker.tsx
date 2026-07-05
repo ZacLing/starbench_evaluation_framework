@@ -19,16 +19,23 @@ export function ProviderModelPicker({
   model,
   onChange,
   agent,
+  protocol,
+  filter,
 }: {
   providerId?: string
   model: string
   onChange: (value: { provider: AiProvider; model: string }) => void
   /** Restrict the provider list to providers protocol-compatible with this runtime. */
   agent?: string
+  /** Protocol declared by a custom runtime (drives the provider filter). */
+  protocol?: string | null
+  /** Extra narrowing on top of protocol compatibility. */
+  filter?: (provider: AiProvider) => boolean
 }) {
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const all = providersQuery.data?.providers ?? []
-  const providers = agent ? compatibleProviders(agent, all) : all
+  const compatible = agent ? compatibleProviders(agent, all, protocol) : all
+  const providers = filter ? compatible.filter(filter) : compatible
   const provider = providers.find((item) => item.id === providerId)
 
   return (

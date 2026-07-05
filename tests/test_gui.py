@@ -1243,6 +1243,7 @@ class ExperimentCustomRuntimeTest(unittest.TestCase):
         qwen = by_agent["custom:qwen-code"]
         self.assertIn("--executor-agent custom:qwen-code", " ".join(qwen["argv"]))
         self.assertIn("--executor-model qwen3-coder", " ".join(qwen["argv"]))
+        self.assertIn(f"--runtimes-dir {self.runtimes_dir}", " ".join(qwen["argv"]))
         self.assertEqual(qwen["backend"], "docker")
         self.assertFalse(qwen["backend_downgraded"])
         self.assertEqual(qwen["agent_label"], "Qwen Code")

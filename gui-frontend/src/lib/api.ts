@@ -276,6 +276,7 @@ export interface SharedConfig {
     opencode_base_url?: string
     opencode_api_key_env?: string
   } | null
+  judge_env?: Record<string, { value?: string; from_env?: string }> | null
 }
 
 export interface Profile {
@@ -302,6 +303,83 @@ export interface Contender {
   opencode_api_key_env?: string
   codex_bin?: string
   env?: Record<string, { value?: string; from_env?: string }>
+}
+
+export type RuntimeProtocol = "openai" | "anthropic" | "gemini" | "xai" | "none"
+
+export interface RuntimeCli {
+  bin: string
+  present: boolean
+  path: string | null
+}
+
+export interface BuiltinRuntime {
+  id: string
+  label: string
+  note: string
+  protocol: RuntimeProtocol
+  docker_capable: boolean
+  builtin: true
+  cli: RuntimeCli
+}
+
+export interface CustomRuntime {
+  id: string
+  spec_id: string
+  builtin: false
+  label?: string
+  icon?: string
+  protocol?: RuntimeProtocol
+  base_url_env?: string
+  api_key_env?: string
+  command?: string
+  args?: string[]
+  judge_args?: string[]
+  judge_args_inherited?: boolean
+  model_flag?: string | null
+  prompt_via?: string
+  prompt_flag?: string
+  parser?: string
+  env?: Record<string, string>
+  docker_image?: string | null
+  docker_env_passthrough?: string[]
+  docker_capable?: boolean
+  cli?: RuntimeCli
+  source_path: string
+  error: string | null
+}
+
+export interface AgentsPayload {
+  runtimes_dir: string
+  builtin: BuiltinRuntime[]
+  custom: CustomRuntime[]
+}
+
+export interface AgentTemplate {
+  template_id: string
+  title: string
+  docs_url: string
+  description: string
+  spec: Record<string, unknown>
+}
+
+export interface CustomRuntimePayload {
+  id: string
+  label?: string
+  icon?: string
+  command: string
+  args: string[]
+  judge_args?: string[] | null
+  model_flag?: string
+  prompt_via: string
+  prompt_flag?: string
+  parser: string
+  env?: Record<string, string>
+  protocol: string
+  base_url_env?: string
+  api_key_env?: string
+  docker_image?: string
+  docker_env_passthrough?: string[]
 }
 
 export type ProviderKind = "anthropic" | "openai" | "google" | "xai" | "openai-compatible"
@@ -346,6 +424,7 @@ export interface ExperimentRecord {
   contenders: {
     label: string
     agent: string
+    agent_label?: string
     model: string
     run_id: string
     backend: string
@@ -435,6 +514,20 @@ export const api = {
     request<{ checks: PreflightCheck[] }>(
       `/api/preflight?${new URLSearchParams(params).toString()}`,
     ),
+  agents: () => request<AgentsPayload>("/api/agents"),
+  agentTemplates: () => request<{ templates: AgentTemplate[] }>("/api/agents/templates"),
+  saveAgent: (payload: CustomRuntimePayload) =>
+    request<CustomRuntime>("/api/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  deleteAgent: (specId: string) =>
+    request<{ deleted: string }>(`/api/agents/${encodeURIComponent(specId)}/delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }),
   providers: () => request<ProvidersPayload>("/api/providers"),
   saveProviders: (payload: { providers: Omit<AiProvider, "agent" | "key_present">[] }) =>
     request<ProvidersPayload>("/api/providers", {

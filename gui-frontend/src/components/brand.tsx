@@ -1,5 +1,6 @@
 import {
   Anthropic,
+  ByteDance,
   Claude,
   ClaudeCode,
   Codex,
@@ -14,9 +15,10 @@ import {
   OpenCode,
   OpenRouter,
   Qwen,
+  Trae,
   Vercel,
 } from "@lobehub/icons"
-import { Plug } from "lucide-react"
+import { Plug, SquareTerminal } from "lucide-react"
 
 /* Brand icons for model families and agent runtimes (lobe-icons, MIT). */
 
@@ -79,7 +81,29 @@ export const AGENT_NOTES: Record<string, string> = {
   opencode: "Open-source agent for OpenAI-compatible models",
 }
 
-export function AgentIcon({ agent, size = 20 }: { agent: string; size?: number }) {
+/* Icon hints a custom runtime can declare in its spec file (`icon` field). */
+const CUSTOM_ICONS: Record<string, (size: number) => React.ReactNode> = {
+  qwen: (size) => <Qwen.Avatar size={size} />,
+  kimi: (size) => <Kimi.Avatar size={size} />,
+  moonshot: (size) => <Kimi.Avatar size={size} />,
+  trae: (size) => <Trae.Avatar size={size} />,
+  bytedance: (size) => <ByteDance.Avatar size={size} />,
+  deepseek: (size) => <DeepSeek.Avatar size={size} />,
+  doubao: (size) => <Doubao.Avatar size={size} />,
+  opencode: (size) => <OpenCode.Avatar size={size} />,
+}
+
+export const CUSTOM_ICON_CHOICES = ["", ...Object.keys(CUSTOM_ICONS)]
+
+export function AgentIcon({
+  agent,
+  icon,
+  size = 20,
+}: {
+  agent: string
+  icon?: string | null
+  size?: number
+}) {
   switch (agent) {
     case "claude":
       return <ClaudeCode.Avatar size={size} />
@@ -91,9 +115,13 @@ export function AgentIcon({ agent, size = 20 }: { agent: string; size?: number }
       return <Grok.Avatar size={size} />
     case "opencode":
       return <OpenCode.Avatar size={size} />
-    default:
-      return <Plug size={size} className="text-muted-foreground" />
   }
+  if (agent.startsWith("custom:")) {
+    const render = icon ? CUSTOM_ICONS[icon.toLowerCase()] : undefined
+    if (render) return render(size)
+    return <SquareTerminal size={size} className="text-muted-foreground" />
+  }
+  return <Plug size={size} className="text-muted-foreground" />
 }
 
 /* Runtime <-> provider compatibility is decided by wire protocol, not vendor.
@@ -115,7 +143,25 @@ interface CompatProvider {
 export function compatibleProviders<T extends CompatProvider>(
   runtime: string,
   providers: T[],
+  protocol?: string | null,
 ): T[] {
+  if (runtime.startsWith("custom:")) {
+    switch (protocol ?? "none") {
+      case "openai":
+        return providers.filter((provider) => OPENAI_PROTOCOL_KINDS.has(provider.kind))
+      case "anthropic":
+        return providers.filter(
+          (provider) => provider.kind === "anthropic" || Boolean(provider.anthropic_base_url),
+        )
+      case "gemini":
+        return providers.filter(
+          (provider) => provider.kind === "google" || Boolean(provider.gemini_base_url),
+        )
+      default:
+        // protocol "none": the CLI uses its own login/config; no provider applies.
+        return []
+    }
+  }
   switch (runtime) {
     case "claude":
       return providers.filter(

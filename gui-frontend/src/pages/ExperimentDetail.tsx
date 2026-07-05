@@ -28,6 +28,14 @@ export default function ExperimentDetail() {
         ? 3000
         : false,
   })
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
+  const customs = agentsQuery.data?.custom ?? []
+  const agentLabel = (contender: { agent: string; agent_label?: string }) =>
+    AGENT_LABELS[contender.agent] ??
+    customs.find((item) => item.id === contender.agent)?.label ??
+    contender.agent_label ??
+    contender.agent
+  const agentIconHint = (agent: string) => customs.find((item) => item.id === agent)?.icon
 
   if (detailQuery.isPending) return <Skeleton className="h-96" />
   if (detailQuery.isError) return <ErrorNote message={(detailQuery.error as Error).message} />
@@ -60,7 +68,12 @@ export default function ExperimentDetail() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {detail.contenders.map((contender) => (
-          <ContenderCard key={contender.run_id} contender={contender} />
+          <ContenderCard
+            key={contender.run_id}
+            contender={contender}
+            label={agentLabel(contender)}
+            iconHint={agentIconHint(contender.agent)}
+          />
         ))}
       </div>
 
@@ -88,10 +101,14 @@ export default function ExperimentDetail() {
                             className="inline-flex items-center gap-1.5"
                             title={`${contender.label} (${contender.run_id})`}
                           >
-                            <AgentIcon agent={contender.agent} size={15} />
+                            <AgentIcon
+                              agent={contender.agent}
+                              icon={agentIconHint(contender.agent)}
+                              size={15}
+                            />
                             <span className="grid justify-items-start normal-case">
                               <span className="text-xs font-semibold">
-                                {AGENT_LABELS[contender.agent] ?? contender.agent}
+                                {agentLabel(contender)}
                               </span>
                               <span className="max-w-32 truncate font-mono text-[10px] font-normal text-muted-foreground">
                                 {contender.model || "runtime default"}
@@ -139,18 +156,22 @@ export default function ExperimentDetail() {
 
 function ContenderCard({
   contender,
+  label,
+  iconHint,
 }: {
   contender: ExperimentDetailData["contenders"][number]
+  label: string
+  iconHint?: string
 }) {
   const run = contender.run
   return (
     <Card className="py-4">
       <CardContent className="grid gap-2 px-4">
         <div className="flex items-center gap-2">
-          <AgentIcon agent={contender.agent} size={20} />
+          <AgentIcon agent={contender.agent} icon={iconHint} size={20} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-semibold">
-              {AGENT_LABELS[contender.agent] ?? contender.agent}
+              {label}
             </span>
             <span className="block truncate font-mono text-xs text-muted-foreground">
               {contender.model || "runtime default"}

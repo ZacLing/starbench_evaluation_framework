@@ -1,6 +1,6 @@
 import { Link, NavLink, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Boxes, Gauge, Library, ListChecks, Plus, Star } from "lucide-react"
+import { Bot, Boxes, Gauge, Library, ListChecks, Plus, Star } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Sidebar,
@@ -22,6 +22,7 @@ import { api } from "@/lib/api"
 const NAV = [
   { to: "/", label: "Dashboard", icon: Gauge, end: true },
   { to: "/tasks", label: "Task library", icon: Library, end: true },
+  { to: "/agents", label: "Agents", icon: Bot, end: true },
   { to: "/providers", label: "AI providers", icon: Boxes, end: true },
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
   { to: "/new", label: "New experiment", icon: Plus, end: true },
@@ -109,6 +110,7 @@ function Crumbs({ pathname }: { pathname: string }) {
   if (segments.length === 0) crumbs.push({ label: "Dashboard" })
   else if (segments[0] === "new") crumbs.push({ label: "New experiment" })
   else if (segments[0] === "tasks") crumbs.push({ label: "Task library" })
+  else if (segments[0] === "agents") crumbs.push({ label: "Agents" })
   else if (segments[0] === "providers") crumbs.push({ label: "AI providers" })
   else if (segments[0] === "experiments") {
     crumbs.push({ label: "Runs", to: "/runs" })

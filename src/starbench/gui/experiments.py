@@ -259,6 +259,7 @@ def plan_experiment(
             "run_id": run_id,
             "tasks_dir": payload.get("tasks_dir"),
             "tasks": payload.get("tasks") or [],
+            "runtimes_dir": str(runtimes_dir),
             "executor_agent": agent,
             "executor_model": str(contender.get("model") or "").strip(),
             "executor_backend": effective_backend,
@@ -340,6 +341,7 @@ def record_experiment(
             {
                 "label": plan["label"],
                 "agent": plan["agent"],
+                "agent_label": plan.get("agent_label") or plan["agent"],
                 "model": plan["model"],
                 "run_id": plan["run_id"],
                 "backend": plan["backend"],

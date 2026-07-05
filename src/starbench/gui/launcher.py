@@ -95,6 +95,12 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
     for task in tasks:
         argv += ["--task", task]
 
+    # The subprocess must resolve custom:<id> specs from the same directory
+    # the console validated them against.
+    runtimes_dir_value = str(payload.get("runtimes_dir") or "").strip()
+    if runtimes_dir_value:
+        argv += ["--runtimes-dir", runtimes_dir_value]
+
     executor_agent = _require_agent(payload.get("executor_agent", "codex"), "Executor runtime")
     argv += ["--executor-agent", executor_agent]
     argv += ["--evaluator-agent", _require_agent(payload.get("evaluator_agent", "codex"), "Evaluator runtime")]
