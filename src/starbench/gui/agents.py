@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional
 from ..adapters import list_builtin, provider_filter_for_protocol
 from ..adapters.base import ProviderFilter, RuntimeInfo
 from ..runner.custom_runtime import load_custom_runtime
+from . import contracts
 from .data import SAFE_ID
 
 DEFAULT_RUNTIMES_DIR = Path(__file__).resolve().parents[3] / "runtimes"
@@ -89,7 +90,9 @@ def _read_raw_spec(path: Path) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def list_agents(runtimes_dir: Path) -> Dict[str, Any]:
+def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
+    # Response shape is defined once in contracts.AgentsPayload; the TS client
+    # type is generated from it (make gen-types).
     builtin = [
         {
             "id": agent["id"],

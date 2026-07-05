@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from . import contracts
 from .data import SAFE_ID, _read_json
 
 PROVIDER_KINDS = ("anthropic", "openai", "google", "xai", "openai-compatible")
@@ -160,7 +161,8 @@ def _decorate(provider: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def load_providers(runs_dir: Path) -> Dict[str, Any]:
+def load_providers(runs_dir: Path) -> "contracts.ProvidersPayload":
+    # Response shape defined once in contracts.ProvidersPayload (see gen-types).
     payload = _read_json(providers_path(runs_dir))
     if not isinstance(payload, dict) or not isinstance(payload.get("providers"), list):
         return {

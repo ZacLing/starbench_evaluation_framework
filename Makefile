@@ -1,4 +1,4 @@
-.PHONY: install test docker-build docker-images gui-build gui-dev
+.PHONY: install test gen-types docker-build docker-images gui-build gui-dev
 
 install:
 	python3 -m pip install --upgrade pip setuptools wheel
@@ -6,6 +6,11 @@ install:
 
 test:
 	PYTHONPATH=src python3 -m unittest discover -s tests
+
+# Regenerate the TS client's api-types.ts from src/starbench/gui/contracts.py.
+# The output is committed; run this whenever a core API shape changes.
+gen-types:
+	python3 scripts/gen_api_types.py
 
 docker-build:
 	docker build -t starbench-codex:latest -f docker/codex-bench.Dockerfile .
