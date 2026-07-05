@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..adapters import list_builtin
-from .data import SAFE_ID, _read_json, list_task_packages
+from .data import SAFE_ID, _read_json, list_task_packages, rigor_count
 
 MAX_IMPORT_BYTES = 20 * 1024 * 1024
 MAX_DIR_ENTRIES = 200
@@ -304,6 +304,7 @@ def task_package_detail(tasks_dir: Path, dir_name: str) -> Dict[str, Any]:
         "prompt": prompt_text,
         "rubrics": rubrics,
         "human_reference_steps": len(steps),
+        "rigor_count": rigor_count(package_dir, spec),
     }
 
 

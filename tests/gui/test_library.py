@@ -165,6 +165,16 @@ class LibraryBrowseAndDetailTest(unittest.TestCase):
         self.assertEqual(detail["id"], "demo")
         self.assertIn("Prompt body", detail["prompt"])
         self.assertEqual(len(detail["rubrics"]), 1)
+        # rigor_count is a new badge field; no rigors.json in this fixture.
+        self.assertEqual(detail["rigor_count"], 0)
+
+    def test_task_detail_counts_rigors(self) -> None:
+        write_json(
+            self.tasks_dir / "demo" / "rigors.json",
+            {"rigors": [{"id": "G1"}, {"id": "G2"}]},
+        )
+        detail = library.task_package_detail(self.tasks_dir, "demo")
+        self.assertEqual(detail["rigor_count"], 2)
 
     def test_task_detail_rejects_traversal(self) -> None:
         with self.assertRaises(LibraryError):

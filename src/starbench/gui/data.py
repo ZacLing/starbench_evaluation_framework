@@ -418,6 +418,20 @@ def raw_events(
     }
 
 
+def rigor_count(package_dir: Path, spec: Dict[str, Any]) -> int:
+    """Count the rigor requirements registered for a task package.
+
+    Reads the rigors file the task.json points at (default ``rigors.json``) and
+    returns the length of its ``rigors`` array. A missing file, unreadable JSON
+    or an unexpected shape all count as 0 — never an exception.
+    """
+    rigors_name = str(spec.get("rigors", "rigors.json"))
+    rigors = _read_json(package_dir / rigors_name)
+    if isinstance(rigors, dict) and isinstance(rigors.get("rigors"), list):
+        return len(rigors["rigors"])
+    return 0
+
+
 def list_task_packages(tasks_dir: Path) -> List[Dict[str, Any]]:
     packages: List[Dict[str, Any]] = []
     if not tasks_dir.is_dir():
@@ -441,6 +455,8 @@ def list_task_packages(tasks_dir: Path) -> List[Dict[str, Any]]:
                 "name": str(spec.get("name", entry.name)),
                 "rubric_count": rubric_count,
                 "timeout_seconds": spec.get("timeout_seconds"),
+                "allow_web_search": spec.get("allow_web_search"),
+                "rigor_count": rigor_count(entry, spec),
                 "has_human_reference": (entry / "human_reference.json").exists(),
             }
         )

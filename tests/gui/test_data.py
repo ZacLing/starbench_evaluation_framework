@@ -111,6 +111,32 @@ class GuiDataTest(unittest.TestCase):
         self.assertEqual(packages[0]["id"], "demo")
         self.assertEqual(packages[0]["rubric_count"], 1)
         self.assertFalse(packages[0]["has_human_reference"])
+        # New library badge fields: web-search tri-state (unset here) and rigor
+        # count (no rigors.json here).
+        self.assertIsNone(packages[0]["allow_web_search"])
+        self.assertEqual(packages[0]["rigor_count"], 0)
+
+    def test_list_task_packages_reports_web_search_and_rigor_badges(self) -> None:
+        tasks_dir = self.tmp / "tasks"
+        task = tasks_dir / "hardened"
+        task.mkdir(parents=True)
+        write_json(
+            task / "task.json",
+            {"id": "hardened", "name": "Hardened", "allow_web_search": False},
+        )
+        write_json(task / "rubrics.json", {"rubrics": [{"id": "R001"}, {"id": "R002"}]})
+        write_json(task / "rigors.json", {"rigors": [{"id": "G1"}, {"id": "G2"}, {"id": "G3"}]})
+        packages = data.list_task_packages(tasks_dir)
+        self.assertEqual(packages[0]["allow_web_search"], False)
+        self.assertEqual(packages[0]["rigor_count"], 3)
+
+    def test_rigor_count_survives_broken_rigors_file(self) -> None:
+        tasks_dir = self.tmp / "tasks"
+        task = tasks_dir / "broken"
+        task.mkdir(parents=True)
+        write_json(task / "task.json", {"id": "broken", "name": "Broken"})
+        (task / "rigors.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(data.rigor_count(task, {"id": "broken"}), 0)
 
 
 if __name__ == "__main__":
