@@ -84,7 +84,7 @@ BUILTIN_AGENTS: List[Dict[str, Any]] = [
 
 BUILTIN_IDS = {agent["id"] for agent in BUILTIN_AGENTS}
 
-CONSOLE_FIELDS = ("label", "icon", "protocol", "base_url_env", "api_key_env")
+CONSOLE_FIELDS = ("label", "description", "icon", "protocol", "base_url_env", "api_key_env")
 
 
 class AgentError(ValueError):
@@ -144,6 +144,7 @@ def list_agents(runtimes_dir: Path) -> Dict[str, Any]:
                     "spec_id": spec_id,
                     "builtin": False,
                     "label": str(raw.get("label") or spec_id),
+                    "description": str(raw.get("description") or ""),
                     "icon": str(raw.get("icon") or ""),
                     "protocol": protocol if protocol in PROTOCOL_CHOICES else "none",
                     "base_url_env": str(raw.get("base_url_env") or ""),
@@ -236,7 +237,7 @@ def save_custom_agent(runtimes_dir: Path, payload: Dict[str, Any]) -> Dict[str, 
         }
 
     data["protocol"] = protocol
-    for field in ("label", "icon", "base_url_env", "api_key_env"):
+    for field in ("label", "description", "icon", "base_url_env", "api_key_env"):
         value = str(payload.get(field) or "").strip()
         if value:
             data[field] = value
@@ -288,6 +289,7 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
         "spec": {
             "id": "qwen-code",
             "label": "Qwen Code",
+            "description": "Alibaba's coding agent (Qwen)",
             "icon": "qwen",
             "command": "qwen",
             "args": ["--output-format", "json", "--yolo"],
@@ -318,6 +320,7 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
         "spec": {
             "id": "kimi-code",
             "label": "Kimi Code CLI",
+            "description": "Moonshot AI's coding agent",
             "icon": "kimi",
             "command": "kimi",
             "args": ["--print", "--output-format", "text", "--final-message-only"],
@@ -345,6 +348,7 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
         "spec": {
             "id": "trae-agent",
             "label": "Trae Agent",
+            "description": "ByteDance's open-source coding agent",
             "icon": "trae",
             "command": "trae-cli",
             "args": ["run", "--provider", "openai"],

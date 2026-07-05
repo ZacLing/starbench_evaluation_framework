@@ -1,6 +1,7 @@
 {
   "id": "kimi-code",
   "label": "Kimi Code CLI",
+  "description": "Moonshot AI's coding agent",
   "icon": "kimi",
   "command": "kimi",
   "args": [

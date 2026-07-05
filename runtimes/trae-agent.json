@@ -1,9 +1,14 @@
 {
   "id": "trae-agent",
   "label": "Trae Agent",
+  "description": "ByteDance's open-source coding agent",
   "icon": "trae",
   "command": "trae-cli",
-  "args": ["run", "--provider", "openai"],
+  "args": [
+    "run",
+    "--provider",
+    "openai"
+  ],
   "model_flag": "--model",
   "prompt_via": "arg",
   "prompt_flag": "",
@@ -13,6 +18,9 @@
   "api_key_env": "OPENAI_API_KEY",
   "docker": {
     "image": "starbench-trae-agent:latest",
-    "env_passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"]
+    "env_passthrough": [
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL"
+    ]
   }
 }

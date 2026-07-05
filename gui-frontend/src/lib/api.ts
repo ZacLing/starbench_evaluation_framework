@@ -329,6 +329,7 @@ export interface CustomRuntime {
   spec_id: string
   builtin: false
   label?: string
+  description?: string
   icon?: string
   protocol?: RuntimeProtocol
   base_url_env?: string
@@ -367,6 +368,7 @@ export interface AgentTemplate {
 export interface CustomRuntimePayload {
   id: string
   label?: string
+  description?: string
   icon?: string
   command: string
   args: string[]

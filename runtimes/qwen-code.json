@@ -1,10 +1,20 @@
 {
   "id": "qwen-code",
   "label": "Qwen Code",
+  "description": "Alibaba's coding agent (Qwen)",
   "icon": "qwen",
   "command": "qwen",
-  "args": ["--output-format", "json", "--yolo"],
-  "judge_args": ["--output-format", "json", "--approval-mode", "plan"],
+  "args": [
+    "--output-format",
+    "json",
+    "--yolo"
+  ],
+  "judge_args": [
+    "--output-format",
+    "json",
+    "--approval-mode",
+    "plan"
+  ],
   "model_flag": "-m",
   "prompt_via": "stdin",
   "parser": "headless-json",
@@ -13,6 +23,9 @@
   "api_key_env": "OPENAI_API_KEY",
   "docker": {
     "image": "starbench-qwen:latest",
-    "env_passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"]
+    "env_passthrough": [
+      "OPENAI_API_KEY",
+      "OPENAI_BASE_URL"
+    ]
   }
 }

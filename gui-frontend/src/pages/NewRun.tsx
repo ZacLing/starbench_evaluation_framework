@@ -710,7 +710,7 @@ function StepContenders({
     ...customRuntimes.map((agent) => ({
       id: agent.id,
       label: agent.label ?? agent.spec_id,
-      note: agent.command ?? "",
+      note: agent.description || (agent.command ?? ""),
       icon: agent.icon,
       protocol: agent.protocol ?? "none",
       cliMissing: agent.cli ? !agent.cli.present : false,
