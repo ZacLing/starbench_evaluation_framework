@@ -64,6 +64,22 @@ class ExperimentTest(unittest.TestCase):
             self.assertIn("--seed 7", joined)
             self.assertIn("--evaluator-auth-mode global", joined)
 
+    def test_shared_advanced_knobs_forward_to_every_contender(self) -> None:
+        payload = self.experiment_payload()
+        payload["shared"]["max_evaluator_parallel"] = 8
+        payload["shared"]["claude_max_turns"] = 30
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        self.assertEqual(len(plan["plans"]), 2)
+        for item in plan["plans"]:
+            joined = " ".join(item["argv"])
+            self.assertIn("--max-evaluator-parallel 8", joined)
+            self.assertIn("--claude-max-turns 30", joined)
+
+    def test_claude_max_turns_omitted_when_unset(self) -> None:
+        plan = experiments.plan_experiment(self.experiment_payload(), runs_dir=self.runs_dir)
+        for item in plan["plans"]:
+            self.assertNotIn("--claude-max-turns", item["argv"])
+
     def test_docker_backend_uses_one_image_per_runtime(self) -> None:
         payload = self.experiment_payload()
         payload["contenders"].append(

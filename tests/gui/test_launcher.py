@@ -75,6 +75,19 @@ class LauncherTest(unittest.TestCase):
         with self.assertRaises(LaunchError):
             build_run_argv(self.payload(judge_mode="triple"), runs_dir=self.runs_dir)
 
+    def test_advanced_run_knobs_pass_through(self) -> None:
+        argv = build_run_argv(
+            self.payload(max_evaluator_parallel="8", claude_max_turns="30"),
+            runs_dir=self.runs_dir,
+        )
+        joined = " ".join(argv)
+        self.assertIn("--max-evaluator-parallel 8", joined)
+        self.assertIn("--claude-max-turns 30", joined)
+
+    def test_blank_claude_max_turns_is_omitted(self) -> None:
+        argv = build_run_argv(self.payload(claude_max_turns=""), runs_dir=self.runs_dir)
+        self.assertNotIn("--claude-max-turns", argv)
+
     def test_extra_args_are_split(self) -> None:
         argv = build_run_argv(
             self.payload(extra_args="--instruction-mode ablation --repeat 2"),

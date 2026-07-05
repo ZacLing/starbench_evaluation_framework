@@ -149,6 +149,7 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
         ("batch_size", "--batch-size", 1),
         ("repeat", "--repeat", 1),
         ("max_evaluator_parallel", "--max-evaluator-parallel", 1),
+        ("claude_max_turns", "--claude-max-turns", 1),
         ("evaluator_timeout_seconds", "--evaluator-timeout-seconds", 1),
     ):
         number = _optional_int(payload.get(key), flag, minimum)
