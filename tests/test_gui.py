@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from starbench.gui import data, experiments, library, providers  # noqa: E402
+from starbench.gui import agents, data, experiments, library, providers  # noqa: E402
 from starbench.gui.experiments import ExperimentError  # noqa: E402
 from starbench.gui.launcher import LaunchError, build_run_argv, resolve_env_spec  # noqa: E402
 from starbench.gui.library import LibraryError  # noqa: E402
@@ -587,14 +587,19 @@ class ExperimentTest(unittest.TestCase):
             self.assertIn("--seed 7", joined)
             self.assertIn("--evaluator-auth-mode global", joined)
 
-    def test_docker_only_applies_to_codex(self) -> None:
-        plan = experiments.plan_experiment(self.experiment_payload(), runs_dir=self.runs_dir)
+    def test_docker_backend_follows_runtime_capability(self) -> None:
+        payload = self.experiment_payload()
+        payload["contenders"].append(
+            {"label": "Gemini", "agent": "gemini", "model": "gemini-2.5-pro", "auth_mode": "env"}
+        )
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         by_agent = {item["agent"]: item for item in plan["plans"]}
         self.assertEqual(by_agent["codex"]["backend"], "docker")
         self.assertIn("--docker-image", " ".join(by_agent["codex"]["argv"]))
-        self.assertEqual(by_agent["claude"]["backend"], "local")
-        self.assertTrue(by_agent["claude"]["backend_downgraded"])
-        self.assertNotIn("--docker-image", " ".join(by_agent["claude"]["argv"]))
+        self.assertEqual(by_agent["claude"]["backend"], "docker")
+        self.assertFalse(by_agent["claude"]["backend_downgraded"])
+        self.assertEqual(by_agent["gemini"]["backend"], "local")
+        self.assertTrue(by_agent["gemini"]["backend_downgraded"])
 
     def test_record_list_and_detail(self) -> None:
         payload = self.experiment_payload()
@@ -997,6 +1002,301 @@ class PreflightTest(unittest.TestCase):
         )
         ids = [check["id"] for check in checks]
         self.assertIn("docker", ids)
+
+    def test_preflight_accepts_custom_bin_and_env_overrides(self) -> None:
+        checks = library.preflight(
+            executor_agent="custom:qwen-code",
+            evaluator_agent="codex",
+            executor_backend="local",
+            docker_image="",
+            executor_auth_mode="env",
+            evaluator_auth_mode="env",
+            executor_bin="definitely-missing-cli",
+            executor_env_keys=["STARBENCH_ABSENT_KEY"],
+        )
+        by_id = {check["id"]: check for check in checks}
+        self.assertEqual(by_id["executor_cli"]["status"], "fail")
+        self.assertIn("definitely-missing-cli", by_id["executor_cli"]["label"])
+        self.assertIn("STARBENCH_ABSENT_KEY", by_id["executor_auth"]["hint"])
+
+
+class AgentRegistryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_agents_"))
+        self.runtimes_dir = self.tmp / "runtimes"
+        self.runtimes_dir.mkdir()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def qwen_payload(self, **overrides):
+        base = {
+            "id": "qwen-code",
+            "label": "Qwen Code",
+            "icon": "qwen",
+            "command": "qwen",
+            "args": ["--output-format", "json", "--yolo"],
+            "judge_args": ["--output-format", "json", "--approval-mode", "plan"],
+            "model_flag": "-m",
+            "prompt_via": "stdin",
+            "parser": "headless-json",
+            "protocol": "openai",
+            "base_url_env": "OPENAI_BASE_URL",
+            "api_key_env": "OPENAI_API_KEY",
+            "docker_image": "starbench-qwen:latest",
+            "docker_env_passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+        }
+        base.update(overrides)
+        return base
+
+    def test_builtin_listing_reports_docker_capability(self) -> None:
+        listing = agents.list_agents(self.runtimes_dir)
+        by_id = {agent["id"]: agent for agent in listing["builtin"]}
+        self.assertEqual(
+            sorted(by_id), ["claude", "codex", "gemini", "grok", "opencode"]
+        )
+        self.assertTrue(by_id["codex"]["docker_capable"])
+        self.assertTrue(by_id["claude"]["docker_capable"])
+        self.assertFalse(by_id["gemini"]["docker_capable"])
+        self.assertIn("bin", by_id["codex"]["cli"])
+
+    def test_save_list_delete_roundtrip(self) -> None:
+        saved = agents.save_custom_agent(self.runtimes_dir, self.qwen_payload())
+        self.assertEqual(saved["id"], "custom:qwen-code")
+        self.assertEqual(saved["protocol"], "openai")
+        self.assertEqual(saved["base_url_env"], "OPENAI_BASE_URL")
+        self.assertEqual(saved["docker_image"], "starbench-qwen:latest")
+        self.assertTrue(saved["docker_capable"])
+        self.assertTrue((self.runtimes_dir / "qwen-code.json").exists())
+
+        # The written file must be loadable by the runner itself.
+        from starbench.runner.custom_runtime import load_custom_runtime
+
+        spec = load_custom_runtime(self.runtimes_dir, "qwen-code")
+        self.assertEqual(spec.model_flag, "-m")
+        self.assertEqual(spec.docker_image, "starbench-qwen:latest")
+
+        listing = agents.list_agents(self.runtimes_dir)
+        self.assertEqual(len(listing["custom"]), 1)
+        agents.delete_custom_agent(self.runtimes_dir, "qwen-code")
+        self.assertEqual(agents.list_agents(self.runtimes_dir)["custom"], [])
+
+    def test_save_rejects_builtin_id_bad_parser_and_bad_protocol(self) -> None:
+        with self.assertRaisesRegex(agents.AgentError, "built-in"):
+            agents.save_custom_agent(self.runtimes_dir, self.qwen_payload(id="codex"))
+        with self.assertRaisesRegex(agents.AgentError, "parser"):
+            agents.save_custom_agent(self.runtimes_dir, self.qwen_payload(parser="yaml"))
+        with self.assertRaisesRegex(agents.AgentError, "Protocol"):
+            agents.save_custom_agent(self.runtimes_dir, self.qwen_payload(protocol="carrier-pigeon"))
+
+    def test_positional_prompt_agent_roundtrip(self) -> None:
+        agents.save_custom_agent(
+            self.runtimes_dir,
+            self.qwen_payload(
+                id="trae-agent",
+                command="trae-cli",
+                args=["run", "--provider", "openai"],
+                judge_args=None,
+                model_flag="--model",
+                prompt_via="arg",
+                prompt_flag="",
+                parser="text",
+                docker_image="",
+                docker_env_passthrough=None,
+            ),
+        )
+        listed = agents.get_custom_agent(self.runtimes_dir, "trae-agent")
+        self.assertIsNotNone(listed)
+        self.assertEqual(listed["prompt_via"], "arg")
+        self.assertEqual(listed["prompt_flag"], "")
+        self.assertFalse(listed["docker_capable"])
+        self.assertTrue(listed["judge_args_inherited"])
+
+    def test_invalid_spec_file_surfaces_error(self) -> None:
+        (self.runtimes_dir / "broken.json").write_text("{not json", encoding="utf-8")
+        listing = agents.list_agents(self.runtimes_dir)
+        self.assertEqual(len(listing["custom"]), 1)
+        self.assertIn("broken", listing["custom"][0]["id"])
+        self.assertTrue(listing["custom"][0]["error"])
+
+    def test_templates_are_valid_runner_specs(self) -> None:
+        from starbench.runner.custom_runtime import load_custom_runtime
+
+        for template in agents.agent_templates():
+            spec = template["spec"]
+            path = self.runtimes_dir / f"{spec['id']}.json"
+            path.write_text(json.dumps(spec), encoding="utf-8")
+            loaded = load_custom_runtime(self.runtimes_dir, spec["id"])
+            self.assertEqual(loaded.id, spec["id"])
+            self.assertIn(template["spec"].get("protocol"), agents.PROTOCOL_CHOICES)
+            path.unlink()
+
+    def test_launcher_accepts_custom_agents(self) -> None:
+        tasks_dir = self.tmp / "tasks"
+        tasks_dir.mkdir()
+        runs_dir = self.tmp / "runs"
+        runs_dir.mkdir()
+        argv = build_run_argv(
+            {
+                "run_id": "custom_run",
+                "tasks_dir": str(tasks_dir),
+                "executor_agent": "custom:qwen-code",
+                "evaluator_agent": "custom:my-judge",
+                "executor_backend": "docker",
+            },
+            runs_dir=runs_dir,
+        )
+        joined = " ".join(argv)
+        self.assertIn("--executor-agent custom:qwen-code", joined)
+        self.assertIn("--evaluator-agent custom:my-judge", joined)
+        # Custom runtimes carry their docker image in the spec; no --docker-image.
+        self.assertIn("--executor-backend docker", joined)
+        self.assertNotIn("--docker-image", joined)
+        with self.assertRaises(LaunchError):
+            build_run_argv(
+                {
+                    "run_id": "bad_run",
+                    "tasks_dir": str(tasks_dir),
+                    "executor_agent": "custom:bad id!",
+                },
+                runs_dir=runs_dir,
+            )
+
+
+class ExperimentCustomRuntimeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_expcustom_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+        self.tasks_dir = self.tmp / "tasks"
+        self.tasks_dir.mkdir()
+        self.runtimes_dir = self.tmp / "runtimes"
+        self.runtimes_dir.mkdir()
+        write_json(
+            self.runtimes_dir / "qwen-code.json",
+            {
+                "id": "qwen-code",
+                "label": "Qwen Code",
+                "command": "qwen",
+                "args": ["--output-format", "json", "--yolo"],
+                "model_flag": "-m",
+                "prompt_via": "stdin",
+                "parser": "headless-json",
+                "protocol": "openai",
+                "base_url_env": "OPENAI_BASE_URL",
+                "api_key_env": "OPENAI_API_KEY",
+                "docker": {
+                    "image": "starbench-qwen:latest",
+                    "env_passthrough": ["OPENAI_API_KEY"],
+                },
+            },
+        )
+        write_json(
+            self.runtimes_dir / "kimi-code.json",
+            {
+                "id": "kimi-code",
+                "command": "kimi",
+                "args": ["--print", "--quiet"],
+                "prompt_via": "stdin",
+                "parser": "text",
+                "protocol": "none",
+            },
+        )
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def payload(self, **overrides):
+        base = {
+            "name": "exp_custom",
+            "tasks_dir": str(self.tasks_dir),
+            "tasks": [],
+            "shared": {
+                "evaluator_agent": "claude",
+                "evaluator_model": "claude-opus-4-8",
+                "judge_mode": "single",
+                "executor_backend": "docker",
+                "docker_image": "starbench-codex:latest",
+            },
+            "contenders": [
+                {
+                    "label": "Qwen Code",
+                    "agent": "custom:qwen-code",
+                    "model": "qwen3-coder",
+                    "auth_mode": "env",
+                    "env": {
+                        "OPENAI_BASE_URL": {"value": "https://openrouter.ai/api/v1"},
+                        "OPENAI_API_KEY": {"from_env": "OPENROUTER_API_KEY"},
+                    },
+                },
+                {"label": "Kimi", "agent": "custom:kimi-code", "model": "", "auth_mode": "global"},
+            ],
+        }
+        base.update(overrides)
+        return base
+
+    def test_custom_contenders_plan_with_docker_capability(self) -> None:
+        plan = experiments.plan_experiment(
+            self.payload(), runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+        )
+        by_agent = {item["agent"]: item for item in plan["plans"]}
+        qwen = by_agent["custom:qwen-code"]
+        self.assertIn("--executor-agent custom:qwen-code", " ".join(qwen["argv"]))
+        self.assertIn("--executor-model qwen3-coder", " ".join(qwen["argv"]))
+        self.assertEqual(qwen["backend"], "docker")
+        self.assertFalse(qwen["backend_downgraded"])
+        self.assertEqual(qwen["agent_label"], "Qwen Code")
+        kimi = by_agent["custom:kimi-code"]
+        self.assertEqual(kimi["backend"], "local")
+        self.assertTrue(kimi["backend_downgraded"])
+
+    def test_unknown_custom_contender_rejected(self) -> None:
+        payload = self.payload(
+            contenders=[{"label": "ghost", "agent": "custom:ghost", "model": ""}]
+        )
+        with self.assertRaisesRegex(ExperimentError, "custom runtime"):
+            experiments.plan_experiment(
+                payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+            )
+
+    def test_contender_env_that_reroutes_judge_rejected(self) -> None:
+        payload = self.payload()
+        payload["shared"]["evaluator_agent"] = "codex"
+        with self.assertRaisesRegex(ExperimentError, "reroute"):
+            experiments.plan_experiment(
+                payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+            )
+
+    def test_custom_judge_env_merges_and_conflicts_detected(self) -> None:
+        payload = self.payload()
+        payload["shared"]["evaluator_agent"] = "custom:kimi-code"
+        payload["shared"]["judge_env"] = {"KIMI_HOME": {"value": "/tmp/kimi"}}
+        plan = experiments.plan_experiment(
+            payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+        )
+        for item in plan["plans"]:
+            self.assertIn("KIMI_HOME", item["env_keys"])
+            self.assertIn("--evaluator-agent custom:kimi-code", " ".join(item["argv"]))
+
+        # A custom judge that reads the same variables the contender injects
+        # (different value) must be rejected.
+        payload = self.payload(name="exp_custom2")
+        payload["shared"]["evaluator_agent"] = "custom:qwen-code"
+        payload["shared"]["judge_env"] = {
+            "OPENAI_BASE_URL": {"value": "https://api.openai.com/v1"}
+        }
+        with self.assertRaisesRegex(ExperimentError, "process-wide"):
+            experiments.plan_experiment(
+                payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+            )
+
+    def test_unknown_custom_judge_rejected(self) -> None:
+        payload = self.payload()
+        payload["shared"]["evaluator_agent"] = "custom:ghost-judge"
+        with self.assertRaisesRegex(ExperimentError, "Judge runtime"):
+            experiments.plan_experiment(
+                payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+            )
 
 
 if __name__ == "__main__":

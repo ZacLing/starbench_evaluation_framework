@@ -330,8 +330,8 @@ def _check(check_id: str, label: str, status: str, hint: str = "") -> Dict[str, 
     return {"id": check_id, "label": label, "status": status, "hint": hint}
 
 
-def _cli_check(role: str, agent: str) -> Dict[str, str]:
-    bin_name = AGENT_BINS.get(agent, agent)
+def _cli_check(role: str, agent: str, bin_override: Optional[str] = None) -> Dict[str, str]:
+    bin_name = bin_override or AGENT_BINS.get(agent, agent)
     found = shutil.which(bin_name)
     if found:
         return _check(f"{role}_cli", f"{role.capitalize()} CLI `{bin_name}`", "ok", found)
@@ -343,7 +343,13 @@ def _cli_check(role: str, agent: str) -> Dict[str, str]:
     )
 
 
-def _auth_check(role: str, agent: str, auth_mode: str, api_key_env: Optional[str]) -> Dict[str, str]:
+def _auth_check(
+    role: str,
+    agent: str,
+    auth_mode: str,
+    api_key_env: Optional[str],
+    env_keys_override: Optional[List[str]] = None,
+) -> Dict[str, str]:
     label = f"{role.capitalize()} credentials ({auth_mode})"
     if auth_mode in ("global", "copy-auth"):
         return _check(
@@ -352,7 +358,10 @@ def _auth_check(role: str, agent: str, auth_mode: str, api_key_env: Optional[str
             "warn",
             "Uses the CLI's own login. Make sure you are logged in; the console cannot verify this.",
         )
-    keys = [api_key_env] if agent == "opencode" and api_key_env else AGENT_ENV_KEYS.get(agent, [])
+    if env_keys_override:
+        keys = env_keys_override
+    else:
+        keys = [api_key_env] if agent == "opencode" and api_key_env else AGENT_ENV_KEYS.get(agent, [])
     if not keys:
         return _check(f"{role}_auth", label, "warn", "No known environment variable to check.")
     present = [key for key in keys if os.environ.get(key)]
@@ -416,15 +425,27 @@ def preflight(
     executor_auth_mode: str,
     evaluator_auth_mode: str,
     opencode_api_key_env: Optional[str] = None,
+    executor_bin: Optional[str] = None,
+    evaluator_bin: Optional[str] = None,
+    executor_env_keys: Optional[List[str]] = None,
+    evaluator_env_keys: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
     checks: List[Dict[str, str]] = []
     if executor_backend == "docker":
         checks.extend(_docker_checks(docker_image))
     else:
-        checks.append(_cli_check("executor", executor_agent))
-    checks.append(_auth_check("executor", executor_agent, executor_auth_mode, opencode_api_key_env))
-    checks.append(_cli_check("evaluator", evaluator_agent))
-    checks.append(_auth_check("evaluator", evaluator_agent, evaluator_auth_mode, opencode_api_key_env))
+        checks.append(_cli_check("executor", executor_agent, executor_bin))
+    checks.append(
+        _auth_check(
+            "executor", executor_agent, executor_auth_mode, opencode_api_key_env, executor_env_keys
+        )
+    )
+    checks.append(_cli_check("evaluator", evaluator_agent, evaluator_bin))
+    checks.append(
+        _auth_check(
+            "evaluator", evaluator_agent, evaluator_auth_mode, opencode_api_key_env, evaluator_env_keys
+        )
+    )
 
     deduped: List[Dict[str, str]] = []
     seen = set()

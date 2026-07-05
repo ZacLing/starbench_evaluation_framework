@@ -31,6 +31,18 @@ def _require_choice(value: Any, choices: tuple, label: str) -> str:
     return text
 
 
+def _require_agent(value: Any, label: str) -> str:
+    """Built-in runtime name or custom:<id> (resolved by the CLI itself)."""
+    text = str(value)
+    if text in AGENT_CHOICES:
+        return text
+    if text.startswith("custom:") and SAFE_ID.match(text.split(":", 1)[1] or ""):
+        return text
+    raise LaunchError(
+        f"{label} must be one of {', '.join(AGENT_CHOICES)} or custom:<id>."
+    )
+
+
 def _optional_int(value: Any, label: str, minimum: int = 1) -> Optional[int]:
     if value is None or value == "":
         return None
@@ -83,8 +95,9 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
     for task in tasks:
         argv += ["--task", task]
 
-    argv += ["--executor-agent", _require_choice(payload.get("executor_agent", "codex"), AGENT_CHOICES, "Executor runtime")]
-    argv += ["--evaluator-agent", _require_choice(payload.get("evaluator_agent", "codex"), AGENT_CHOICES, "Evaluator runtime")]
+    executor_agent = _require_agent(payload.get("executor_agent", "codex"), "Executor runtime")
+    argv += ["--executor-agent", executor_agent]
+    argv += ["--evaluator-agent", _require_agent(payload.get("evaluator_agent", "codex"), "Evaluator runtime")]
     argv += ["--judge-mode", _require_choice(payload.get("judge_mode", "single"), JUDGE_MODES, "Judge mode")]
     argv += ["--auth-mode", _require_choice(payload.get("auth_mode", "env"), AUTH_MODES, "Auth mode")]
 
@@ -92,9 +105,12 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
     argv += ["--executor-backend", backend]
     docker_image = str(payload.get("docker_image") or "").strip()
     if backend == "docker":
-        if not docker_image:
+        # Custom runtimes carry their image in the runtime spec's docker
+        # section; --docker-image only applies to codex/claude.
+        if docker_image:
+            argv += ["--docker-image", docker_image]
+        elif not executor_agent.startswith("custom:"):
             raise LaunchError("Docker image is required when the executor backend is docker.")
-        argv += ["--docker-image", docker_image]
 
     for key, flag in (
         ("codex_bin", "--codex-bin"),

@@ -218,7 +218,9 @@ def build_custom_command(
     if model and spec.model_flag:
         command.extend([spec.model_flag, model])
     if spec.prompt_via == "arg":
-        command.extend([spec.prompt_flag, prompt])
+        # An empty prompt_flag means the CLI takes the task as a positional
+        # argument (e.g. `trae-cli run "<task>"`).
+        command.extend([spec.prompt_flag, prompt] if spec.prompt_flag else [prompt])
     return command
 
 

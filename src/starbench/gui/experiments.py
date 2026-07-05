@@ -19,12 +19,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
 from .data import SAFE_ID, _read_json, run_overview
 from .launcher import LaunchError, build_run_argv
 
-# Only the Codex runtime can execute inside Docker (run_benchmark.py rejects
-# every other agent with a non-local backend). Keep this in one place.
-DOCKER_CAPABLE_AGENTS = {"codex"}
+# Docker isolation is supported for codex, claude, and custom runtimes that
+# declare a docker section in their spec (run_benchmark.py rejects the rest).
+DOCKER_CAPABLE_AGENTS = {"codex", "claude"}
+
+# Environment variables each built-in judge reads for routing/credentials.
+# The environment is process-wide per run: a contender that injects one of
+# these would silently reroute the judge in the same subprocess.
+JUDGE_ENV_SENSITIVE = {
+    "codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL"),
+    "claude": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"),
+    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"),
+    "grok": ("XAI_API_KEY",),
+    "opencode": (),
+}
 
 PER_CONTENDER_FIELD_CHOICES = ["model", "credentials", "gateway", "thinking_effort"]
 
@@ -129,7 +141,22 @@ def _experiment_path(runs_dir: Path, experiment_id: str) -> Path:
     return experiments_dir(runs_dir) / f"{experiment_id}.json"
 
 
-def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any]:
+def _judge_sensitive_vars(evaluator_agent: str, runtimes_dir: Path) -> set:
+    if evaluator_agent.startswith("custom:"):
+        meta = get_custom_agent(runtimes_dir, evaluator_agent.split(":", 1)[1])
+        if meta is None:
+            return set()
+        sensitive = set(meta.get("env") or {})
+        for field in ("base_url_env", "api_key_env"):
+            if meta.get(field):
+                sensitive.add(meta[field])
+        return sensitive
+    return set(JUDGE_ENV_SENSITIVE.get(evaluator_agent, ()))
+
+
+def plan_experiment(
+    payload: Dict[str, Any], *, runs_dir: Path, runtimes_dir: Path = DEFAULT_RUNTIMES_DIR
+) -> Dict[str, Any]:
     """Validate an experiment request and build one launch plan per contender."""
     name = str(payload.get("name") or "").strip()
     if not SAFE_ID.match(name):
@@ -155,12 +182,31 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
         if isinstance(shared.get("evaluator_gateway"), dict)
         else None
     )
+    judge_env = (
+        shared.get("judge_env") if isinstance(shared.get("judge_env"), dict) else {}
+    )
+    if evaluator_agent.startswith("custom:"):
+        judge_meta = get_custom_agent(runtimes_dir, evaluator_agent.split(":", 1)[1])
+        if judge_meta is None:
+            raise ExperimentError(
+                f"Judge runtime {evaluator_agent} is not a valid custom runtime "
+                f"in {runtimes_dir}."
+            )
+    judge_sensitive = _judge_sensitive_vars(evaluator_agent, runtimes_dir)
     plans: List[Dict[str, Any]] = []
     used_run_ids = set()
     for index, contender in enumerate(contenders):
         if not isinstance(contender, dict):
             raise ExperimentError("Each contender must be an object.")
         agent = str(contender.get("agent") or "")
+        custom_meta = None
+        if agent.startswith("custom:"):
+            custom_meta = get_custom_agent(runtimes_dir, agent.split(":", 1)[1])
+            if custom_meta is None:
+                raise ExperimentError(
+                    f"Contender runtime {agent} is not a valid custom runtime "
+                    f"in {runtimes_dir}."
+                )
         label = str(contender.get("label") or "") or f"{agent}-{contender.get('model') or index + 1}"
         slug = _slug(label)
         run_id = f"{name}__{slug}"
@@ -170,7 +216,12 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
             suffix += 1
         used_run_ids.add(run_id)
 
-        effective_backend = backend if agent in DOCKER_CAPABLE_AGENTS else "local"
+        docker_capable = (
+            agent in DOCKER_CAPABLE_AGENTS
+            if custom_meta is None
+            else bool(custom_meta.get("docker_capable"))
+        )
+        effective_backend = backend if docker_capable else "local"
 
         # The codex binary config is process-global: rerouting a Codex
         # contender through a gateway would silently reroute a Codex judge in
@@ -233,16 +284,39 @@ def plan_experiment(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any
         except LaunchError as error:
             raise ExperimentError(f"Contender {label}: {error}")
         env_spec = contender.get("env") if isinstance(contender.get("env"), dict) else {}
+
+        # One subprocess runs the contender AND the judge; the environment is
+        # shared. Reject combinations where the contender's injected variables
+        # would reroute the judge's endpoint or credentials.
+        for key in env_spec:
+            if key in judge_sensitive and judge_env.get(key) != env_spec[key]:
+                raise ExperimentError(
+                    f"Contender {label}: injecting {key} would also reroute the "
+                    f"{evaluator_agent} judge (the environment is process-wide per "
+                    "run). Use a judge on a different protocol, or the same "
+                    "provider for both."
+                )
+        merged_env = dict(env_spec)
+        for key, entry in judge_env.items():
+            if key in merged_env and merged_env[key] != entry:
+                raise ExperimentError(
+                    f"Contender {label}: it sets {key} differently from the judge; "
+                    "the environment is process-wide per run, so the two cannot "
+                    "disagree. Align the providers or pick another judge."
+                )
+            merged_env[key] = entry
+
         plans.append(
             {
                 "label": label,
                 "agent": agent,
+                "agent_label": custom_meta["label"] if custom_meta else agent,
                 "model": launch_payload["executor_model"],
                 "run_id": run_id,
                 "backend": effective_backend,
                 "backend_downgraded": backend == "docker" and effective_backend == "local",
-                "env_spec": env_spec,
-                "env_keys": sorted(env_spec.keys()),
+                "env_spec": merged_env,
+                "env_keys": sorted(merged_env.keys()),
                 "argv": argv,
             }
         )

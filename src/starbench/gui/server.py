@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from . import data, experiments, library, providers
+from . import agents, data, experiments, library, providers
+from .agents import AgentError, DEFAULT_RUNTIMES_DIR
 from .experiments import ExperimentError
 from .launcher import LaunchError, LaunchRegistry, build_run_argv, resolve_env_spec
 from .library import LibraryError
@@ -37,10 +38,17 @@ MAX_BODY_BYTES = 1_000_000
 
 
 class ConsoleState:
-    def __init__(self, runs_dir: Path, tasks_dirs: Sequence[Path], cwd: Path) -> None:
+    def __init__(
+        self,
+        runs_dir: Path,
+        tasks_dirs: Sequence[Path],
+        cwd: Path,
+        runtimes_dir: Optional[Path] = None,
+    ) -> None:
         self.runs_dir = runs_dir
         self.tasks_dirs = list(tasks_dirs)
         self.cwd = cwd
+        self.runtimes_dir = (runtimes_dir or DEFAULT_RUNTIMES_DIR).resolve()
         self.registry = LaunchRegistry()
 
 
@@ -111,7 +119,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._route_api_get(segments[1:], query)
         except data.NotFound as error:
             self._send_error_json(str(error), HTTPStatus.NOT_FOUND)
-        except (LibraryError, ExperimentError, ProviderError) as error:
+        except (LibraryError, ExperimentError, ProviderError, AgentError) as error:
             self._send_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except BrokenPipeError:
             pass
@@ -140,6 +148,16 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 self._handle_save_profiles()
             elif segments == ["api", "providers"]:
                 self._handle_save_providers()
+            elif segments == ["api", "agents"]:
+                self._handle_save_agent()
+            elif (
+                len(segments) == 4
+                and segments[:2] == ["api", "agents"]
+                and segments[3] == "delete"
+            ):
+                self._send_json(
+                    agents.delete_custom_agent(self.state.runtimes_dir, segments[2])
+                )
             elif (
                 len(segments) == 4
                 and segments[:2] == ["api", "providers"]
@@ -150,7 +168,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 )
             else:
                 self._send_error_json("Not found.", HTTPStatus.NOT_FOUND)
-        except (LaunchError, LibraryError, ExperimentError, ProviderError) as error:
+        except (LaunchError, LibraryError, ExperimentError, ProviderError, AgentError) as error:
             self._send_error_json(str(error), HTTPStatus.BAD_REQUEST)
         except BrokenPipeError:
             pass
@@ -192,19 +210,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             )
         elif segments == ["preflight"]:
             first = lambda key, default="": query.get(key, [default])[0]  # noqa: E731
-            self._send_json(
-                {
-                    "checks": library.preflight(
-                        executor_agent=first("executor_agent", "codex"),
-                        evaluator_agent=first("evaluator_agent", "codex"),
-                        executor_backend=first("executor_backend", "local"),
-                        docker_image=first("docker_image"),
-                        executor_auth_mode=first("executor_auth_mode", "env"),
-                        evaluator_auth_mode=first("evaluator_auth_mode", "env"),
-                        opencode_api_key_env=first("opencode_api_key_env") or None,
-                    )
-                }
-            )
+            self._send_json({"checks": self._preflight(first)})
+        elif segments == ["agents"]:
+            self._send_json(agents.list_agents(state.runtimes_dir))
+        elif segments == ["agents", "templates"]:
+            self._send_json({"templates": agents.agent_templates()})
         elif segments == ["launches"]:
             self._send_json({"launches": state.registry.list()})
         elif segments == ["profiles"]:
@@ -219,6 +229,37 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             )
         else:
             self._send_error_json("Not found.", HTTPStatus.NOT_FOUND)
+
+    def _custom_meta(self, agent: str) -> Optional[Dict[str, Any]]:
+        if not agent.startswith("custom:"):
+            return None
+        return agents.get_custom_agent(self.state.runtimes_dir, agent.split(":", 1)[1])
+
+    def _preflight(self, first: Any) -> list:
+        executor_agent = first("executor_agent", "codex")
+        evaluator_agent = first("evaluator_agent", "codex")
+        docker_image = first("docker_image")
+        executor_meta = self._custom_meta(executor_agent)
+        evaluator_meta = self._custom_meta(evaluator_agent)
+        if executor_meta and first("executor_backend", "local") == "docker":
+            docker_image = executor_meta.get("docker_image") or ""
+        return library.preflight(
+            executor_agent=executor_agent,
+            evaluator_agent=evaluator_agent,
+            executor_backend=first("executor_backend", "local"),
+            docker_image=docker_image,
+            executor_auth_mode=first("executor_auth_mode", "env"),
+            evaluator_auth_mode=first("evaluator_auth_mode", "env"),
+            opencode_api_key_env=first("opencode_api_key_env") or None,
+            executor_bin=(executor_meta or {}).get("cli", {}).get("bin"),
+            evaluator_bin=(evaluator_meta or {}).get("cli", {}).get("bin"),
+            executor_env_keys=[executor_meta["api_key_env"]]
+            if executor_meta and executor_meta.get("api_key_env")
+            else None,
+            evaluator_env_keys=[evaluator_meta["api_key_env"]]
+            if evaluator_meta and evaluator_meta.get("api_key_env")
+            else None,
+        )
 
     def _libraries(self) -> list:
         return [
@@ -249,6 +290,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         return {
             "runs_dir": str(state.runs_dir),
             "cwd": str(state.cwd),
+            "runtimes_dir": str(state.runtimes_dir),
             "tasks_dirs": [
                 {"dir": str(path), "exists": path.is_dir()} for path in state.tasks_dirs
             ],
@@ -297,7 +339,9 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         if payload is None:
             raise ExperimentError("Request body must be a JSON object.")
         state = self.state
-        plan = experiments.plan_experiment(payload, runs_dir=state.runs_dir)
+        plan = experiments.plan_experiment(
+            payload, runs_dir=state.runs_dir, runtimes_dir=state.runtimes_dir
+        )
         if payload.get("dry_run"):
             self._send_json({**plan, "dry_run": True})
             return
@@ -331,6 +375,14 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             raise ProviderError("Request body must be a JSON object.")
         self._send_json(providers.save_providers(self.state.runs_dir, payload))
 
+    def _handle_save_agent(self) -> None:
+        payload = self._read_body()
+        if payload is None:
+            raise AgentError("Request body must be a JSON object.")
+        self._send_json(
+            agents.save_custom_agent(self.state.runtimes_dir, payload), HTTPStatus.CREATED
+        )
+
     def _handle_register_tasks_dir(self) -> None:
         payload = self._read_body()
         if payload is None:
@@ -351,7 +403,10 @@ def make_handler(state: ConsoleState) -> type:
 
 
 def build_state(
-    runs_dir: Path, tasks_dirs: Optional[Sequence[Path]] = None, cwd: Optional[Path] = None
+    runs_dir: Path,
+    tasks_dirs: Optional[Sequence[Path]] = None,
+    cwd: Optional[Path] = None,
+    runtimes_dir: Optional[Path] = None,
 ) -> ConsoleState:
     cwd = (cwd or Path.cwd()).resolve()
     runs_dir = runs_dir if runs_dir.is_absolute() else cwd / runs_dir
@@ -361,7 +416,9 @@ def build_state(
     for path in tasks_dirs:
         path = path if path.is_absolute() else cwd / path
         resolved.append(path.resolve())
-    return ConsoleState(runs_dir.resolve(), resolved, cwd)
+    if runtimes_dir is not None and not runtimes_dir.is_absolute():
+        runtimes_dir = cwd / runtimes_dir
+    return ConsoleState(runs_dir.resolve(), resolved, cwd, runtimes_dir)
 
 
 def serve(state: ConsoleState, host: str, port: int) -> Tuple[ThreadingHTTPServer, threading.Thread]:
@@ -381,12 +438,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Task package directory offered in the launcher. Repeatable. "
         "Defaults to ./tasks and ./examples/tasks.",
     )
+    parser.add_argument(
+        "--runtimes-dir",
+        type=Path,
+        default=None,
+        help="Directory of custom runtime specs (defaults to the repo's runtimes/).",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8321)
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser tab.")
     args = parser.parse_args(argv)
 
-    state = build_state(args.runs_dir, args.tasks_dir)
+    state = build_state(args.runs_dir, args.tasks_dir, runtimes_dir=args.runtimes_dir)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(state))
     url = f"http://{args.host}:{server.server_address[1]}/"
     print(f"StarBench Console serving {state.runs_dir}")

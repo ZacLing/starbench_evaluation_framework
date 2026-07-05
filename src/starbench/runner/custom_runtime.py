@@ -93,6 +93,11 @@ def load_custom_runtime(runtimes_dir: Path, runtime_id: str) -> CustomRuntimeSpe
             raise ValueError(f"Custom runtime {path}: docker section requires a non-empty image string")
         docker_image = docker["image"]
         docker_env_passthrough = _string_list(docker.get("env_passthrough"), path=path, key="docker.env_passthrough")
+    prompt_flag_raw = data.get("prompt_flag", "-p")
+    if prompt_flag_raw is None:
+        prompt_flag_raw = ""
+    if not isinstance(prompt_flag_raw, str):
+        raise ValueError(f"Custom runtime {path}: prompt_flag must be a string or null")
     return CustomRuntimeSpec(
         id=runtime_id,
         command=command,
@@ -100,7 +105,7 @@ def load_custom_runtime(runtimes_dir: Path, runtime_id: str) -> CustomRuntimeSpe
         judge_args=judge_args,
         model_flag=model_flag,
         prompt_via=prompt_via,
-        prompt_flag=str(data.get("prompt_flag", "-p")),
+        prompt_flag=prompt_flag_raw,
         parser=parser,
         env=dict(env),
         docker_image=docker_image,

@@ -767,6 +767,42 @@ class CustomRuntimeSpecTests(unittest.TestCase):
             command = build_custom_command(stdin_spec, role="executor", model="m2", prompt="ignored on argv")
             self.assertEqual(command, ["othercli"])
 
+    def test_null_prompt_flag_passes_prompt_positionally(self) -> None:
+        from starbench.runner.codex_process import build_custom_command
+        from starbench.runner.custom_runtime import load_custom_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "runtimes"
+            self.write_runtime(
+                root,
+                "trae-agent",
+                {
+                    "id": "trae-agent",
+                    "command": "trae-cli run",
+                    "model_flag": "--model",
+                    "prompt_via": "arg",
+                    "prompt_flag": None,
+                    "parser": "text",
+                },
+            )
+            spec = load_custom_runtime(root, "trae-agent")
+            self.assertEqual(spec.prompt_flag, "")
+            command = build_custom_command(spec, role="executor", model="gpt-5.5", prompt="fix the bug")
+            self.assertEqual(command, ["trae-cli", "run", "--model", "gpt-5.5", "fix the bug"])
+
+    def test_non_string_prompt_flag_is_rejected(self) -> None:
+        from starbench.runner.custom_runtime import load_custom_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "runtimes"
+            self.write_runtime(
+                root,
+                "bad",
+                {"id": "bad", "command": "cli", "prompt_via": "arg", "prompt_flag": 7, "parser": "text"},
+            )
+            with self.assertRaisesRegex(ValueError, "prompt_flag must be a string or null"):
+                load_custom_runtime(root, "bad")
+
     def test_custom_text_parser_writes_final_and_synthetic_events(self) -> None:
         from starbench.runner.codex_process import normalize_custom_events, write_custom_final_output
 

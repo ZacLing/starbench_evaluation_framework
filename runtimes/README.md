@@ -15,7 +15,7 @@ Use `--runtimes-dir` to point at a different directory.
 | `judge_args` | no | = `args` | Extra argv for judge runs (use your CLI's read-only/plan flags here). |
 | `model_flag` | no | `null` | Flag used to pass `--executor-model` / `--evaluator-model` (e.g. `-m`). `null` = model not passed. |
 | `prompt_via` | no | `"stdin"` | `"stdin"` writes the prompt to stdin; `"arg"` appends `prompt_flag <prompt>` to argv. |
-| `prompt_flag` | no | `"-p"` | Only used when `prompt_via` is `"arg"`. |
+| `prompt_flag` | no | `"-p"` | Only used when `prompt_via` is `"arg"`. `null` or `""` passes the prompt as a positional argument (e.g. `trae-cli run "<task>"`). |
 | `parser` | yes | — | One of `headless-json`, `jsonl-events`, `text` (see below). |
 | `env` | no | `{}` | Static environment variables set for executor and judge runs. |
 | `docker` | no | — | Enables `--executor-backend docker` for this runtime: `{"image": "...", "env_passthrough": ["VAR", ...]}`. |
@@ -23,6 +23,15 @@ Use `--runtimes-dir` to point at a different directory.
 Warning: `prompt_via: "arg"` puts the full task prompt on the command line.
 Large prompts can exceed the OS argument-size limit (ARG_MAX); prefer
 `"stdin"` whenever the CLI supports piped input.
+
+## Console fields
+
+The StarBench Console stores a few extra keys in the same file; the runner
+ignores them. `label` (display name), `icon` (brand icon hint), `protocol`
+(`openai` / `anthropic` / `gemini` / `none` — which AI providers the console
+offers for this runtime), and `base_url_env` / `api_key_env` (the environment
+variables this CLI reads for a custom endpoint and its key; the console
+injects the selected provider through them at launch).
 
 ## Parsers
 
