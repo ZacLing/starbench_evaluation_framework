@@ -66,11 +66,10 @@ const JUDGE_MODES = [
 ]
 
 /* Only true run-time knobs are per-contender; endpoints and credentials
-   belong to providers (the resource side). */
-const PER_FIELD_OPTIONS = [
-  { id: "model", label: "Model", locked: true },
-  { id: "thinking_effort", label: "Claude thinking effort" },
-]
+   belong to providers (the resource side). Thinking effort is inherently
+   per-agent (like the model choice), so it lives on the Claude Code cards
+   directly rather than as a toggle here. */
+const PER_FIELD_OPTIONS = [{ id: "model", label: "Model", locked: true }]
 
 const STEPS = ["Tasks", "Agents", "Shared config", "Review & launch"]
 
@@ -219,11 +218,12 @@ export default function NewRun() {
           agent: draft.runtime,
           provider_id: draft.provider_id,
           model,
-          thinking_effort: perFields.includes("thinking_effort") ? draft.thinking_effort : "none",
+          /* Thinking effort is always sent; it only affects Claude Code. */
+          thinking_effort: draft.thinking_effort,
         },
       ]
     })
-  }, [contenders, providers, perFields, customByRuntime, runtimeLabel])
+  }, [contenders, providers, customByRuntime, runtimeLabel])
 
   /* Authoritative plan preview on the review step. */
   const [plan, setPlan] = useState<{ plans: ExperimentPlanItem[] | null; error: string | null }>({
@@ -334,7 +334,6 @@ export default function NewRun() {
           dockerCapable={dockerCapable}
           filterFor={filterFor}
           contenders={contenders}
-          perFields={perFields}
           backend={String(shared.executor_backend ?? "local")}
           onAdd={addContender}
           onUpdate={updateContender}
@@ -595,7 +594,6 @@ function StepContenders({
   dockerCapable,
   filterFor,
   contenders,
-  perFields,
   backend,
   onAdd,
   onUpdate,
@@ -607,7 +605,6 @@ function StepContenders({
   dockerCapable: (runtime: string) => boolean
   filterFor: (runtime: string) => ProviderFilter | undefined
   contenders: ContenderDraft[]
-  perFields: string[]
   backend: string
   onAdd: (runtime: string) => void
   onUpdate: (key: string, patch: Partial<ContenderDraft>) => void
@@ -699,7 +696,6 @@ function StepContenders({
               custom={customByRuntime[draft.runtime]}
               dockerCapable={dockerCapable(draft.runtime)}
               providerFilter={filterFor(draft.runtime)}
-              perFields={perFields}
               backend={backend}
               onUpdate={(patch) => onUpdate(draft.key, patch)}
               onRemove={() => onRemove(draft.key)}
@@ -722,7 +718,6 @@ function ContenderCard({
   custom,
   dockerCapable,
   providerFilter,
-  perFields,
   backend,
   onUpdate,
   onRemove,
@@ -733,7 +728,6 @@ function ContenderCard({
   custom?: CustomRuntime
   dockerCapable: boolean
   providerFilter?: ProviderFilter
-  perFields: string[]
   backend: string
   onUpdate: (patch: Partial<ContenderDraft>) => void
   onRemove: () => void
@@ -813,7 +807,7 @@ function ContenderCard({
             Routed through {provider.name}; the endpoint must support the OpenAI Responses API.
           </p>
         )}
-        {perFields.includes("thinking_effort") && draft.runtime === "claude" && (
+        {draft.runtime === "claude" && (
           <div className="flex items-center gap-2">
             <Label className="text-xs text-muted-foreground">Thinking effort</Label>
             <RadioGroup
@@ -1208,6 +1202,65 @@ function StepShared({
               )
             })}
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="py-4">
+        <CardContent className="px-4">
+          <Collapsible>
+            <CollapsibleTrigger className="group flex w-full items-center justify-between text-left">
+              <span className="text-sm font-semibold">Advanced</span>
+              <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="grid gap-5 pt-4">
+              <div className="grid max-w-52 gap-1.5">
+                <Label htmlFor="judge-parallelism">Judge parallelism</Label>
+                <Input
+                  id="judge-parallelism"
+                  type="number"
+                  min={1}
+                  placeholder="4"
+                  value={String(shared.max_evaluator_parallel ?? "")}
+                  onChange={(event) =>
+                    setSharedField("max_evaluator_parallel", event.target.value)
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  How many rubric judges grade at once. Raising it finishes judging sooner but
+                  is more likely to hit the judge provider's rate limit.
+                </p>
+              </div>
+              <div className="grid max-w-52 gap-1.5">
+                <Label htmlFor="claude-max-turns">Claude max turns</Label>
+                <Input
+                  id="claude-max-turns"
+                  type="number"
+                  min={1}
+                  placeholder="unlimited"
+                  value={String(shared.claude_max_turns ?? "")}
+                  onChange={(event) => setSharedField("claude_max_turns", event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Caps how many turns a Claude Code agent may take on a task. Leave blank for no
+                  cap. Only affects Claude Code agents.
+                </p>
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="extra-flags">Extra CLI flags</Label>
+                <Input
+                  id="extra-flags"
+                  className="font-mono"
+                  placeholder="--docker-bin podman"
+                  value={String(shared.extra_args ?? "")}
+                  onChange={(event) => setSharedField("extra_args", event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Added to every run's command exactly as typed — an escape hatch for
+                  engineering knobs that have no control of their own here.
+                </p>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </CardContent>
       </Card>
     </div>

@@ -21,6 +21,20 @@ import { api, type TaskPackage } from "@/lib/api"
 import { renderMarkdown } from "@/lib/markdown"
 import { fmtDuration } from "@/lib/format"
 
+/* Tri-state web-search badge: allowed (outline), forbidden (muted), or
+   undeclared (nothing). A task package that never sets allow_web_search stays
+   silent rather than guessing. */
+function WebSearchBadge({ allow }: { allow: boolean | null }) {
+  if (allow === null || allow === undefined) return null
+  return allow ? (
+    <Badge variant="outline" className="text-xs text-muted-foreground">
+      web
+    </Badge>
+  ) : (
+    <Badge className="border-transparent bg-muted text-xs text-muted-foreground">no web</Badge>
+  )
+}
+
 export default function Tasks() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -75,11 +89,19 @@ export default function Tasks() {
                   <CardContent className="grid gap-2 px-4">
                     <div className="flex items-start justify-between gap-2">
                       <span className="font-mono text-sm font-semibold">{task.id}</span>
-                      {task.has_human_reference && (
-                        <Badge variant="outline" className="text-xs text-muted-foreground">
-                          expert steps
-                        </Badge>
-                      )}
+                      <div className="flex flex-wrap items-center justify-end gap-1">
+                        <WebSearchBadge allow={task.allow_web_search} />
+                        {task.has_human_reference && (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                            expert steps
+                          </Badge>
+                        )}
+                        {task.rigor_count > 0 && (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                            {task.rigor_count} {task.rigor_count === 1 ? "rigor" : "rigors"}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                     <p className="line-clamp-2 text-sm text-muted-foreground">{task.name}</p>
                     <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -158,6 +180,27 @@ export function TaskPreviewSheet({
         <SheetHeader className="border-b">
           <SheetTitle className="font-mono">{selection?.task.id}</SheetTitle>
           <SheetDescription>{selection?.task.name}</SheetDescription>
+          {detail.data && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              <WebSearchBadge allow={detail.data.allow_web_search} />
+              {detail.data.timeout_seconds ? (
+                <Badge variant="outline" className="text-xs text-muted-foreground">
+                  {fmtDuration(detail.data.timeout_seconds)} limit
+                </Badge>
+              ) : null}
+              {detail.data.human_reference_steps > 0 && (
+                <Badge variant="outline" className="text-xs text-muted-foreground">
+                  {detail.data.human_reference_steps} expert step
+                  {detail.data.human_reference_steps === 1 ? "" : "s"}
+                </Badge>
+              )}
+              {detail.data.rigor_count > 0 && (
+                <Badge variant="outline" className="text-xs text-muted-foreground">
+                  {detail.data.rigor_count} {detail.data.rigor_count === 1 ? "rigor" : "rigors"}
+                </Badge>
+              )}
+            </div>
+          )}
           <div className="flex gap-2 pt-1">
             <Button
               size="sm"

@@ -200,6 +200,8 @@ export interface TaskPackage {
   name: string
   rubric_count: number
   timeout_seconds: number | null
+  allow_web_search: boolean | null
+  rigor_count: number
   has_human_reference: boolean
 }
 
@@ -283,6 +285,7 @@ export interface TaskPackageDetail {
     question: string
   }[]
   human_reference_steps: number
+  rigor_count: number
 }
 
 export interface PreflightCheck {
@@ -304,6 +307,8 @@ export interface SharedConfig {
   seed: number | string | null
   batch_size: number | string | null
   repeat: number | string | null
+  max_evaluator_parallel?: number | string | null
+  claude_max_turns?: number | string | null
   extra_args?: string
   evaluator_provider_id?: string
   evaluator_gateway?: {
