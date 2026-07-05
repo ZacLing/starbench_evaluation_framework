@@ -11,9 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..adapters import list_builtin
 from .data import SAFE_ID
 
-AGENT_CHOICES = ("codex", "claude", "opencode", "grok", "gemini")
+# Built-in runtime ids come from the adapter registry (single source of truth).
+AGENT_CHOICES = tuple(adapter.info.id for adapter in list_builtin())
 JUDGE_MODES = ("both", "single", "parallel")
 AUTH_MODES = ("env", "global", "copy-auth")
 BACKENDS = ("local", "docker")

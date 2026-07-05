@@ -35,7 +35,15 @@ from ..runner.prompts import (
     build_executor_prompt,
     claude_executor_allowed_tools,
 )
-from .base import ExecutorContext, JudgeContext, RuntimeAdapter, RuntimeInfo, finalize_success
+from .base import (
+    ExecutorContext,
+    InjectionChannel,
+    JudgeContext,
+    ProviderFilter,
+    RuntimeAdapter,
+    RuntimeInfo,
+    finalize_success,
+)
 
 CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
 
@@ -174,6 +182,15 @@ class ClaudeAdapter(RuntimeAdapter):
         credential_env_keys=("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"),
         judge_sensitive_env=("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"),
         default_executor_backend="local",
+        # Anthropic protocol: the official API, or any provider exposing an
+        # anthropic_base_url; wired through env vars.
+        provider_filter=ProviderFilter(kinds=("anthropic",), accepts_anthropic_endpoint=True),
+        injection=InjectionChannel(
+            kind="anthropic_env",
+            base_url_var="ANTHROPIC_BASE_URL",
+            api_key_var="ANTHROPIC_AUTH_TOKEN",
+            default_api_key_env="ANTHROPIC_AUTH_TOKEN",
+        ),
     )
 
     def executor_skill_prompt_location(self) -> str:

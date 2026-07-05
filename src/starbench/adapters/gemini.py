@@ -24,7 +24,15 @@ from ..execution.parsers import normalize_headless_events, write_headless_final_
 from ..execution.process import run_codex_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import append_json_schema_instruction, build_executor_prompt
-from .base import ExecutorContext, JudgeContext, RuntimeAdapter, RuntimeInfo, finalize_success
+from .base import (
+    ExecutorContext,
+    InjectionChannel,
+    JudgeContext,
+    ProviderFilter,
+    RuntimeAdapter,
+    RuntimeInfo,
+    finalize_success,
+)
 
 GEMINI_DOCKER_ENV_WHITELIST = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"]
 
@@ -131,6 +139,15 @@ class GeminiAdapter(RuntimeAdapter):
         credential_env_keys=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
         judge_sensitive_env=("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"),
         default_executor_backend="local",
+        # Gemini protocol: the official Google API, or any provider exposing a
+        # gemini_base_url; wired through env vars.
+        provider_filter=ProviderFilter(kinds=("google",), accepts_gemini_endpoint=True),
+        injection=InjectionChannel(
+            kind="gemini_env",
+            base_url_var="GOOGLE_GEMINI_BASE_URL",
+            api_key_var="GEMINI_API_KEY",
+            default_api_key_env="GEMINI_API_KEY",
+        ),
     )
 
     def executor_skill_prompt_location(self) -> str:

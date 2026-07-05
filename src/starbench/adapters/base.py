@@ -27,12 +27,71 @@ To add a per-runtime fact, add a field here and populate it in each adapter.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Tuple
 
 from ..execution.process import mark_failed
 from ..runner.models import ProcessResult, TaskRunSpec
+
+
+@dataclass(frozen=True)
+class ProviderFilter:
+    """Which AI providers a runtime can drive, decided by wire protocol.
+
+    Mirrors the frontend ``brand.tsx`` ``compatibleProviders`` switch exactly so
+    the GUI can filter providers from this record instead of re-implementing the
+    matrix: a provider matches when its ``kind`` is in ``kinds``, or when the
+    runtime accepts a bring-your-own endpoint that the provider exposes
+    (``anthropic_base_url`` / ``gemini_base_url``). Note ``codex`` is not simply
+    "protocol openai": it accepts openai / openai-compatible but not xai, while
+    ``opencode`` and custom openai runtimes do accept xai — the filter is stated
+    per runtime, not derived from the protocol string.
+    """
+
+    kinds: Tuple[str, ...] = ()
+    accepts_anthropic_endpoint: bool = False
+    accepts_gemini_endpoint: bool = False
+
+
+@dataclass(frozen=True)
+class InjectionChannel:
+    """How a (runtime, provider) pair is wired at launch.
+
+    This is the single fact the backend needs to reproduce the logic that used
+    to live in the frontend ``providerSettings()``. ``kind`` selects the channel:
+
+    - ``codex_config``     provider overrides baked into the ``codex`` bin prefix
+    - ``anthropic_env``    ANTHROPIC_BASE_URL / token env vars (Claude Code)
+    - ``gemini_env``       GOOGLE_GEMINI_BASE_URL / key env vars (Gemini CLI)
+    - ``opencode_gateway`` ``--opencode-provider/base-url/api-key-env`` flags
+    - ``spec_env``         env vars named by a custom spec (``base_url_env`` etc.)
+    - ``none``             no override channel at all (Grok Build)
+
+    ``base_url_var`` / ``api_key_var`` name the env vars the env channels set;
+    ``default_api_key_env`` is the fallback token source when the provider names
+    no ``api_key_env`` of its own.
+    """
+
+    kind: str = "none"
+    base_url_var: str = ""
+    api_key_var: str = ""
+    default_api_key_env: str = ""
+
+
+def provider_filter_for_protocol(protocol: str) -> ProviderFilter:
+    """Derive a custom runtime's provider filter from its declared protocol.
+
+    Matches the custom-runtime branch of ``brand.tsx`` ``compatibleProviders``:
+    an ``openai`` custom runtime accepts xai (unlike the built-in ``codex``).
+    """
+    if protocol == "openai":
+        return ProviderFilter(kinds=("openai-compatible", "openai", "xai"))
+    if protocol == "anthropic":
+        return ProviderFilter(kinds=("anthropic",), accepts_anthropic_endpoint=True)
+    if protocol == "gemini":
+        return ProviderFilter(kinds=("google",), accepts_gemini_endpoint=True)
+    return ProviderFilter()  # "none": the CLI uses its own login/config
 
 
 @dataclass(frozen=True)
@@ -43,6 +102,9 @@ class RuntimeInfo:
     container. ``credential_env_keys``: env vars the preflight check treats as
     this runtime's API credentials. ``judge_sensitive_env``: env vars that, if a
     contender injects them, would reroute this runtime when it acts as judge.
+    ``provider_filter``: which providers this runtime can drive (GUI reads it via
+    ``/api/agents``). ``injection``: how a chosen provider is wired in at launch
+    (the backend replaces the old frontend ``providerSettings()`` from it).
     """
 
     id: str
@@ -55,6 +117,8 @@ class RuntimeInfo:
     credential_env_keys: Tuple[str, ...] = ()
     judge_sensitive_env: Tuple[str, ...] = ()
     default_executor_backend: str = "local"
+    provider_filter: ProviderFilter = field(default_factory=ProviderFilter)
+    injection: InjectionChannel = field(default_factory=InjectionChannel)
 
     @property
     def docker_capable(self) -> bool:

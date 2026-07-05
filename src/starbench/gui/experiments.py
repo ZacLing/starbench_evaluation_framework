@@ -19,25 +19,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..runner.codex_process import DEFAULT_DOCKER_IMAGES
+from ..adapters import DEFAULT_DOCKER_IMAGES, list_builtin
+from . import injection, providers as providers_module
 from .agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
 from .data import SAFE_ID, _read_json, run_overview
 from .launcher import LaunchError, build_run_argv
 
+# All per-runtime facts below derive from the adapter registry (single source
+# of truth); the GUI keeps no hand-maintained copies.
+_BUILTIN_INFO = {adapter.info.id: adapter.info for adapter in list_builtin()}
+
 # Every built-in runtime runs in Docker isolation (each in its own image);
 # custom runtimes need a docker section in their spec.
-DOCKER_CAPABLE_AGENTS = {"codex", "claude", "gemini", "grok", "opencode"}
+DOCKER_CAPABLE_AGENTS = {info.id for info in _BUILTIN_INFO.values() if info.docker_capable}
 
 # Environment variables each built-in judge reads for routing/credentials.
 # The environment is process-wide per run: a contender that injects one of
 # these would silently reroute the judge in the same subprocess.
-JUDGE_ENV_SENSITIVE = {
-    "codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL"),
-    "claude": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"),
-    "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"),
-    "grok": ("XAI_API_KEY",),
-    "opencode": (),
-}
+JUDGE_ENV_SENSITIVE = {info.id: info.judge_sensitive_env for info in _BUILTIN_INFO.values()}
 
 PER_CONTENDER_FIELD_CHOICES = ["model", "credentials", "gateway", "thinking_effort"]
 
@@ -154,6 +153,86 @@ def _judge_sensitive_vars(evaluator_agent: str, runtimes_dir: Path) -> set:
     return set(JUDGE_ENV_SENSITIVE.get(evaluator_agent, ()))
 
 
+def _resolve_judge_reference(
+    shared: Dict[str, Any],
+    evaluator_agent: str,
+    provider_by_id: Dict[str, Any],
+    runtimes_dir: Path,
+) -> Dict[str, Any]:
+    """Resolve a judge provider reference (``evaluator_provider_id``) into the
+    explicit ``evaluator_auth_mode`` / ``evaluator_gateway`` / ``judge_env``
+    fields the rest of this module already understands.
+
+    The reference shape and the legacy explicit shape converge here: given the
+    same provider, the computed fields equal what the old frontend sent. A
+    ``shared`` without ``evaluator_provider_id`` passes through untouched.
+    """
+    provider_id = str(shared.get("evaluator_provider_id") or "")
+    if not provider_id:
+        return shared
+    provider = provider_by_id.get(provider_id)
+    if provider is None:
+        raise ExperimentError(f"Judge provider {provider_id!r} is not a configured AI provider.")
+    info = None
+    custom_meta = None
+    if evaluator_agent.startswith("custom:"):
+        custom_meta = get_custom_agent(runtimes_dir, evaluator_agent.split(":", 1)[1])
+        if custom_meta is None:
+            return shared  # the explicit validation below raises the precise error
+    elif evaluator_agent in _BUILTIN_INFO:
+        info = _BUILTIN_INFO[evaluator_agent]
+    else:
+        return shared  # unknown runtime; build_run_argv rejects it later
+    settings = injection.settings_for(provider, info=info, custom_meta=custom_meta)
+    updated = dict(shared)
+    updated["evaluator_auth_mode"] = settings["auth_mode"]
+    gateway = settings.get("gateway") or {}
+    updated["evaluator_gateway"] = gateway or None
+    updated["judge_env"] = settings.get("env")
+    return updated
+
+
+def _resolve_contender_reference(
+    contender: Dict[str, Any],
+    provider_by_id: Dict[str, Any],
+    custom_meta: Optional[Dict[str, Any]],
+    info: Any,
+) -> Dict[str, Any]:
+    """Resolve a contender provider reference (``provider_id``) into the explicit
+    contender shape (``auth_mode`` / ``codex_bin`` / ``opencode_*`` / ``env``).
+
+    A contender without ``provider_id`` (legacy explicit shape) passes through.
+    """
+    if "provider_id" not in contender:
+        return contender
+    provider_id = str(contender.get("provider_id") or "")
+    provider = provider_by_id.get(provider_id) if provider_id else None
+    if provider is None:
+        if provider_id:
+            raise ExperimentError(
+                f"Contender provider {provider_id!r} is not a configured AI provider."
+            )
+        # Providerless (a custom runtime with protocol "none"): the CLI uses its
+        # own login/config.
+        settings = dict(injection.PROVIDERLESS_SETTINGS)
+    else:
+        settings = injection.settings_for(provider, info=info, custom_meta=custom_meta)
+    model = str(contender.get("model") or "").strip()
+    if custom_meta is not None and not custom_meta.get("model_flag"):
+        model = ""
+    resolved: Dict[str, Any] = {
+        "label": contender.get("label"),
+        "agent": contender.get("agent"),
+        "model": model,
+        "auth_mode": settings["auth_mode"],
+        "thinking_effort": contender.get("thinking_effort"),
+        "codex_bin": settings.get("codex_bin"),
+        "env": settings.get("env"),
+    }
+    resolved.update(settings.get("gateway") or {})
+    return resolved
+
+
 def plan_experiment(
     payload: Dict[str, Any], *, runs_dir: Path, runtimes_dir: Path = DEFAULT_RUNTIMES_DIR
 ) -> Dict[str, Any]:
@@ -175,8 +254,16 @@ def plan_experiment(
     if len(contenders) > 12:
         raise ExperimentError("At most 12 contenders per experiment.")
 
+    # Resolve provider references (the reference shape) into the explicit fields
+    # the rest of this function consumes. Providers live in <runs-dir>/providers.
+    provider_by_id = {
+        provider["id"]: provider
+        for provider in providers_module.load_providers(runs_dir)["providers"]
+    }
+
     backend = str(shared.get("executor_backend") or "local")
     evaluator_agent = str(shared.get("evaluator_agent") or "codex")
+    shared = _resolve_judge_reference(shared, evaluator_agent, provider_by_id, runtimes_dir)
     evaluator_gateway = (
         shared.get("evaluator_gateway")
         if isinstance(shared.get("evaluator_gateway"), dict)
@@ -207,6 +294,9 @@ def plan_experiment(
                     f"Contender runtime {agent} is not a valid custom runtime "
                     f"in {runtimes_dir}."
                 )
+        contender = _resolve_contender_reference(
+            contender, provider_by_id, custom_meta, _BUILTIN_INFO.get(agent)
+        )
         label = str(contender.get("label") or "") or f"{agent}-{contender.get('model') or index + 1}"
         slug = _slug(label)
         run_id = f"{name}__{slug}"

@@ -17,10 +17,13 @@ Dependency arrow points down: adapters import ``starbench.execution`` and
 
 from .base import (
     ExecutorContext,
+    InjectionChannel,
     JudgeContext,
+    ProviderFilter,
     RuntimeAdapter,
     RuntimeInfo,
     finalize_success,
+    provider_filter_for_protocol,
 )
 from .registry import (
     BUILTIN_AGENTS,
@@ -34,11 +37,14 @@ __all__ = [
     "BUILTIN_AGENTS",
     "DEFAULT_DOCKER_IMAGES",
     "ExecutorContext",
+    "InjectionChannel",
     "JudgeContext",
+    "ProviderFilter",
     "RuntimeAdapter",
     "RuntimeInfo",
     "finalize_success",
     "get_builtin",
     "list_builtin",
+    "provider_filter_for_protocol",
     "resolve",
 ]

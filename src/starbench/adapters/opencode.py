@@ -33,7 +33,15 @@ from ..runner.prompts import (
     build_executor_prompt,
     opencode_model_name,
 )
-from .base import ExecutorContext, JudgeContext, RuntimeAdapter, RuntimeInfo, finalize_success
+from .base import (
+    ExecutorContext,
+    InjectionChannel,
+    JudgeContext,
+    ProviderFilter,
+    RuntimeAdapter,
+    RuntimeInfo,
+    finalize_success,
+)
 
 OPENCODE_DOCKER_ENV_WHITELIST = ["OPENAI_API_KEY", "XAI_API_KEY"]
 
@@ -223,6 +231,10 @@ class OpenCodeAdapter(RuntimeAdapter):
         credential_env_keys=(),
         judge_sensitive_env=(),
         default_executor_backend="local",
+        # OpenAI-protocol provider/base-url/key are injected as gateway flags;
+        # unlike codex, opencode also drives xai-kind providers.
+        provider_filter=ProviderFilter(kinds=("openai-compatible", "openai", "xai")),
+        injection=InjectionChannel(kind="opencode_gateway"),
     )
 
     def executor_skill_prompt_location(self) -> str:

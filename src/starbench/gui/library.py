@@ -14,6 +14,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..adapters import list_builtin
 from .data import SAFE_ID, _read_json, list_task_packages
 
 MAX_IMPORT_BYTES = 20 * 1024 * 1024
@@ -310,19 +311,15 @@ def task_package_detail(tasks_dir: Path, dir_name: str) -> Dict[str, Any]:
 # Preflight checks
 # ---------------------------------------------------------------------------
 
-AGENT_BINS = {
-    "codex": "codex",
-    "claude": "claude",
-    "opencode": "opencode",
-    "grok": "grok",
-    "gemini": "gemini",
-}
+# Derived from the adapter registry (single source of truth): the executable
+# each built-in runtime probes for, and the credential env vars the preflight
+# check looks for (runtimes with no known credential var are simply absent).
+AGENT_BINS = {info.id: info.bin for info in (a.info for a in list_builtin())}
 
 AGENT_ENV_KEYS = {
-    "codex": ["OPENAI_API_KEY"],
-    "claude": ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"],
-    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    "grok": ["XAI_API_KEY"],
+    info.id: list(info.credential_env_keys)
+    for info in (a.info for a in list_builtin())
+    if info.credential_env_keys
 }
 
 

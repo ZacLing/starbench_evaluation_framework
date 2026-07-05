@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from . import agents, data, experiments, library, providers
 from .agents import AgentError, DEFAULT_RUNTIMES_DIR
 from .experiments import ExperimentError
-from .launcher import LaunchError, LaunchRegistry, build_run_argv, resolve_env_spec
+from .launcher import AGENT_CHOICES, LaunchError, LaunchRegistry, build_run_argv, resolve_env_spec
 from .library import LibraryError
 from .providers import ProviderError
 
@@ -245,7 +245,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             if executor_meta:
                 docker_image = executor_meta.get("docker_image") or ""
             elif not docker_image:
-                from ..runner.codex_process import DEFAULT_DOCKER_IMAGES
+                from ..adapters import DEFAULT_DOCKER_IMAGES
 
                 docker_image = DEFAULT_DOCKER_IMAGES.get(executor_agent, "")
         return library.preflight(
@@ -299,7 +299,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             "tasks_dirs": [
                 {"dir": str(path), "exists": path.is_dir()} for path in state.tasks_dirs
             ],
-            "agents": ["codex", "claude", "opencode", "grok", "gemini"],
+            "agents": list(AGENT_CHOICES),
             "judge_modes": ["single", "parallel", "both"],
             "auth_modes": ["env", "global", "copy-auth"],
             "backends": ["local", "docker"],

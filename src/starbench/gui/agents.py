@@ -24,7 +24,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..runner.codex_process import DEFAULT_DOCKER_IMAGES
+from ..adapters import list_builtin, provider_filter_for_protocol
+from ..adapters.base import ProviderFilter, RuntimeInfo
 from ..runner.custom_runtime import load_custom_runtime
 from .data import SAFE_ID
 
@@ -32,54 +33,37 @@ DEFAULT_RUNTIMES_DIR = Path(__file__).resolve().parents[3] / "runtimes"
 
 PROTOCOL_CHOICES = ("openai", "anthropic", "gemini", "none")
 
-# Every built-in runtime executes in Docker isolation, each in its own image
-# (the runner resolves the image per runtime; see DEFAULT_DOCKER_IMAGES).
+
+def _provider_filter_dict(pf: ProviderFilter) -> Dict[str, Any]:
+    return {
+        "kinds": list(pf.kinds),
+        "accepts_anthropic_endpoint": pf.accepts_anthropic_endpoint,
+        "accepts_gemini_endpoint": pf.accepts_gemini_endpoint,
+    }
+
+
+def _builtin_row(info: RuntimeInfo) -> Dict[str, Any]:
+    # Every built-in runtime executes in Docker isolation, each in its own image
+    # (resolved from the adapter registry's RuntimeInfo, the single source).
+    return {
+        "id": info.id,
+        "label": info.label,
+        "note": info.description,
+        "protocol": info.protocol,
+        "docker_capable": info.docker_capable,
+        "docker_image": info.docker_image,
+        "bin": info.bin,
+        "provider_filter": _provider_filter_dict(info.provider_filter),
+    }
+
+
+# Derived from the adapter registry; this list only fixes the console's
+# historical display order (adapters iterate codex-first for docker-image order).
+_BUILTIN_DISPLAY_ORDER = ("claude", "codex", "gemini", "grok", "opencode")
+_BUILTIN_INFO = {adapter.info.id: adapter.info for adapter in list_builtin()}
+
 BUILTIN_AGENTS: List[Dict[str, Any]] = [
-    {
-        "id": "claude",
-        "label": "Claude Code",
-        "note": "Anthropic's coding agent",
-        "protocol": "anthropic",
-        "docker_capable": True,
-        "docker_image": DEFAULT_DOCKER_IMAGES["claude"],
-        "bin": "claude",
-    },
-    {
-        "id": "codex",
-        "label": "Codex",
-        "note": "OpenAI's coding agent",
-        "protocol": "openai",
-        "docker_capable": True,
-        "docker_image": DEFAULT_DOCKER_IMAGES["codex"],
-        "bin": "codex",
-    },
-    {
-        "id": "gemini",
-        "label": "Gemini CLI",
-        "note": "Google's coding agent",
-        "protocol": "gemini",
-        "docker_capable": True,
-        "docker_image": DEFAULT_DOCKER_IMAGES["gemini"],
-        "bin": "gemini",
-    },
-    {
-        "id": "grok",
-        "label": "Grok Build",
-        "note": "xAI's coding agent",
-        "protocol": "xai",
-        "docker_capable": True,
-        "docker_image": DEFAULT_DOCKER_IMAGES["grok"],
-        "bin": "grok",
-    },
-    {
-        "id": "opencode",
-        "label": "OpenCode",
-        "note": "Open-source agent for OpenAI-compatible models",
-        "protocol": "openai",
-        "docker_capable": True,
-        "docker_image": DEFAULT_DOCKER_IMAGES["opencode"],
-        "bin": "opencode",
-    },
+    _builtin_row(_BUILTIN_INFO[agent_id]) for agent_id in _BUILTIN_DISPLAY_ORDER
 ]
 
 BUILTIN_IDS = {agent["id"] for agent in BUILTIN_AGENTS}
@@ -116,6 +100,7 @@ def list_agents(runtimes_dir: Path) -> Dict[str, Any]:
             "docker_image": agent["docker_image"],
             "builtin": True,
             "cli": _cli_probe(agent["bin"]),
+            "provider_filter": agent["provider_filter"],
         }
         for agent in BUILTIN_AGENTS
     ]
@@ -147,6 +132,11 @@ def list_agents(runtimes_dir: Path) -> Dict[str, Any]:
                     "description": str(raw.get("description") or ""),
                     "icon": str(raw.get("icon") or ""),
                     "protocol": protocol if protocol in PROTOCOL_CHOICES else "none",
+                    "provider_filter": _provider_filter_dict(
+                        provider_filter_for_protocol(
+                            protocol if protocol in PROTOCOL_CHOICES else "none"
+                        )
+                    ),
                     "base_url_env": str(raw.get("base_url_env") or ""),
                     "api_key_env": str(raw.get("api_key_env") or ""),
                     "command": spec.command,

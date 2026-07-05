@@ -23,7 +23,15 @@ from ..execution.parsers import normalize_headless_events, write_headless_final_
 from ..execution.process import run_codex_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import append_json_schema_instruction, build_executor_prompt
-from .base import ExecutorContext, JudgeContext, RuntimeAdapter, RuntimeInfo, finalize_success
+from .base import (
+    ExecutorContext,
+    InjectionChannel,
+    JudgeContext,
+    ProviderFilter,
+    RuntimeAdapter,
+    RuntimeInfo,
+    finalize_success,
+)
 
 GROK_DOCKER_ENV_WHITELIST = ["XAI_API_KEY"]
 
@@ -151,6 +159,10 @@ class GrokAdapter(RuntimeAdapter):
         credential_env_keys=("XAI_API_KEY",),
         judge_sensitive_env=("XAI_API_KEY",),
         default_executor_backend="local",
+        # xAI only; the CLI has no endpoint-override mechanism, so there is no
+        # injection channel — the official login/credential is used as-is.
+        provider_filter=ProviderFilter(kinds=("xai",)),
+        injection=InjectionChannel(kind="none"),
     )
 
     def executor_skill_prompt_location(self) -> str:

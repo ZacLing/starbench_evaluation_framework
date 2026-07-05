@@ -28,7 +28,14 @@ from ..execution.docker import build_docker_agent_command
 from ..execution.process import run_codex_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import append_claude_thinking_instruction, build_executor_prompt
-from .base import ExecutorContext, JudgeContext, RuntimeAdapter, RuntimeInfo
+from .base import (
+    ExecutorContext,
+    InjectionChannel,
+    JudgeContext,
+    ProviderFilter,
+    RuntimeAdapter,
+    RuntimeInfo,
+)
 
 CODEX_DOCKER_ENV_WHITELIST = ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"]
 
@@ -228,6 +235,10 @@ class CodexAdapter(RuntimeAdapter):
         credential_env_keys=("OPENAI_API_KEY",),
         judge_sensitive_env=("OPENAI_API_KEY", "OPENAI_BASE_URL"),
         default_executor_backend="docker",
+        # Codex accepts the OpenAI protocol only (official or an OpenAI-compatible
+        # gateway); it does not take xai like opencode does.
+        provider_filter=ProviderFilter(kinds=("openai", "openai-compatible")),
+        injection=InjectionChannel(kind="codex_config", default_api_key_env="OPENAI_API_KEY"),
     )
 
     def executor_skill_prompt_location(self) -> str:
