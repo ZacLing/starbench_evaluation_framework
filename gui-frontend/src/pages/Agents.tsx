@@ -6,9 +6,9 @@ import {
   CheckCircle2,
   Container,
   ExternalLink,
+  Laptop,
   Pencil,
   Plus,
-  TerminalSquare,
   Trash2,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -109,78 +109,45 @@ export default function Agents() {
         </Button>
       </div>
 
-      <section className="grid gap-3">
-        <h2 className="text-sm font-semibold text-muted-foreground">Built-in runtimes</h2>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {payload.builtin.map((agent) => (
-            <BuiltinCard
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {payload.builtin.map((agent) => (
+          <BuiltinCard
+            key={agent.id}
+            agent={agent}
+            providerCount={compatibleProviders(agent.id, providers).length}
+          />
+        ))}
+        {payload.custom.map((agent) =>
+          agent.error ? (
+            <Card key={agent.id} className="border-warn-ink/40 py-4">
+              <CardContent className="grid gap-2 px-4">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="size-4 text-warn-ink" />
+                  <span className="font-mono text-sm font-semibold">{agent.spec_id}</span>
+                </div>
+                <p className="text-xs text-warn-ink">{agent.error}</p>
+                <p className="truncate font-mono text-xs text-muted-foreground">
+                  {agent.source_path}
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <CustomCard
               key={agent.id}
               agent={agent}
-              providerCount={compatibleProviders(agent.id, providers).length}
+              providerCount={compatibleProviders(agent.id, providers, agent.protocol).length}
+              onEdit={() => {
+                setIsNew(false)
+                setEditing(draftFromAgent(agent))
+              }}
+              onDelete={() => removeAgent(agent)}
             />
-          ))}
-        </div>
-      </section>
-
-      <section className="grid gap-3">
-        <h2 className="text-sm font-semibold text-muted-foreground">
-          Custom runtimes
-          <span className="ml-2 font-mono text-xs font-normal">{payload.runtimes_dir}</span>
-        </h2>
-        {payload.custom.length ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {payload.custom.map((agent) =>
-              agent.error ? (
-                <Card key={agent.id} className="border-warn-ink/40 py-4">
-                  <CardContent className="grid gap-2 px-4">
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="size-4 text-warn-ink" />
-                      <span className="font-mono text-sm font-semibold">{agent.spec_id}</span>
-                    </div>
-                    <p className="text-xs text-warn-ink">{agent.error}</p>
-                    <p className="truncate font-mono text-xs text-muted-foreground">
-                      {agent.source_path}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <CustomCard
-                  key={agent.id}
-                  agent={agent}
-                  providerCount={
-                    compatibleProviders(agent.id, providers, agent.protocol).length
-                  }
-                  onEdit={() => {
-                    setIsNew(false)
-                    setEditing(draftFromAgent(agent))
-                  }}
-                  onDelete={() => removeAgent(agent)}
-                />
-              ),
-            )}
-          </div>
-        ) : (
-          <Card className="border-dashed py-8">
-            <CardContent className="grid justify-items-center gap-2 text-center">
-              <TerminalSquare className="size-6 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                No custom runtimes yet. Any headless CLI can compete — start from a template
-                for Qwen Code, Kimi Code CLI, or Trae Agent.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setIsNew(true)
-                  setEditing(emptyDraft())
-                }}
-              >
-                <Plus /> Add custom runtime
-              </Button>
-            </CardContent>
-          </Card>
+          ),
         )}
-      </section>
+      </div>
+      <p className="font-mono text-xs text-muted-foreground">
+        spec runtimes: {payload.runtimes_dir}
+      </p>
 
       <RuntimeEditor
         key={editing ? `${isNew}-${editing.id || "new"}` : "__closed"}
@@ -189,6 +156,10 @@ export default function Agents() {
         templates={templates}
         onClose={() => setEditing(null)}
         onSave={async (draft) => {
+          if (isNew && payload.custom.some((agent) => agent.spec_id === draft.id.trim())) {
+            toast.error(`Runtime id ${draft.id.trim()} already exists — edit it instead.`)
+            return
+          }
           try {
             await api.saveAgent(draftToPayload(draft))
             queryClient.invalidateQueries({ queryKey: ["agents"] })
@@ -295,9 +266,16 @@ function CustomCard({
           <Badge variant="outline" className="font-mono text-[11px]">
             custom:{agent.spec_id}
           </Badge>
-          {agent.docker_image && (
+          {agent.docker_image ? (
             <Badge variant="outline" className="gap-1 text-[11px]" title={agent.docker_image}>
               <Container className="size-3" /> Docker
+            </Badge>
+          ) : (
+            <Badge
+              className="gap-1 border-transparent bg-warn-soft text-[11px] text-warn-ink"
+              title="No Docker image in this spec — tasks execute directly on this machine, without container isolation."
+            >
+              <Laptop className="size-3" /> local execution
             </Badge>
           )}
           <div className="ml-auto flex gap-1">

@@ -1,13 +1,16 @@
 {
   "id": "qwen-code",
+  "label": "Qwen Code",
+  "icon": "qwen",
   "command": "qwen",
   "args": ["--output-format", "json", "--yolo"],
   "judge_args": ["--output-format", "json", "--approval-mode", "plan"],
   "model_flag": "-m",
   "prompt_via": "stdin",
-  "prompt_flag": "-p",
   "parser": "headless-json",
-  "env": {},
+  "protocol": "openai",
+  "base_url_env": "OPENAI_BASE_URL",
+  "api_key_env": "OPENAI_API_KEY",
   "docker": {
     "image": "starbench-qwen:latest",
     "env_passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"]

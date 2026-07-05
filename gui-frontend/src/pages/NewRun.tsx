@@ -675,6 +675,7 @@ interface RuntimeOption {
   icon?: string
   protocol?: string | null
   cliMissing?: boolean
+  localOnly?: boolean
 }
 
 function StepContenders({
@@ -713,6 +714,7 @@ function StepContenders({
       icon: agent.icon,
       protocol: agent.protocol ?? "none",
       cliMissing: agent.cli ? !agent.cli.present : false,
+      localOnly: !agent.docker_capable,
     })),
   ]
   return (
@@ -753,6 +755,14 @@ function StepContenders({
                         ? `${modelCount} models from ${compatible.length} provider${compatible.length > 1 ? "s" : ""}`
                         : "no provider configured"}
                   </span>
+                  {option.localOnly && (
+                    <span
+                      className="text-[11px] text-warn-ink"
+                      title="No Docker image in this runtime's spec — tasks execute directly on this machine."
+                    >
+                      local execution
+                    </span>
+                  )}
                   {option.cliMissing && (
                     <span className="text-[11px] text-warn-ink">CLI missing</span>
                   )}
@@ -1079,6 +1089,13 @@ function StepShared({
                 The judge is an agent too — scores are only as trustworthy as the runtime
                 grading them.
               </p>
+              {judgeCustom && judgeCustom.judge_args_inherited && (
+                <p className="text-xs text-warn-ink">
+                  This runtime declares no read-only judge mode (judge arguments equal the
+                  executor arguments), so the judge could modify its grading workspace.
+                  Prefer a runtime with a plan/read-only flag for judging.
+                </p>
+              )}
             </div>
             {judgeOwnLogin ? (
               <p className="text-xs text-muted-foreground">
@@ -1237,7 +1254,8 @@ function StepShared({
               Each agent runs in its runtime's own container image
               (<code className="font-mono">starbench-*</code>; custom runtimes use the image
               from their spec). Build the images once with{" "}
-              <code className="font-mono">make docker-images</code>.
+              <code className="font-mono">make docker-images</code>. The judge always runs on
+              this machine — isolation applies to the agents' execution phase.
             </p>
           )}
           {String(shared.executor_backend) === "docker" && localRuntimeNames.length > 0 && (

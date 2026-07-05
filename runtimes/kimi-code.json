@@ -1,0 +1,10 @@
+{
+  "id": "kimi-code",
+  "label": "Kimi Code CLI",
+  "icon": "kimi",
+  "command": "kimi",
+  "args": ["--print", "--output-format", "text", "--final-message-only"],
+  "prompt_via": "stdin",
+  "parser": "text",
+  "protocol": "none"
+}

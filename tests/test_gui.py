@@ -1135,6 +1135,17 @@ class AgentRegistryTest(unittest.TestCase):
             self.assertIn(template["spec"].get("protocol"), agents.PROTOCOL_CHOICES)
             path.unlink()
 
+    def test_bundled_runtime_specs_are_valid_and_labeled(self) -> None:
+        listing = agents.list_agents(agents.DEFAULT_RUNTIMES_DIR)
+        by_spec = {agent["spec_id"]: agent for agent in listing["custom"]}
+        for spec_id in ("qwen-code", "kimi-code", "trae-agent"):
+            self.assertIn(spec_id, by_spec)
+            self.assertIsNone(by_spec[spec_id]["error"], spec_id)
+        self.assertTrue(by_spec["qwen-code"]["docker_capable"])
+        self.assertTrue(by_spec["trae-agent"]["docker_capable"])
+        # Kimi authenticates through its own local login; host-local on purpose.
+        self.assertFalse(by_spec["kimi-code"]["docker_capable"])
+
     def test_provider_backed_templates_ship_docker_isolation(self) -> None:
         by_id = {template["template_id"]: template["spec"] for template in agents.agent_templates()}
         self.assertEqual(by_id["qwen-code"]["docker"]["image"], "starbench-qwen:latest")

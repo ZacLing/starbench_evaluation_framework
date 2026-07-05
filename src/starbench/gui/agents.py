@@ -310,9 +310,10 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
         "docs_url": "https://moonshotai.github.io/kimi-cli/en/customization/print-mode.html",
         "description": (
             "Moonshot AI's terminal agent. Print mode reads the prompt from stdin; "
-            "output is the final message as plain text. Uses its own `kimi` "
-            "login/config — no documented model flag or read-only judge mode, so "
-            "verify against `kimi --help`."
+            "output is the final message as plain text. Runs on this machine only — "
+            "it authenticates through its own local `kimi` login, which a container "
+            "cannot reuse. No documented model flag or read-only judge mode; verify "
+            "against `kimi --help`."
         ),
         "spec": {
             "id": "kimi-code",

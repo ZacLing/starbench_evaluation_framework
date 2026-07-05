@@ -54,9 +54,11 @@ and must answer with a single JSON value; StarBench extracts it from the
 parsed final text. Point `judge_args` at your CLI's read-only mode so judges
 cannot modify the judge workspace.
 
-## Example
+## Bundled runtimes
 
-`qwen-code.json.example` in this directory is a starting point for Qwen
-Code (a gemini-cli fork). Verify every flag against the installed CLI's
-`--help` before use — flags drift between versions — then rename the file
-to `qwen-code.json`.
+`qwen-code.json`, `kimi-code.json`, and `trae-agent.json` ship with the
+repository, so these mainstream agents work out of the box (install the CLI,
+build the image for the Docker-enabled ones). Kimi Code CLI runs host-local
+on purpose: it authenticates through its own local `kimi` login, which a
+container cannot reuse. Flags drift between CLI versions — verify against
+`<cli> --help` when a run misbehaves.
