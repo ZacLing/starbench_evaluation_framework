@@ -10,7 +10,9 @@ import type {
   BuiltinRuntime,
   Contender,
   CustomRuntime,
+  ExecutionEstimate,
   ExperimentPlanItem,
+  HumanReferenceStepDetail,
   ModelsSource,
   ProviderFilter,
   ProviderKind,
@@ -28,7 +30,9 @@ export type {
   BuiltinRuntime,
   Contender,
   CustomRuntime,
+  ExecutionEstimate,
   ExperimentPlanItem,
+  HumanReferenceStepDetail,
   ModelsSource,
   ProviderFilter,
   ProviderKind,
@@ -290,7 +294,10 @@ export interface TaskPackageDetail {
     expected: boolean
     question: string
   }[]
-  human_reference_steps: number
+  /* Public expert-step detail (step_id/step_type/instruction). The private
+     `reasoning` trace is never included — see contracts.HumanReferenceStepDetail. */
+  human_reference_steps: HumanReferenceStepDetail[]
+  human_reference_step_count: number
   rigor_count: number
 }
 
@@ -321,6 +328,11 @@ export interface SharedConfig {
      expands groups and rejects a skill installed twice). */
   executor_skills?: string[]
   executor_skill_groups?: string[]
+  /* Instruction ablation (research): a sweep over a task's human_reference expert
+     steps. Mode is none/traverse/select/ablation; instruction_steps carries the
+     chosen step ids for select mode. Shared across contenders like the judge. */
+  instruction_mode?: string
+  instruction_steps?: string[]
   evaluator_provider_id?: string
   evaluator_gateway?: {
     opencode_provider?: string
@@ -516,7 +528,14 @@ export const api = {
     contenders: Contender[]
     dry_run?: boolean
   }) =>
-    request<{ name: string; plans: ExperimentPlanItem[]; dry_run?: boolean } & Partial<ExperimentRecord>>(
+    request<
+      {
+        name: string
+        plans: ExperimentPlanItem[]
+        execution_estimate?: ExecutionEstimate
+        dry_run?: boolean
+      } & Partial<ExperimentRecord>
+    >(
       "/api/experiments",
       {
         method: "POST",

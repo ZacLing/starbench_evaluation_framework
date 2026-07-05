@@ -188,10 +188,10 @@ export function TaskPreviewSheet({
                   {fmtDuration(detail.data.timeout_seconds)} limit
                 </Badge>
               ) : null}
-              {detail.data.human_reference_steps > 0 && (
+              {detail.data.human_reference_step_count > 0 && (
                 <Badge variant="outline" className="text-xs text-muted-foreground">
-                  {detail.data.human_reference_steps} expert step
-                  {detail.data.human_reference_steps === 1 ? "" : "s"}
+                  {detail.data.human_reference_step_count} expert step
+                  {detail.data.human_reference_step_count === 1 ? "" : "s"}
                 </Badge>
               )}
               {detail.data.rigor_count > 0 && (

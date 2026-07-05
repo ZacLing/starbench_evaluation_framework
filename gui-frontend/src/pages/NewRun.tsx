@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   AlertTriangle,
@@ -14,6 +14,7 @@ import {
   Rocket,
   Save,
   Scale,
+  Sparkles,
   Trash2,
 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -52,11 +53,13 @@ import {
   type AiProvider,
   type Contender,
   type CustomRuntime,
+  type ExecutionEstimate,
   type ExperimentPlanItem,
   type Profile,
   type ProviderFilter,
   type SharedConfig,
   type SkillsPayload,
+  type TaskPackage,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -228,8 +231,13 @@ export default function NewRun() {
   }, [contenders, providers, customByRuntime, runtimeLabel])
 
   /* Authoritative plan preview on the review step. */
-  const [plan, setPlan] = useState<{ plans: ExperimentPlanItem[] | null; error: string | null }>({
+  const [plan, setPlan] = useState<{
+    plans: ExperimentPlanItem[] | null
+    estimate: ExecutionEstimate | null
+    error: string | null
+  }>({
     plans: null,
+    estimate: null,
     error: null,
   })
   const planTimer = useRef<ReturnType<typeof setTimeout>>(null)
@@ -246,9 +254,13 @@ export default function NewRun() {
           contenders: apiContenders(),
           dry_run: true,
         })
-        setPlan({ plans: result.plans, error: null })
+        setPlan({
+          plans: result.plans,
+          estimate: result.execution_estimate ?? null,
+          error: null,
+        })
       } catch (error) {
-        setPlan({ plans: null, error: (error as Error).message })
+        setPlan({ plans: null, estimate: null, error: (error as Error).message })
       }
     }, 350)
     return () => {
@@ -362,6 +374,14 @@ export default function NewRun() {
           }}
           providers={providers}
           skills={skillsQuery.data}
+          tasksDir={tasksDir}
+          selectedTasks={
+            activeLibrary
+              ? tasks.length
+                ? activeLibrary.tasks.filter((task) => tasks.includes(task.id))
+                : activeLibrary.tasks
+              : []
+          }
           shared={shared}
           setShared={setShared}
           setSharedField={setSharedField}
@@ -850,6 +870,8 @@ function StepShared({
   onSelectProfile,
   providers,
   skills,
+  tasksDir,
+  selectedTasks,
   shared,
   setShared,
   setSharedField,
@@ -869,6 +891,8 @@ function StepShared({
   onSelectProfile: (id: string) => void
   providers: AiProvider[]
   skills?: SkillsPayload
+  tasksDir: string
+  selectedTasks: TaskPackage[]
   shared: Partial<SharedConfig>
   setShared: React.Dispatch<React.SetStateAction<Partial<SharedConfig>>>
   setSharedField: (key: keyof SharedConfig, value: unknown) => void
@@ -1100,6 +1124,14 @@ function StepShared({
         </CardContent>
       </Card>
 
+      <PromptAssistanceBlock
+        tasksDir={tasksDir}
+        selectedTasks={selectedTasks}
+        shared={shared}
+        setShared={setShared}
+        setSharedField={setSharedField}
+      />
+
       <ExecutorSkillsBlock skills={skills} shared={shared} setShared={setShared} />
 
       <Card>
@@ -1274,6 +1306,297 @@ function StepShared({
   )
 }
 
+/* ---------- shared: prompt assistance (research) ---------- */
+
+const INSTRUCTION_MODE_CARDS = [
+  {
+    value: "none",
+    label: "None",
+    note: "Baseline — the task runs exactly as written.",
+  },
+  {
+    value: "select",
+    label: "Selected steps",
+    note: "Bundle the expert steps you pick into the prompt; one run per task.",
+  },
+  {
+    value: "traverse",
+    label: "Traverse",
+    note: "One variant per expert step, to see each step's effect on its own.",
+  },
+  {
+    value: "ablation",
+    label: "Ablation",
+    note: "Baseline + each step alone + all steps together; auto-generates a baseline comparison and a step-by-step uplift report.",
+  },
+] as const
+
+/* Instruction ablation: a research sweep over a task's human_reference expert
+   steps. This is the "Prompt assistance (research)" region; B4 will add a Rigor
+   sub-section alongside Expert instructions, so the block is structured for two
+   sub-sections. Only public step text is ever shown — the private `reasoning`
+   never crosses the API (enforced backend-side). */
+function PromptAssistanceBlock({
+  tasksDir,
+  selectedTasks,
+  shared,
+  setShared,
+  setSharedField,
+}: {
+  tasksDir: string
+  selectedTasks: TaskPackage[]
+  shared: Partial<SharedConfig>
+  setShared: React.Dispatch<React.SetStateAction<Partial<SharedConfig>>>
+  setSharedField: (key: keyof SharedConfig, value: unknown) => void
+}) {
+  const mode = String(shared.instruction_mode ?? "none")
+  const selectedSteps = shared.instruction_steps ?? []
+  const repeat = Number(shared.repeat) || 1
+
+  const tasksWithSteps = selectedTasks.filter((task) => task.has_human_reference)
+  const tasksWithoutSteps = selectedTasks.filter((task) => !task.has_human_reference)
+  // Only the baseline applies when no selected task ships any expert steps.
+  const noExpertSteps = selectedTasks.length > 0 && tasksWithSteps.length === 0
+
+  // Public step detail per step-bearing task; keys are stable per (dir, task) so
+  // react-query caches across renders and steps rerender.
+  const detailQueries = useQueries({
+    queries: tasksWithSteps.map((task) => ({
+      queryKey: ["tasklib-task", tasksDir, task.dir_name],
+      queryFn: () => api.taskDetail(tasksDir, task.dir_name),
+      enabled: Boolean(tasksDir),
+      staleTime: 60_000,
+    })),
+  })
+  const stepsLoading = detailQueries.some((query) => query.isPending)
+
+  // Pool steps across the selected tasks, keyed by step id, tracking how many of
+  // the step-bearing tasks contain each id. The runner requires a chosen step to
+  // exist in EVERY selected task, so a step present in only some tasks (marked
+  // in k/N) will make the run reject the tasks that lack it.
+  const pooled = new Map<
+    string,
+    { step_id: string; step_type: string; instruction: string; inTasks: number }
+  >()
+  for (const query of detailQueries) {
+    if (!query.data) continue
+    for (const step of query.data.human_reference_steps) {
+      const existing = pooled.get(step.step_id)
+      if (existing) existing.inTasks += 1
+      else pooled.set(step.step_id, { ...step, inTasks: 1 })
+    }
+  }
+  const unionSteps = [...pooled.values()]
+  const stepTaskCount = tasksWithSteps.length
+
+  // If the task selection changed to one with no expert steps, don't leave a
+  // stale step-requiring mode (or step choice) selected.
+  useEffect(() => {
+    if (noExpertSteps && mode !== "none") {
+      setShared((current) => ({
+        ...current,
+        instruction_mode: "none",
+        instruction_steps: [],
+      }))
+    }
+  }, [noExpertSteps, mode, setShared])
+
+  const setMode = (next: string) =>
+    setShared((current) => ({
+      ...current,
+      instruction_mode: next,
+      // Chosen steps only apply to select mode; drop them otherwise so ablation
+      // and traverse always sweep the full step set.
+      instruction_steps: next === "select" ? current.instruction_steps ?? [] : [],
+    }))
+
+  const toggleStep = (id: string, on: boolean) =>
+    setShared((current) => {
+      const chosen = new Set(current.instruction_steps ?? [])
+      if (on) chosen.add(id)
+      else chosen.delete(id)
+      return { ...current, instruction_steps: [...chosen] }
+    })
+
+  const partialModeLabel =
+    mode === "select" ? "Selected steps" : mode === "traverse" ? "Traverse" : "Ablation"
+
+  return (
+    <Card>
+      <CardContent className="grid gap-4">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <Sparkles className="size-4 self-center text-live-ink" />
+          <span className="text-sm font-semibold">Prompt assistance (research)</span>
+          <p className="text-xs text-muted-foreground">
+            Optional experiments that add expert guidance to the prompt. Shared across all
+            agents, like the judge, so the comparison stays fair.
+          </p>
+        </div>
+
+        {/* --- Expert instructions --- */}
+        <div className="grid gap-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Expert instructions
+          </span>
+
+          {noExpertSteps ? (
+            <p className="rounded-md border border-dashed px-3 py-4 text-xs text-muted-foreground">
+              None of the selected tasks ship expert steps (a{" "}
+              <code className="font-mono">human_reference.json</code>), so only the baseline
+              (None) applies. Add expert steps to a task to enable this experiment.
+            </p>
+          ) : (
+            <>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {INSTRUCTION_MODE_CARDS.map((card) => {
+                  const active = mode === card.value
+                  return (
+                    <button
+                      key={card.value}
+                      type="button"
+                      onClick={() => setMode(card.value)}
+                      className={cn(
+                        "grid gap-0.5 rounded-md border p-3 text-left transition-colors",
+                        active ? "border-primary bg-accent/60" : "hover:border-primary/40",
+                      )}
+                    >
+                      <span className="flex items-center gap-2 text-sm font-medium">
+                        {active && <Check className="size-3.5 text-primary" />}
+                        {card.label}
+                        {card.value === "none" && (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                            default
+                          </Badge>
+                        )}
+                      </span>
+                      <span className="text-xs text-muted-foreground">{card.note}</span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Partial coverage: some selected tasks ship no expert steps. In any
+                  step mode the runner rejects the whole run for those tasks. */}
+              {tasksWithoutSteps.length > 0 && mode !== "none" && (
+                <Alert className="border-warn-ink/40 bg-warn-soft/60">
+                  <AlertTriangle className="size-4" />
+                  <AlertTitle>Some selected tasks have no expert steps</AlertTitle>
+                  <AlertDescription>
+                    {partialModeLabel} mode requires every selected task to ship expert steps.
+                    The runner rejects the whole run for tasks that don't:{" "}
+                    {tasksWithoutSteps.map((task) => task.id).join(", ")}. Remove them or switch
+                    to None.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Selected mode: the step multi-selector, pooled across tasks. */}
+              {mode === "select" && (
+                <div className="grid gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    Every chosen step must exist in each selected task. Steps below are pooled
+                    across your selected tasks; one marked{" "}
+                    <span className="text-warn-ink">in k/N</span> is missing from some, and the
+                    run is rejected for any task that lacks a chosen step.
+                  </p>
+                  {stepsLoading ? (
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="size-3.5 animate-spin" /> Loading expert steps…
+                    </p>
+                  ) : unionSteps.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      No expert steps found in the selected tasks.
+                    </p>
+                  ) : (
+                    <div className="grid gap-2">
+                      {unionSteps.map((step) => {
+                        const checked = selectedSteps.includes(step.step_id)
+                        const partial = stepTaskCount > 1 && step.inTasks < stepTaskCount
+                        return (
+                          <label
+                            key={step.step_id}
+                            className={cn(
+                              "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors",
+                              checked ? "border-primary bg-accent/60" : "hover:border-primary/40",
+                            )}
+                          >
+                            <Checkbox
+                              className="mt-0.5"
+                              checked={checked}
+                              onCheckedChange={(value) => toggleStep(step.step_id, value === true)}
+                            />
+                            <span className="grid min-w-0 gap-1">
+                              <span className="flex flex-wrap items-center gap-2">
+                                <code className="font-mono text-sm font-medium">
+                                  {step.step_id}
+                                </code>
+                                {step.step_type && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] uppercase tracking-wide text-muted-foreground"
+                                  >
+                                    {step.step_type}
+                                  </Badge>
+                                )}
+                                {stepTaskCount > 1 && (
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      "text-[10px]",
+                                      partial
+                                        ? "border-warn-ink/50 text-warn-ink"
+                                        : "text-muted-foreground",
+                                    )}
+                                  >
+                                    in {step.inTasks}/{stepTaskCount}
+                                  </Badge>
+                                )}
+                              </span>
+                              <span
+                                className="truncate text-xs text-muted-foreground"
+                                title={step.instruction}
+                              >
+                                {step.instruction || "—"}
+                              </span>
+                            </span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Ablation: nudge repeat >= 3 for a stable uplift signal. */}
+              {mode === "ablation" && (
+                <Alert>
+                  <Sparkles className="size-4" />
+                  <AlertTitle>Repeat 3+ recommended</AlertTitle>
+                  <AlertDescription className="flex flex-wrap items-center gap-2">
+                    <span>
+                      Ablation compares pass rates across variants; a few repeats smooth out
+                      per-run noise so the uplift report is trustworthy.
+                    </span>
+                    {repeat < 3 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setSharedField("repeat", 3)}
+                      >
+                        Set repeat to 3
+                      </Button>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 /* ---------- shared: executor skills ---------- */
 
 /* Skills and groups are kept separate in `shared`: checking a group injects the
@@ -1443,13 +1766,19 @@ function StepReview({
   tasksDir: string
   contenders: ContenderDraft[]
   shared: Partial<SharedConfig>
-  plan: { plans: ExperimentPlanItem[] | null; error: string | null }
+  plan: { plans: ExperimentPlanItem[] | null; estimate: ExecutionEstimate | null; error: string | null }
   judgeConflicts: number
   runtimeLabel: (runtime: string) => string
 }) {
   const repeat = Number(shared.repeat) || 1
-  const executions = taskCount * repeat * contenders.length
   const planSkills = plan.plans?.[0]?.executor_skills ?? []
+  // Prefer the backend's execution estimate (it accounts for the instruction
+  // sweep's variant expansion); fall back to the simple product until the plan
+  // preview returns.
+  const estimate = plan.estimate
+  const sweeps = estimate ? estimate.mode !== "none" : false
+  const perContender = estimate?.per_contender ?? taskCount * repeat
+  const totalExecutions = estimate?.total ?? perContender * contenders.length
   return (
     <div className="grid gap-4">
       <Card className="py-4">
@@ -1465,12 +1794,15 @@ function StepReview({
           </div>
           <div className="grid content-center justify-items-end gap-1 text-right">
             <span className="text-2xl font-semibold tabular-nums tracking-tight">
-              {taskCount} × {contenders.length}
+              {perContender} × {contenders.length}
             </span>
             <span className="text-xs text-muted-foreground">
-              tasks × agents{repeat > 1 ? ` × ${repeat} repeats` : ""} = {executions}{" "}
-              executions + judging
+              {sweeps ? "variant runs per agent" : "tasks per agent"} × agents ={" "}
+              {totalExecutions} executions + judging
             </span>
+            {estimate?.note && (
+              <span className="max-w-xs text-[11px] text-muted-foreground">{estimate.note}</span>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1489,6 +1821,30 @@ function StepReview({
           hint={`seed ${shared.seed ?? "123"} · batch ${shared.batch_size ?? 1} · repeat ${repeat}`}
         />
       </div>
+
+      {sweeps && estimate && (
+        <Card className="py-4">
+          <CardContent className="grid gap-2 px-4">
+            <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Instruction sweep
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="text-[11px] capitalize text-muted-foreground">
+                {estimate.mode}
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                {perContender} variant run{perContender === 1 ? "" : "s"} per agent
+                {(shared.instruction_steps?.length ?? 0) > 0
+                  ? ` · steps ${shared.instruction_steps?.join(", ")}`
+                  : ""}
+              </span>
+            </div>
+            {estimate.note && (
+              <span className="text-[11px] text-muted-foreground">{estimate.note}</span>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {planSkills.length > 0 && (
         <Card className="py-4">
