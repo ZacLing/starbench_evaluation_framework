@@ -24,6 +24,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..runner.codex_process import DEFAULT_DOCKER_IMAGES
 from ..runner.custom_runtime import load_custom_runtime
 from .data import SAFE_ID
 
@@ -31,8 +32,8 @@ DEFAULT_RUNTIMES_DIR = Path(__file__).resolve().parents[3] / "runtimes"
 
 PROTOCOL_CHOICES = ("openai", "anthropic", "gemini", "none")
 
-# Built-in runtimes mirror run_benchmark.py: BUILTIN_AGENTS for the choices,
-# backend_supports_docker() for the docker column.
+# Every built-in runtime executes in Docker isolation, each in its own image
+# (the runner resolves the image per runtime; see DEFAULT_DOCKER_IMAGES).
 BUILTIN_AGENTS: List[Dict[str, Any]] = [
     {
         "id": "claude",
@@ -40,6 +41,7 @@ BUILTIN_AGENTS: List[Dict[str, Any]] = [
         "note": "Anthropic's coding agent",
         "protocol": "anthropic",
         "docker_capable": True,
+        "docker_image": DEFAULT_DOCKER_IMAGES["claude"],
         "bin": "claude",
     },
     {
@@ -48,6 +50,7 @@ BUILTIN_AGENTS: List[Dict[str, Any]] = [
         "note": "OpenAI's coding agent",
         "protocol": "openai",
         "docker_capable": True,
+        "docker_image": DEFAULT_DOCKER_IMAGES["codex"],
         "bin": "codex",
     },
     {
@@ -55,7 +58,8 @@ BUILTIN_AGENTS: List[Dict[str, Any]] = [
         "label": "Gemini CLI",
         "note": "Google's coding agent",
         "protocol": "gemini",
-        "docker_capable": False,
+        "docker_capable": True,
+        "docker_image": DEFAULT_DOCKER_IMAGES["gemini"],
         "bin": "gemini",
     },
     {
@@ -63,7 +67,8 @@ BUILTIN_AGENTS: List[Dict[str, Any]] = [
         "label": "Grok Build",
         "note": "xAI's coding agent",
         "protocol": "xai",
-        "docker_capable": False,
+        "docker_capable": True,
+        "docker_image": DEFAULT_DOCKER_IMAGES["grok"],
         "bin": "grok",
     },
     {
@@ -71,7 +76,8 @@ BUILTIN_AGENTS: List[Dict[str, Any]] = [
         "label": "OpenCode",
         "note": "Open-source agent for OpenAI-compatible models",
         "protocol": "openai",
-        "docker_capable": False,
+        "docker_capable": True,
+        "docker_image": DEFAULT_DOCKER_IMAGES["opencode"],
         "bin": "opencode",
     },
 ]
@@ -107,6 +113,7 @@ def list_agents(runtimes_dir: Path) -> Dict[str, Any]:
             "note": agent["note"],
             "protocol": agent["protocol"],
             "docker_capable": agent["docker_capable"],
+            "docker_image": agent["docker_image"],
             "builtin": True,
             "cli": _cli_probe(agent["bin"]),
         }

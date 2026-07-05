@@ -93,10 +93,12 @@ single-operator tool; do not expose it to a network.
   agent) and launch. The judge is configured runtime-first — any built-in or
   custom runtime can judge — and the console warns when it shares a model with
   an agent under test, since self-grading biases scores. Docker isolation
-  covers Codex, Claude Code, and custom runtimes with a Docker image; the rest
-  run locally and are labeled honestly. Because the executor and the judge
-  share one process environment per run, the console rejects plans where an
-  agent's injected endpoint variables would silently reroute the judge.
+  covers every built-in runtime — each in its own image, resolved per runtime
+  (`make docker-images`) — and custom runtimes with a Docker image in their
+  spec; the rest run locally and are labeled honestly. Because the executor
+  and the judge share one process environment per run, the console rejects
+  plans where an agent's injected endpoint variables would silently reroute
+  the judge.
 
 ## Launching runs
 

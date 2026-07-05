@@ -587,19 +587,22 @@ class ExperimentTest(unittest.TestCase):
             self.assertIn("--seed 7", joined)
             self.assertIn("--evaluator-auth-mode global", joined)
 
-    def test_docker_backend_follows_runtime_capability(self) -> None:
+    def test_docker_backend_uses_one_image_per_runtime(self) -> None:
         payload = self.experiment_payload()
         payload["contenders"].append(
             {"label": "Gemini", "agent": "gemini", "model": "gemini-2.5-pro", "auth_mode": "env"}
         )
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         by_agent = {item["agent"]: item for item in plan["plans"]}
-        self.assertEqual(by_agent["codex"]["backend"], "docker")
-        self.assertIn("--docker-image", " ".join(by_agent["codex"]["argv"]))
-        self.assertEqual(by_agent["claude"]["backend"], "docker")
-        self.assertFalse(by_agent["claude"]["backend_downgraded"])
-        self.assertEqual(by_agent["gemini"]["backend"], "local")
-        self.assertTrue(by_agent["gemini"]["backend_downgraded"])
+        for agent, image in (
+            ("codex", "starbench-codex:latest"),
+            ("claude", "starbench-claude-code:latest"),
+            ("gemini", "starbench-gemini-cli:latest"),
+        ):
+            self.assertEqual(by_agent[agent]["backend"], "docker")
+            self.assertFalse(by_agent[agent]["backend_downgraded"])
+            self.assertEqual(by_agent[agent]["docker_image"], image)
+            self.assertIn(f"--docker-image {image}", " ".join(by_agent[agent]["argv"]))
 
     def test_record_list_and_detail(self) -> None:
         payload = self.experiment_payload()
@@ -1055,9 +1058,10 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(
             sorted(by_id), ["claude", "codex", "gemini", "grok", "opencode"]
         )
-        self.assertTrue(by_id["codex"]["docker_capable"])
-        self.assertTrue(by_id["claude"]["docker_capable"])
-        self.assertFalse(by_id["gemini"]["docker_capable"])
+        for agent_id, meta in by_id.items():
+            self.assertTrue(meta["docker_capable"], agent_id)
+            self.assertTrue(meta["docker_image"].startswith("starbench-"), agent_id)
+        self.assertEqual(by_id["gemini"]["docker_image"], "starbench-gemini-cli:latest")
         self.assertIn("bin", by_id["codex"]["cli"])
 
     def test_save_list_delete_roundtrip(self) -> None:

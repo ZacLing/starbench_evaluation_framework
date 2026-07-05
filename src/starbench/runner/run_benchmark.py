@@ -28,10 +28,15 @@ from .codex_process import (
     prepare_grok_env,
     prepare_opencode_env,
     prepare_auth_home,
+    opencode_docker_export_env,
     run_claude_process_in_docker,
     run_codex_process,
     run_codex_process_in_docker,
     run_custom_process_in_docker,
+    run_gemini_process_in_docker,
+    run_grok_process_in_docker,
+    run_opencode_process_in_docker,
+    DEFAULT_DOCKER_IMAGES,
     write_claude_final_output,
     write_claude_stream_final_output,
     write_headless_final_output,
@@ -490,8 +495,6 @@ async def run_executor(
 ) -> Dict[str, Any]:
     task = task_run.task
     logs = paths["logs"]
-    if agent in {"opencode", "grok", "gemini"} and executor_backend != "local":
-        raise ValueError(f"{agent} executor currently supports --executor-backend local")
     if agent.startswith("custom:") and executor_backend != "local":
         if custom_spec is None or custom_spec.docker_image is None:
             raise ValueError(f"{agent} executor requires a docker section for --executor-backend docker")
@@ -604,32 +607,50 @@ async def run_executor(
                 )
     elif agent == "opencode":
         model_name = opencode_model_name(model, opencode_provider)
-        command = build_opencode_run_command(
-            opencode_bin,
-            cwd=paths["workspace"],
-            model=model_name,
-            agent="build",
+        opencode_prompt = build_executor_prompt(
+            task_run,
+            executor_skill_location=executor_skill_prompt_location(agent),
         )
-        env = prepare_opencode_env(
-            paths["codex_home"] / "opencode_executor",
-            auth_mode,
-            provider=opencode_provider,
-            base_url=opencode_base_url,
-            model=model_name,
-            api_key_env=opencode_api_key_env,
-        )
-        result = await run_codex_process(
-            command,
-            cwd=paths["workspace"],
-            prompt=build_executor_prompt(
-                task_run,
-                executor_skill_location=executor_skill_prompt_location(agent),
-            ),
-            env=env,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            timeout_seconds=task.timeout_seconds,
-        )
+        if executor_backend == "docker":
+            result = await run_opencode_process_in_docker(
+                opencode_bin=opencode_bin,
+                docker_bin=docker_bin,
+                docker_image=docker_image,
+                workspace=paths["workspace"],
+                prompt=opencode_prompt,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+                model=model_name,
+                provider=opencode_provider,
+                base_url=opencode_base_url,
+                api_key_env=opencode_api_key_env,
+            )
+            env = opencode_docker_export_env(paths["workspace"])
+        else:
+            command = build_opencode_run_command(
+                opencode_bin,
+                cwd=paths["workspace"],
+                model=model_name,
+                agent="build",
+            )
+            env = prepare_opencode_env(
+                paths["codex_home"] / "opencode_executor",
+                auth_mode,
+                provider=opencode_provider,
+                base_url=opencode_base_url,
+                model=model_name,
+                api_key_env=opencode_api_key_env,
+            )
+            result = await run_codex_process(
+                command,
+                cwd=paths["workspace"],
+                prompt=opencode_prompt,
+                env=env,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+            )
         if result.status == "success":
             try:
                 append_opencode_compat_events(logs / "events.jsonl")
@@ -657,24 +678,37 @@ async def run_executor(
             task_run,
             executor_skill_location=executor_skill_prompt_location(agent),
         )
-        command = build_grok_headless_command(
-            grok_bin,
-            cwd=paths["workspace"],
-            prompt=prompt,
-            model=model,
-            permission_mode="bypassPermissions",
-            sandbox="workspace",
-        )
-        env = prepare_grok_env(paths["codex_home"] / "grok_executor", auth_mode)
-        result = await run_codex_process(
-            command,
-            cwd=paths["workspace"],
-            prompt="",
-            env=env,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            timeout_seconds=task.timeout_seconds,
-        )
+        if executor_backend == "docker":
+            result = await run_grok_process_in_docker(
+                grok_bin=grok_bin,
+                docker_bin=docker_bin,
+                docker_image=docker_image,
+                workspace=paths["workspace"],
+                prompt=prompt,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+                model=model,
+            )
+        else:
+            command = build_grok_headless_command(
+                grok_bin,
+                cwd=paths["workspace"],
+                prompt=prompt,
+                model=model,
+                permission_mode="bypassPermissions",
+                sandbox="workspace",
+            )
+            env = prepare_grok_env(paths["codex_home"] / "grok_executor", auth_mode)
+            result = await run_codex_process(
+                command,
+                cwd=paths["workspace"],
+                prompt="",
+                env=env,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+            )
         if result.status == "success":
             try:
                 write_headless_final_output(logs / "events.jsonl", logs / "final.md")
@@ -693,24 +727,38 @@ async def run_executor(
                     f"\nGrok output post-processing failed: {type(exc).__name__}: {exc}\n"
                 )
     elif agent == "gemini":
-        command = build_gemini_headless_command(
-            gemini_bin,
-            model=model,
-            approval_mode="yolo",
+        gemini_prompt = build_executor_prompt(
+            task_run,
+            executor_skill_location=executor_skill_prompt_location(agent),
         )
-        env = prepare_gemini_env(paths["codex_home"] / "gemini_executor", auth_mode)
-        result = await run_codex_process(
-            command,
-            cwd=paths["workspace"],
-            prompt=build_executor_prompt(
-                task_run,
-                executor_skill_location=executor_skill_prompt_location(agent),
-            ),
-            env=env,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            timeout_seconds=task.timeout_seconds,
-        )
+        if executor_backend == "docker":
+            result = await run_gemini_process_in_docker(
+                gemini_bin=gemini_bin,
+                docker_bin=docker_bin,
+                docker_image=docker_image,
+                workspace=paths["workspace"],
+                prompt=gemini_prompt,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+                model=model,
+            )
+        else:
+            command = build_gemini_headless_command(
+                gemini_bin,
+                model=model,
+                approval_mode="yolo",
+            )
+            env = prepare_gemini_env(paths["codex_home"] / "gemini_executor", auth_mode)
+            result = await run_codex_process(
+                command,
+                cwd=paths["workspace"],
+                prompt=gemini_prompt,
+                env=env,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+            )
         if result.status == "success":
             try:
                 write_headless_final_output(logs / "events.jsonl", logs / "final.md")
@@ -1910,8 +1958,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--docker-bin", default="docker", help="Docker executable or shell-like command prefix.")
     parser.add_argument(
         "--docker-image",
-        default="starbench-codex:latest",
-        help="Image used when --executor-backend docker is selected.",
+        default=None,
+        help=(
+            "Image used when --executor-backend docker is selected. Defaults to the "
+            "runtime's own image (starbench-codex:latest, starbench-claude-code:latest, "
+            "starbench-gemini-cli:latest, starbench-grok:latest, starbench-opencode:latest); "
+            "custom runtimes take theirs from the spec's docker section."
+        ),
     )
     parser.add_argument("--evaluator-timeout-seconds", type=int, default=900)
     parser.add_argument(
@@ -1985,7 +2038,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.executor_runtime_spec = resolve_runtime_spec(args.executor_agent, "--executor-agent")
     args.evaluator_runtime_spec = resolve_runtime_spec(args.evaluator_agent, "--evaluator-agent")
     def backend_supports_docker(agent: str, spec: CustomRuntimeSpec | None) -> bool:
-        if agent in {"codex", "claude"}:
+        if agent in BUILTIN_AGENTS:
             return True
         return agent.startswith("custom:") and spec is not None and spec.docker_image is not None
 
@@ -1996,8 +2049,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ):
         parser.error(
             f"--executor-agent {args.executor_agent} currently requires --executor-backend local; "
-            "Docker isolation supports codex or a custom runtime with a docker section."
+            "Docker isolation needs a docker section in the custom runtime spec."
         )
+    if args.docker_image is None:
+        args.docker_image = DEFAULT_DOCKER_IMAGES.get(args.executor_agent, "")
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
     args.tasks_dir = args.tasks_dir.resolve()

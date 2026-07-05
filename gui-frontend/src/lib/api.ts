@@ -319,6 +319,7 @@ export interface BuiltinRuntime {
   note: string
   protocol: RuntimeProtocol
   docker_capable: boolean
+  docker_image: string
   builtin: true
   cli: RuntimeCli
 }
@@ -412,6 +413,7 @@ export interface ExperimentPlanItem {
   run_id: string
   backend: string
   backend_downgraded: boolean
+  docker_image?: string
   argv: string[]
 }
 

@@ -260,6 +260,35 @@ def _opencode_model_id(model: str | None) -> str | None:
     return model.split("/", 1)[1] if "/" in model else model
 
 
+def _opencode_inline_config_content(
+    provider: str | None,
+    base_url: str | None,
+    model: str | None,
+    api_key_env: str | None,
+) -> str | None:
+    if not (provider and base_url):
+        return None
+    provider_config: Dict[str, Any] = {
+        "npm": "@ai-sdk/openai-compatible",
+        "name": provider,
+        "options": {"baseURL": base_url},
+        "models": {},
+    }
+    if api_key_env:
+        provider_config["options"]["apiKey"] = f"{{env:{api_key_env}}}"
+    model_id = _opencode_model_id(model)
+    if model_id:
+        provider_config["models"][model_id] = {
+            "name": model_id,
+            "limit": {"context": 128000, "output": 8192},
+        }
+    inline_config = {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {provider: provider_config},
+    }
+    return json.dumps(inline_config, sort_keys=True)
+
+
 def prepare_opencode_env(
     opencode_home: Path,
     auth_mode: str,
@@ -278,26 +307,9 @@ def prepare_opencode_env(
     env.setdefault("OPENCODE_DISABLE_AUTOUPDATE", "1")
     env.setdefault("OPENCODE_DISABLE_PRUNE", "1")
 
-    if provider and base_url:
-        provider_config: Dict[str, Any] = {
-            "npm": "@ai-sdk/openai-compatible",
-            "name": provider,
-            "options": {"baseURL": base_url},
-            "models": {},
-        }
-        if api_key_env:
-            provider_config["options"]["apiKey"] = f"{{env:{api_key_env}}}"
-        model_id = _opencode_model_id(model)
-        if model_id:
-            provider_config["models"][model_id] = {
-                "name": model_id,
-                "limit": {"context": 128000, "output": 8192},
-            }
-        inline_config = {
-            "$schema": "https://opencode.ai/config.json",
-            "provider": {provider: provider_config},
-        }
-        env["OPENCODE_CONFIG_CONTENT"] = json.dumps(inline_config, sort_keys=True)
+    config_content = _opencode_inline_config_content(provider, base_url, model, api_key_env)
+    if config_content is not None:
+        env["OPENCODE_CONFIG_CONTENT"] = config_content
     return env
 
 
@@ -1054,6 +1066,18 @@ async def run_codex_process_in_docker(
 
 
 CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+GEMINI_DOCKER_ENV_WHITELIST = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"]
+GROK_DOCKER_ENV_WHITELIST = ["XAI_API_KEY"]
+OPENCODE_DOCKER_ENV_WHITELIST = ["OPENAI_API_KEY", "XAI_API_KEY"]
+
+# One image per runtime: each contains exactly its own CLI (see docker/*.Dockerfile).
+DEFAULT_DOCKER_IMAGES = {
+    "codex": "starbench-codex:latest",
+    "claude": "starbench-claude-code:latest",
+    "gemini": "starbench-gemini-cli:latest",
+    "grok": "starbench-grok:latest",
+    "opencode": "starbench-opencode:latest",
+}
 
 
 def build_claude_docker_command(
@@ -1135,6 +1159,245 @@ async def run_claude_process_in_docker(
             check=False,
             capture_output=True,
         )
+    return result
+
+
+def _kill_container_on_timeout(result: ProcessResult, docker_bin: str, container_name: str) -> None:
+    if result.timed_out:
+        subprocess.run(
+            split_command(docker_bin) + ["kill", container_name],
+            check=False,
+            capture_output=True,
+        )
+
+
+def build_gemini_docker_command(
+    *,
+    gemini_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    model: str | None,
+    auth_env: Dict[str, str],
+    container_name: str | None = None,
+) -> List[str]:
+    inner_command = build_gemini_headless_command(gemini_bin, model=model, approval_mode="yolo")
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=list(GEMINI_DOCKER_ENV_WHITELIST),
+        auth_env=auth_env,
+        container_name=container_name,
+        # Gemini CLI keeps its state under $HOME/.gemini; point HOME at a
+        # writable dir inside the workspace mount (the rootfs is read-only).
+        extra_env={"HOME": "/workspace/.runner/gemini_home"},
+    )
+
+
+async def run_gemini_process_in_docker(
+    *,
+    gemini_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    prompt: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    model: str | None,
+) -> ProcessResult:
+    (workspace / ".runner" / "gemini_home").mkdir(parents=True, exist_ok=True)
+    auth_env = os.environ.copy()
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
+    command = build_gemini_docker_command(
+        gemini_bin=gemini_bin,
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        model=model,
+        auth_env=auth_env,
+        container_name=container_name,
+    )
+    result = await run_codex_process(
+        command,
+        cwd=workspace,
+        prompt=prompt,
+        env=auth_env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+    _kill_container_on_timeout(result, docker_bin, container_name)
+    return result
+
+
+def build_grok_docker_command(
+    *,
+    grok_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    prompt: str,
+    model: str | None,
+    auth_env: Dict[str, str],
+    container_name: str | None = None,
+) -> List[str]:
+    inner_command = build_grok_headless_command(
+        grok_bin,
+        cwd=Path("/workspace"),
+        prompt=prompt,
+        model=model,
+        permission_mode="bypassPermissions",
+        sandbox="workspace",
+    )
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=list(GROK_DOCKER_ENV_WHITELIST),
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_env={"HOME": "/workspace/.runner/grok_home"},
+    )
+
+
+async def run_grok_process_in_docker(
+    *,
+    grok_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    prompt: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    model: str | None,
+) -> ProcessResult:
+    (workspace / ".runner" / "grok_home").mkdir(parents=True, exist_ok=True)
+    auth_env = os.environ.copy()
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
+    command = build_grok_docker_command(
+        grok_bin=grok_bin,
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        prompt=prompt,
+        model=model,
+        auth_env=auth_env,
+        container_name=container_name,
+    )
+    # Grok takes the prompt on the command line; stdin stays empty.
+    result = await run_codex_process(
+        command,
+        cwd=workspace,
+        prompt="",
+        env=auth_env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+    _kill_container_on_timeout(result, docker_bin, container_name)
+    return result
+
+
+def build_opencode_docker_command(
+    *,
+    opencode_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    model: str | None,
+    auth_env: Dict[str, str],
+    provider: str | None = None,
+    base_url: str | None = None,
+    api_key_env: str | None = None,
+    container_name: str | None = None,
+) -> List[str]:
+    inner_command = build_opencode_run_command(
+        opencode_bin, cwd=Path("/workspace"), model=model, agent="build"
+    )
+    extra_env = {
+        # OpenCode stores config under $HOME/.config and sessions under
+        # $HOME/.local/share; keep both inside the workspace mount so the
+        # host can read the session afterwards.
+        "HOME": "/workspace/.runner/opencode_home",
+        "OPENCODE_DISABLE_AUTOUPDATE": "1",
+        "OPENCODE_DISABLE_PRUNE": "1",
+    }
+    config_content = _opencode_inline_config_content(provider, base_url, model, api_key_env)
+    if config_content is not None:
+        extra_env["OPENCODE_CONFIG_CONTENT"] = config_content
+    env_whitelist = list(OPENCODE_DOCKER_ENV_WHITELIST)
+    if api_key_env and api_key_env not in env_whitelist:
+        env_whitelist.append(api_key_env)
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=env_whitelist,
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_env=extra_env,
+    )
+
+
+def opencode_docker_export_env(workspace: Path) -> Dict[str, str]:
+    """Environment for running `opencode export` on the host against the
+    session state a containerized run left inside the workspace mount."""
+    env = os.environ.copy()
+    home = workspace / ".runner" / "opencode_home"
+    env["HOME"] = str(home)
+    env["XDG_CONFIG_HOME"] = str(home / ".config")
+    env["XDG_DATA_HOME"] = str(home / ".local" / "share")
+    env.setdefault("OPENCODE_DISABLE_AUTOUPDATE", "1")
+    env.setdefault("OPENCODE_DISABLE_PRUNE", "1")
+    return env
+
+
+async def run_opencode_process_in_docker(
+    *,
+    opencode_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    prompt: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    model: str | None,
+    provider: str | None = None,
+    base_url: str | None = None,
+    api_key_env: str | None = None,
+) -> ProcessResult:
+    (workspace / ".runner" / "opencode_home").mkdir(parents=True, exist_ok=True)
+    auth_env = os.environ.copy()
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
+    command = build_opencode_docker_command(
+        opencode_bin=opencode_bin,
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        model=model,
+        auth_env=auth_env,
+        provider=provider,
+        base_url=base_url,
+        api_key_env=api_key_env,
+        container_name=container_name,
+    )
+    result = await run_codex_process(
+        command,
+        cwd=workspace,
+        prompt=prompt,
+        env=auth_env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+    _kill_container_on_timeout(result, docker_bin, container_name)
     return result
 
 

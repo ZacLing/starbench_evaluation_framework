@@ -19,13 +19,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..runner.codex_process import DEFAULT_DOCKER_IMAGES
 from .agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
 from .data import SAFE_ID, _read_json, run_overview
 from .launcher import LaunchError, build_run_argv
 
-# Docker isolation is supported for codex, claude, and custom runtimes that
-# declare a docker section in their spec (run_benchmark.py rejects the rest).
-DOCKER_CAPABLE_AGENTS = {"codex", "claude"}
+# Every built-in runtime runs in Docker isolation (each in its own image);
+# custom runtimes need a docker section in their spec.
+DOCKER_CAPABLE_AGENTS = {"codex", "claude", "gemini", "grok", "opencode"}
 
 # Environment variables each built-in judge reads for routing/credentials.
 # The environment is process-wide per run: a contender that injects one of
@@ -50,7 +51,6 @@ BUILTIN_PROFILE = {
         "judge_mode": "single",
         "evaluator_timeout_seconds": 900,
         "executor_backend": "local",
-        "docker_image": "starbench-codex:latest",
         "executor_auth_mode": "env",
         "seed": 123,
         "batch_size": 1,
@@ -263,7 +263,11 @@ def plan_experiment(
             "executor_agent": agent,
             "executor_model": str(contender.get("model") or "").strip(),
             "executor_backend": effective_backend,
-            "docker_image": str(shared.get("docker_image") or "").strip(),
+            # Each runtime gets its own image; custom runtimes carry theirs
+            # in the spec, so no --docker-image is passed for them.
+            "docker_image": (
+                DEFAULT_DOCKER_IMAGES.get(agent, "") if effective_backend == "docker" else ""
+            ),
             "auth_mode": str(contender.get("auth_mode") or "env"),
             "claude_thinking_effort": str(contender.get("thinking_effort") or "none"),
             "evaluator_agent": str(shared.get("evaluator_agent") or "codex"),
@@ -307,6 +311,13 @@ def plan_experiment(
                 )
             merged_env[key] = entry
 
+        docker_image = ""
+        if effective_backend == "docker":
+            docker_image = (
+                str(custom_meta.get("docker_image") or "")
+                if custom_meta
+                else DEFAULT_DOCKER_IMAGES.get(agent, "")
+            )
         plans.append(
             {
                 "label": label,
@@ -316,6 +327,7 @@ def plan_experiment(
                 "run_id": run_id,
                 "backend": effective_backend,
                 "backend_downgraded": backend == "docker" and effective_backend == "local",
+                "docker_image": docker_image,
                 "env_spec": merged_env,
                 "env_keys": sorted(merged_env.keys()),
                 "argv": argv,

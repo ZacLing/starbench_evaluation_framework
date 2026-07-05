@@ -1,20 +1,37 @@
 # Docker Isolation
 
-Starbench uses Docker as the default executor backend for the Codex runtime. Docker executor support now covers:
+Starbench can execute every runtime inside Docker. Each runtime has its own
+image (one CLI per image), and `--docker-image` defaults to the runtime's own
+tag, so `--executor-backend docker` is all you need:
 
-- **Codex** (default backend `docker`): isolated `CODEX_HOME` mounted at `/codex-home`; env whitelist `CODEX_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`.
-- **Claude Code** (`--executor-agent claude --executor-backend docker --docker-image starbench-claude-code:latest`): config dir isolated at `/workspace/.runner/claude_home` inside the workspace mount; env whitelist `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` (use `--auth-mode env`).
+- **Codex** (default backend `docker`, image `starbench-codex:latest`): isolated `CODEX_HOME` mounted at `/codex-home`; env whitelist `CODEX_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL`.
+- **Claude Code** (image `starbench-claude-code:latest`): config dir isolated at `/workspace/.runner/claude_home` inside the workspace mount; env whitelist `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` (use `--auth-mode env`).
+- **Gemini CLI** (image `starbench-gemini-cli:latest`): `HOME` pointed at `/workspace/.runner/gemini_home`; env whitelist `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GEMINI_BASE_URL`.
+- **Grok Build** (image `starbench-grok:latest`): `HOME` pointed at `/workspace/.runner/grok_home`; env whitelist `XAI_API_KEY`. The prompt travels on the container argv (grok takes `-p <prompt>`).
+- **OpenCode** (image `starbench-opencode:latest`): `HOME` pointed at `/workspace/.runner/opencode_home` so config *and* session storage stay inside the workspace mount — the host reads the session afterwards for the final-message export fallback. Gateway configuration is injected via `OPENCODE_CONFIG_CONTENT`; env whitelist `OPENAI_API_KEY`, `XAI_API_KEY`, plus the gateway's `--opencode-api-key-env` when set.
 - **Custom runtimes** with a `docker` section in their `runtimes/<id>.json` (image + `env_passthrough`).
 
-OpenCode, Grok Build, and Gemini CLI executors remain host-local (`--executor-backend local`, which is their automatic default).
+All executor backends default to `local` except Codex; pass
+`--executor-backend docker` explicitly for the others.
 
 On executor timeout, Starbench kills the container itself (killing only the `docker run` client would leave the container running and still writing into the mounted workspace).
 
 ## Build
 
 ```bash
+make docker-images   # builds all five runtime images
+# or individually:
 docker build -t starbench-codex:latest -f docker/codex-bench.Dockerfile .
+docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
+docker build -t starbench-gemini-cli:latest -f docker/gemini-cli.Dockerfile .
+docker build -t starbench-grok:latest -f docker/grok.Dockerfile .
+docker build -t starbench-opencode:latest -f docker/opencode.Dockerfile .
 ```
+
+Grok Build installs via xAI's shell installer rather than npm; if a build of
+`docker/grok.Dockerfile` fails or `grok` is not found on PATH inside the
+container, check the installer's target directory and adjust the Dockerfile's
+`ENV PATH` line.
 
 ## Runtime Shape
 

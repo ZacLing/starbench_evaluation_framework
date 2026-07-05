@@ -227,9 +227,9 @@ export default function NewRun() {
   )
   const dockerCapable = useCallback(
     (runtime: string) =>
-      runtime === "codex" ||
-      runtime === "claude" ||
-      Boolean(customByRuntime[runtime]?.docker_capable),
+      runtime.startsWith("custom:")
+        ? Boolean(customByRuntime[runtime]?.docker_capable)
+        : true,
     [customByRuntime],
   )
 
@@ -1202,16 +1202,6 @@ function StepShared({
                 </SelectContent>
               </Select>
             </div>
-            {String(shared.executor_backend) === "docker" && (
-              <div className="grid gap-1.5">
-                <Label>Docker image</Label>
-                <Input
-                  className="font-mono"
-                  value={String(shared.docker_image ?? "")}
-                  onChange={(event) => setSharedField("docker_image", event.target.value)}
-                />
-              </div>
-            )}
             <div className="grid gap-1.5">
               <Label>Seed</Label>
               <Input
@@ -1242,13 +1232,21 @@ function StepShared({
               />
             </div>
           </div>
+          {String(shared.executor_backend) === "docker" && (
+            <p className="text-xs text-muted-foreground">
+              Each agent runs in its runtime's own container image
+              (<code className="font-mono">starbench-*</code>; custom runtimes use the image
+              from their spec). Build the images once with{" "}
+              <code className="font-mono">make docker-images</code>.
+            </p>
+          )}
           {String(shared.executor_backend) === "docker" && localRuntimeNames.length > 0 && (
             <Alert className="border-warn-ink/40 bg-warn-soft/60">
               <AlertTriangle className="size-4" />
               <AlertTitle>Some agents will run without Docker</AlertTitle>
               <AlertDescription>
-                Docker isolation covers Codex, Claude Code, and custom runtimes with a Docker
-                image. These agents run directly on this machine:{" "}
+                Docker isolation covers every built-in runtime and custom runtimes with a
+                Docker image in their spec. These agents run directly on this machine:{" "}
                 {localRuntimeNames.join(", ")}.
               </AlertDescription>
             </Alert>

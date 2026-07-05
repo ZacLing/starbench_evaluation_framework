@@ -946,6 +946,102 @@ class CustomRuntimeSpecTests(unittest.TestCase):
                      "--executor-agent", "custom:plain", "--executor-backend", "docker"]
                 )
 
+    def test_parse_args_allows_docker_for_every_builtin_and_picks_its_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            expected = {
+                "codex": "starbench-codex:latest",
+                "claude": "starbench-claude-code:latest",
+                "gemini": "starbench-gemini-cli:latest",
+                "grok": "starbench-grok:latest",
+                "opencode": "starbench-opencode:latest",
+            }
+            for agent, image in expected.items():
+                args = parse_args(
+                    ["--tasks-dir", tmp, "--runs-dir", tmp,
+                     "--executor-agent", agent, "--executor-backend", "docker"]
+                )
+                self.assertEqual(args.executor_backend, "docker")
+                self.assertEqual(args.docker_image, image)
+            args = parse_args(
+                ["--tasks-dir", tmp, "--runs-dir", tmp,
+                 "--executor-agent", "gemini", "--executor-backend", "docker",
+                 "--docker-image", "my-gemini:dev"]
+            )
+            self.assertEqual(args.docker_image, "my-gemini:dev")
+
+    def test_gemini_docker_command_shape(self) -> None:
+        from starbench.runner.codex_process import build_gemini_docker_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            command = build_gemini_docker_command(
+                gemini_bin="gemini",
+                docker_bin="docker",
+                docker_image="starbench-gemini-cli:latest",
+                workspace=Path(tmp),
+                model="gemini-2.5-pro",
+                auth_env={"GEMINI_API_KEY": "x"},
+                container_name="starbench-g1",
+            )
+            self.assertIn("starbench-gemini-cli:latest", command)
+            self.assertIn("HOME=/workspace/.runner/gemini_home", command)
+            self.assertIn("GEMINI_API_KEY", command)
+            self.assertIn("--yolo", command)
+            self.assertIn("--read-only", command)
+
+    def test_grok_docker_command_runs_in_container_cwd(self) -> None:
+        from starbench.runner.codex_process import build_grok_docker_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            command = build_grok_docker_command(
+                grok_bin="grok",
+                docker_bin="docker",
+                docker_image="starbench-grok:latest",
+                workspace=Path(tmp),
+                prompt="fix the bug",
+                model="grok-build-0.1",
+                auth_env={"XAI_API_KEY": "x"},
+                container_name="starbench-k1",
+            )
+            cwd_index = command.index("--cwd")
+            self.assertEqual(command[cwd_index + 1], "/workspace")
+            self.assertIn("HOME=/workspace/.runner/grok_home", command)
+            self.assertIn("XAI_API_KEY", command)
+            self.assertEqual(command[-2:], ["-p", "fix the bug"])
+
+    def test_opencode_docker_command_carries_inline_gateway_config(self) -> None:
+        from starbench.runner.codex_process import build_opencode_docker_command
+
+        with tempfile.TemporaryDirectory() as tmp:
+            command = build_opencode_docker_command(
+                opencode_bin="opencode",
+                docker_bin="docker",
+                docker_image="starbench-opencode:latest",
+                workspace=Path(tmp),
+                model="openrouter/qwen3-coder",
+                auth_env={"OPENROUTER_API_KEY": "x"},
+                provider="openrouter",
+                base_url="https://openrouter.ai/api/v1",
+                api_key_env="OPENROUTER_API_KEY",
+                container_name="starbench-o1",
+            )
+            dir_index = command.index("--dir")
+            self.assertEqual(command[dir_index + 1], "/workspace")
+            self.assertIn("HOME=/workspace/.runner/opencode_home", command)
+            self.assertIn("OPENROUTER_API_KEY", command)
+            config_entry = next(
+                item for item in command if item.startswith("OPENCODE_CONFIG_CONTENT=")
+            )
+            self.assertIn("https://openrouter.ai/api/v1", config_entry)
+            self.assertIn("{env:OPENROUTER_API_KEY}", config_entry)
+
+    def test_opencode_docker_export_env_points_at_workspace_home(self) -> None:
+        from starbench.runner.codex_process import opencode_docker_export_env
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env = opencode_docker_export_env(Path(tmp))
+            self.assertEqual(env["HOME"], str(Path(tmp) / ".runner" / "opencode_home"))
+            self.assertTrue(env["XDG_DATA_HOME"].endswith("opencode_home/.local/share"))
+
     def test_load_custom_runtime_rejects_bad_configs(self) -> None:
         from starbench.runner.custom_runtime import load_custom_runtime
 
@@ -1232,19 +1328,20 @@ class RegressionFixTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(args.executor_backend, "docker")
-            with self.assertRaises(SystemExit):
-                parse_args(
-                    [
-                        "--tasks-dir",
-                        tmp,
-                        "--runs-dir",
-                        tmp,
-                        "--executor-agent",
-                        "grok",
-                        "--executor-backend",
-                        "docker",
-                    ]
-                )
+            args = parse_args(
+                [
+                    "--tasks-dir",
+                    tmp,
+                    "--runs-dir",
+                    tmp,
+                    "--executor-agent",
+                    "grok",
+                    "--executor-backend",
+                    "docker",
+                ]
+            )
+            self.assertEqual(args.executor_backend, "docker")
+            self.assertEqual(args.docker_image, "starbench-grok:latest")
 
     def test_claude_docker_command_isolates_config_dir_in_workspace(self) -> None:
         from starbench.runner.codex_process import build_claude_docker_command

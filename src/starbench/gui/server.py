@@ -241,8 +241,13 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         docker_image = first("docker_image")
         executor_meta = self._custom_meta(executor_agent)
         evaluator_meta = self._custom_meta(evaluator_agent)
-        if executor_meta and first("executor_backend", "local") == "docker":
-            docker_image = executor_meta.get("docker_image") or ""
+        if first("executor_backend", "local") == "docker":
+            if executor_meta:
+                docker_image = executor_meta.get("docker_image") or ""
+            elif not docker_image:
+                from ..runner.codex_process import DEFAULT_DOCKER_IMAGES
+
+                docker_image = DEFAULT_DOCKER_IMAGES.get(executor_agent, "")
         return library.preflight(
             executor_agent=executor_agent,
             evaluator_agent=evaluator_agent,

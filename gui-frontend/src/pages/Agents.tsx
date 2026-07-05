@@ -232,7 +232,7 @@ function BuiltinCard({
             built-in
           </Badge>
           {agent.docker_capable && (
-            <Badge variant="outline" className="gap-1 text-[11px]">
+            <Badge variant="outline" className="gap-1 text-[11px]" title={agent.docker_image}>
               <Container className="size-3" /> Docker
             </Badge>
           )}
