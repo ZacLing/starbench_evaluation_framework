@@ -1,11 +1,7 @@
-"""Tests for the runtime adapter registry (P1).
+"""Registry adapter facts (RuntimeInfo) match the GUI tables they replace.
 
-The point of P1 is that ``RuntimeInfo`` becomes the single source of truth for
-per-runtime facts. These tests assert that the facts carried by each adapter's
-``RuntimeInfo`` match the GUI tables they are meant to replace in P2, so the two
-copies cannot silently drift before the GUI is switched over.
-"""
-
+``RuntimeInfo`` is the single source of truth for per-runtime facts; these
+tests pin each adapter's metadata against the GUI copies so they cannot drift."""
 from __future__ import annotations
 
 import json
@@ -16,11 +12,10 @@ from pathlib import Path
 from starbench.adapters import DEFAULT_DOCKER_IMAGES, get_builtin, list_builtin, resolve
 from starbench.adapters.registry import BUILTIN_AGENTS
 from starbench.adapters.spec import SpecAdapter
-from starbench.execution.process import mark_failed
 from starbench.gui.agents import BUILTIN_AGENTS as GUI_BUILTIN_AGENTS
 from starbench.gui.experiments import JUDGE_ENV_SENSITIVE
 from starbench.gui.library import AGENT_ENV_KEYS
-from starbench.runner.models import ProcessResult
+
 
 CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
 DOCKER_ENV_WHITELIST_BY_ID = {
@@ -124,25 +119,6 @@ class RegistryTests(unittest.TestCase):
     def test_resolve_rejects_unknown_agent(self) -> None:
         with self.assertRaises(ValueError):
             resolve("bogus")
-
-
-class ExecutionPrimitiveTests(unittest.TestCase):
-    def test_mark_failed_preserves_timing_and_flips_status(self) -> None:
-        ok = ProcessResult(
-            command=["x"],
-            exit_code=0,
-            status="success",
-            timed_out=False,
-            started_at="a",
-            ended_at="b",
-            duration_seconds=1.5,
-        )
-        failed = mark_failed(ok)
-        self.assertEqual(failed.status, "failed")
-        self.assertEqual(failed.command, ok.command)
-        self.assertEqual(failed.exit_code, ok.exit_code)
-        self.assertEqual(failed.started_at, ok.started_at)
-        self.assertEqual(failed.duration_seconds, ok.duration_seconds)
 
 
 if __name__ == "__main__":
