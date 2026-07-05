@@ -432,6 +432,37 @@ def rigor_count(package_dir: Path, spec: Dict[str, Any]) -> int:
     return 0
 
 
+def read_rigors(package_dir: Path, spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Public rigor metadata for a task package.
+
+    Reads the rigors file task.json points at (default ``rigors.json``) and
+    returns one dict per rigor with the three public fields ``id``,
+    ``rubric_id`` and ``requirement``. Every field a rigor carries is
+    executor-facing content that the runner injects verbatim into the prompt, so
+    there is no private field to withhold (unlike ``human_reference.json``'s
+    ``reasoning``). A missing file, unreadable JSON or an unexpected shape all
+    yield an empty list — never an exception. ``rubric_id`` falls back to ``id``
+    when absent, matching ``runner.models.Rigor.from_dict``.
+    """
+    name = str(spec.get("rigors", "rigors.json"))
+    payload = _read_json(package_dir / name)
+    if not isinstance(payload, dict) or not isinstance(payload.get("rigors"), list):
+        return []
+    rigors: List[Dict[str, Any]] = []
+    for item in payload["rigors"]:
+        if not isinstance(item, dict) or item.get("id") is None:
+            continue
+        rigor_id = str(item.get("id"))
+        rigors.append(
+            {
+                "id": rigor_id,
+                "rubric_id": str(item.get("rubric_id", rigor_id)),
+                "requirement": str(item.get("requirement", "")),
+            }
+        )
+    return rigors
+
+
 def read_human_reference_steps(package_dir: Path, spec: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Public human-reference step metadata for a task package.
 

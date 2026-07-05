@@ -176,6 +176,55 @@ class LibraryBrowseAndDetailTest(unittest.TestCase):
         detail = library.task_package_detail(self.tasks_dir, "demo")
         self.assertEqual(detail["rigor_count"], 2)
 
+    def test_task_detail_returns_rigor_detail(self) -> None:
+        write_json(
+            self.tasks_dir / "demo" / "rigors.json",
+            {
+                "rigors": [
+                    {
+                        "id": "G",
+                        "rubric_id": "G",
+                        "requirement": "The deliverable must handle near-zero denominators.",
+                    },
+                    {
+                        "id": "H",
+                        "rubric_id": "R012",
+                        "requirement": "The deliverable must define continuous trading windows.",
+                    },
+                ]
+            },
+        )
+        detail = library.task_package_detail(self.tasks_dir, "demo")
+        self.assertEqual(
+            detail["rigors"],
+            [
+                {
+                    "id": "G",
+                    "rubric_id": "G",
+                    "requirement": "The deliverable must handle near-zero denominators.",
+                },
+                {
+                    "id": "H",
+                    "rubric_id": "R012",
+                    "requirement": "The deliverable must define continuous trading windows.",
+                },
+            ],
+        )
+        self.assertEqual(detail["rigor_count"], 2)
+
+    def test_task_detail_rigors_empty_when_no_file(self) -> None:
+        detail = library.task_package_detail(self.tasks_dir, "demo")
+        self.assertEqual(detail["rigors"], [])
+        self.assertEqual(detail["rigor_count"], 0)
+
+    def test_task_detail_rigor_rubric_id_defaults_to_id(self) -> None:
+        write_json(
+            self.tasks_dir / "demo" / "rigors.json",
+            {"rigors": [{"id": "G", "requirement": "Must be rigorous."}]},
+        )
+        detail = library.task_package_detail(self.tasks_dir, "demo")
+        self.assertEqual(detail["rigors"][0]["rubric_id"], "G")
+
     def test_task_detail_rejects_traversal(self) -> None:
         with self.assertRaises(LibraryError):
             library.task_package_detail(self.tasks_dir, "../outside")

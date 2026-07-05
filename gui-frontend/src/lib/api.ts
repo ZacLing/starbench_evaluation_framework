@@ -17,6 +17,7 @@ import type {
   ProviderFilter,
   ProviderKind,
   ProvidersPayload,
+  RigorDetail,
   RuntimeCli,
   RuntimeProtocol,
   Skill,
@@ -37,6 +38,7 @@ export type {
   ProviderFilter,
   ProviderKind,
   ProvidersPayload,
+  RigorDetail,
   RuntimeCli,
   RuntimeProtocol,
   Skill,
@@ -298,6 +300,9 @@ export interface TaskPackageDetail {
      `reasoning` trace is never included — see contracts.HumanReferenceStepDetail. */
   human_reference_steps: HumanReferenceStepDetail[]
   human_reference_step_count: number
+  /* Public rigor requirements (id/rubric_id/requirement). All fields are
+     executor-facing content — no private field is withheld. */
+  rigors: RigorDetail[]
   rigor_count: number
 }
 
@@ -333,6 +338,12 @@ export interface SharedConfig {
      chosen step ids for select mode. Shared across contenders like the judge. */
   instruction_mode?: string
   instruction_steps?: string[]
+  /* Rigor injection (research): restates selected rubric-level requirements as
+     hard requirements in the prompt. Mode is none/select; rigors carries the
+     chosen rigor ids. Shared across contenders like the judge, and it does not
+     expand executor variants. */
+  rigor_mode?: string
+  rigors?: string[]
   evaluator_provider_id?: string
   evaluator_gateway?: {
     opencode_provider?: string

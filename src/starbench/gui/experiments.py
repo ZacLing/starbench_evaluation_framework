@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..adapters import DEFAULT_DOCKER_IMAGES, list_builtin
 from . import injection, providers as providers_module, skills as skills_module
 from .agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
-from .data import SAFE_ID, _read_json, read_human_reference_steps, run_overview
+from .data import SAFE_ID, _read_json, read_human_reference_steps, read_rigors, run_overview
 from .launcher import LaunchError, build_run_argv
 from .skills import DEFAULT_SKILLS_DIR, SkillError
 
@@ -239,6 +239,40 @@ def _resolve_contender_reference(
 # ---------------------------------------------------------------------------
 
 INSTRUCTION_MODES = ("none", "traverse", "select", "ablation")
+RIGOR_MODES = ("none", "select")
+
+
+def _resolve_selected_rigors(
+    tasks_dir_value: Any, task_selectors: Any
+) -> List[Tuple[str, List[str]]]:
+    """Resolve the tasks that will run to their public rigor ids.
+
+    Same selector/order contract as ``_resolve_selected_steps``: one
+    ``(task_id, [rigor_id, ...])`` pair per task in directory order, matching a
+    selector by task id or directory name, with an empty selector list meaning
+    "every task". Rigor content is fully public, so this reads all rigor ids.
+    """
+    tasks_dir = Path(str(tasks_dir_value)) if tasks_dir_value else None
+    if tasks_dir is None or not tasks_dir.is_dir():
+        return []
+    ordered: List[Tuple[str, List[str]]] = []
+    by_selector: Dict[str, Tuple[str, List[str]]] = {}
+    for entry in sorted(tasks_dir.iterdir()):
+        task_json = entry / "task.json"
+        if not entry.is_dir() or not task_json.exists():
+            continue
+        spec = _read_json(task_json)
+        if not isinstance(spec, dict):
+            continue
+        rigor_ids = [rigor["id"] for rigor in read_rigors(entry, spec)]
+        record = (str(spec.get("id", entry.name)), rigor_ids)
+        by_selector[record[0]] = record
+        by_selector[entry.name] = record
+        ordered.append(record)
+    selectors = [str(item) for item in (task_selectors or []) if isinstance(item, str)]
+    if not selectors:
+        return ordered
+    return [by_selector[selector] for selector in selectors if selector in by_selector]
 
 
 def _resolve_selected_steps(
@@ -416,6 +450,39 @@ def plan_experiment(
                 f"{', '.join(unknown_steps)}. Pick steps at least one selected task ships."
             )
 
+    # Rigor injection is shared across contenders too (a controlled comparison,
+    # like the shared judge, skills and instructions). It restates selected
+    # rubric-level requirements as hard requirements in the prompt; it does NOT
+    # expand executor variants (the runner injects them into whatever variant the
+    # instruction mode produces), so the execution estimate is unaffected. All
+    # rigor content is public.
+    rigor_mode = str(shared.get("rigor_mode") or "none").strip() or "none"
+    if rigor_mode not in RIGOR_MODES:
+        raise ExperimentError(f"Rigor mode must be one of {', '.join(RIGOR_MODES)}.")
+    rigor_ids = [
+        str(rigor).strip()
+        for rigor in (shared.get("rigors") or [])
+        if isinstance(rigor, str) and str(rigor).strip()
+    ]
+    if rigor_mode == "select":
+        if not rigor_ids:
+            raise ExperimentError("Rigor mode select needs at least one rigor requirement chosen.")
+        resolved_rigors = _resolve_selected_rigors(payload.get("tasks_dir"), payload.get("tasks"))
+        known_rigor_ids = {
+            rigor_id for _, rigor_id_list in resolved_rigors for rigor_id in rigor_id_list
+        }
+        # Plan-time guard catches the gross error (a rigor that no selected task
+        # ships). The runner enforces the stricter rule — every chosen rigor must
+        # exist in EVERY selected task, or it rejects the run naming the task.
+        unknown_rigors = [rigor for rigor in rigor_ids if rigor not in known_rigor_ids]
+        if unknown_rigors:
+            raise ExperimentError(
+                "These rigor requirements exist in none of the selected tasks: "
+                f"{', '.join(unknown_rigors)}. Pick rigors at least one selected task ships."
+            )
+    else:
+        rigor_ids = []
+
     # Resolve provider references (the reference shape) into the explicit fields
     # the rest of this function consumes. Providers live in <runs-dir>/providers.
     provider_by_id = {
@@ -540,6 +607,9 @@ def plan_experiment(
             # Shared instruction ablation: same mode/steps for every contender.
             "instruction_mode": instruction_mode,
             "instruction_steps": instruction_steps,
+            # Shared rigor injection: same mode/ids for every contender.
+            "rigor_mode": rigor_mode,
+            "rigors": rigor_ids,
             # Shared executor skills: forward ids and groups as-is (the runner
             # expands groups) plus the library root the console validated against.
             "executor_skills": executor_skill_ids or [],

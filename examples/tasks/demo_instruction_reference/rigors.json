@@ -1,0 +1,19 @@
+{
+  "rigors": [
+    {
+      "id": "U004",
+      "rubric_id": "U004",
+      "requirement": "The memo must include all five exact section headings — Executive Summary, Risk Prioritization, Interventions, Measurement Plan, and Equity and Implementation Risks — and each heading must carry a distinct part of the plan rather than repeating another section."
+    },
+    {
+      "id": "U015",
+      "rubric_id": "U015",
+      "requirement": "The plan must specify distinct Year 1, Year 2, and Year 3 actions rather than a single undated list of measures."
+    },
+    {
+      "id": "U016",
+      "rubric_id": "U016",
+      "requirement": "The memo must not present any single intervention as sufficient on its own, and must name the implementation risks that make a layered response necessary."
+    }
+  ]
+}

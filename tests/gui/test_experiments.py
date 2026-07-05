@@ -543,5 +543,141 @@ class ExperimentInstructionTest(unittest.TestCase):
         self.assertNotIn("reasoning", serialized)
 
 
+class ExperimentRigorTest(unittest.TestCase):
+    """Rigor injection: forwarding, plan-time guard, and that rigor does not
+    expand executor variants (verified against runner.task_loader.build_task_runs,
+    which attaches selected_rigors to each task run without adding runs)."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_rigor_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+        self.tasks_dir = self.tmp / "tasks"
+        self.tasks_dir.mkdir()
+        self._write_task("task_a", ["G", "H"])
+        self._write_task("task_b", ["G", "H", "K"])
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_task(self, task_id, rigor_ids) -> None:
+        pkg = self.tasks_dir / task_id
+        write_json(pkg / "task.json", {"id": task_id, "name": task_id})
+        write_json(
+            pkg / "rubrics.json",
+            {"rubrics": [{"id": "R001", "fail_fast": True, "expected": True, "question": "?"}]},
+        )
+        (pkg / "prompt.md").write_text("# go", encoding="utf-8")
+        if rigor_ids is not None:
+            write_json(
+                pkg / "rigors.json",
+                {
+                    "rigors": [
+                        {"id": rid, "rubric_id": rid, "requirement": f"must {rid}"}
+                        for rid in rigor_ids
+                    ]
+                },
+            )
+
+    def payload(self, tasks, *, shared_extra=None, contenders=None, name="exp_rigor"):
+        shared = {
+            "evaluator_agent": "codex",
+            "evaluator_model": "gpt-5.5",
+            "evaluator_auth_mode": "global",
+            "judge_mode": "single",
+            "executor_backend": "local",
+            "seed": 1,
+            "repeat": 1,
+        }
+        if shared_extra:
+            shared.update(shared_extra)
+        return {
+            "name": name,
+            "tasks_dir": str(self.tasks_dir),
+            "tasks": tasks,
+            "shared": shared,
+            "contenders": contenders
+            or [{"label": "GPT", "agent": "codex", "model": "gpt-5.5", "auth_mode": "global"}],
+        }
+
+    def test_rigor_mode_and_ids_forwarded_to_every_contender(self) -> None:
+        payload = self.payload(
+            ["task_a", "task_b"],
+            shared_extra={"rigor_mode": "select", "rigors": ["G", "H"]},
+            contenders=[
+                {"label": "GPT", "agent": "codex", "model": "gpt-5.5", "auth_mode": "global"},
+                {"label": "Claude", "agent": "claude", "model": "claude-opus-4-8", "auth_mode": "global"},
+            ],
+        )
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        self.assertEqual(len(plan["plans"]), 2)
+        for item in plan["plans"]:
+            joined = " ".join(item["argv"])
+            self.assertIn("--rigor-mode select", joined)
+            self.assertIn("--rigor G", joined)
+            self.assertIn("--rigor H", joined)
+
+    def test_rigor_none_forwards_no_flag(self) -> None:
+        plan = experiments.plan_experiment(
+            self.payload(["task_a", "task_b"]), runs_dir=self.runs_dir
+        )
+        joined = " ".join(plan["plans"][0]["argv"])
+        self.assertNotIn("--rigor-mode", joined)
+        self.assertNotIn("--rigor ", joined)
+
+    def test_select_unknown_rigor_rejected(self) -> None:
+        payload = self.payload(
+            ["task_a", "task_b"],
+            shared_extra={"rigor_mode": "select", "rigors": ["ZZZ"]},
+        )
+        with self.assertRaisesRegex(ExperimentError, "none of the selected tasks"):
+            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+
+    def test_select_requires_at_least_one_rigor(self) -> None:
+        payload = self.payload(
+            ["task_a", "task_b"], shared_extra={"rigor_mode": "select", "rigors": []}
+        )
+        with self.assertRaisesRegex(ExperimentError, "at least one rigor"):
+            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+
+    def test_rigor_mode_rejects_unknown_value(self) -> None:
+        payload = self.payload(
+            ["task_a"], shared_extra={"rigor_mode": "ablation", "rigors": ["G"]}
+        )
+        with self.assertRaisesRegex(ExperimentError, "Rigor mode must be one of"):
+            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+
+    def test_rigor_present_in_only_one_task_is_allowed_at_plan_time(self) -> None:
+        # Verified semantics (multi-task select): K exists in task_b but not
+        # task_a. The plan-time guard only requires a rigor to exist in >=1
+        # selected task; the runner enforces the stricter every-task rule at
+        # launch and rejects the run naming task_a. The console does not pre-empt.
+        payload = self.payload(
+            ["task_a", "task_b"],
+            shared_extra={"rigor_mode": "select", "rigors": ["K"]},
+        )
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        self.assertIn("--rigor K", " ".join(plan["plans"][0]["argv"]))
+
+    def test_rigor_does_not_change_execution_estimate(self) -> None:
+        # Verified semantics: rigor injects into whatever variant the instruction
+        # mode produces; it does not multiply executor variants. The estimate is
+        # identical with and without rigor selection.
+        without = experiments.plan_experiment(
+            self.payload(["task_a", "task_b"]), runs_dir=self.runs_dir
+        )["execution_estimate"]
+        with_rigor = experiments.plan_experiment(
+            self.payload(
+                ["task_a", "task_b"],
+                shared_extra={"rigor_mode": "select", "rigors": ["G", "H"]},
+                name="exp_rigor2",
+            ),
+            runs_dir=self.runs_dir,
+        )["execution_estimate"]
+        self.assertEqual(with_rigor["per_contender"], without["per_contender"])
+        self.assertEqual(with_rigor["total"], without["total"])
+        self.assertEqual(with_rigor["per_contender"], 2)  # one run per task, unchanged
+
+
 if __name__ == "__main__":
     unittest.main()

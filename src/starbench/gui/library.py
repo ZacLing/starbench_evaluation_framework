@@ -20,6 +20,7 @@ from .data import (
     _read_json,
     list_task_packages,
     read_human_reference_steps,
+    read_rigors,
     rigor_count,
 )
 
@@ -299,6 +300,11 @@ def task_package_detail(tasks_dir: Path, dir_name: str) -> Dict[str, Any]:
     # consumer that only wants the number.
     steps = read_human_reference_steps(package_dir, spec)
 
+    # Rigor requirements as a public detail list (id/rubric_id/requirement).
+    # Unlike expert steps there is no private field to withhold — every rigor
+    # field is executor-facing content the runner injects into the prompt.
+    rigors = read_rigors(package_dir, spec)
+
     return {
         "dir": str(tasks_dir),
         "dir_name": dir_name,
@@ -310,6 +316,7 @@ def task_package_detail(tasks_dir: Path, dir_name: str) -> Dict[str, Any]:
         "rubrics": rubrics,
         "human_reference_steps": steps,
         "human_reference_step_count": len(steps),
+        "rigors": rigors,
         "rigor_count": rigor_count(package_dir, spec),
     }
 

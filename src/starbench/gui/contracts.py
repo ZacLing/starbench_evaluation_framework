@@ -177,6 +177,20 @@ class HumanReferenceStepDetail(TypedDict):
     instruction: str
 
 
+class RigorDetail(TypedDict):
+    """One public rigor requirement from a task's ``rigors.json``.
+
+    Every field here is executor-facing content the runner injects verbatim into
+    the prompt (a restated rubric-level requirement), so unlike
+    ``HumanReferenceStepDetail`` there is no private field to withhold —
+    ``gui.data.read_rigors`` returns all three.
+    """
+
+    id: str
+    rubric_id: str
+    requirement: str
+
+
 class ExecutionEstimate(TypedDict):
     """How many executor variants an instruction sweep expands into before launch.
 
@@ -248,6 +262,7 @@ GENERATED_TYPES = [
     "Skill",
     "SkillsPayload",
     "HumanReferenceStepDetail",
+    "RigorDetail",
     "ExecutionEstimate",
     "ExperimentPlanItem",
     "Contender",

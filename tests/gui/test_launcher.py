@@ -135,6 +135,29 @@ class LauncherTest(unittest.TestCase):
                 self.payload(instruction_mode="bogus"), runs_dir=self.runs_dir
             )
 
+    def test_rigor_none_passes_no_flag(self) -> None:
+        argv = build_run_argv(self.payload(rigor_mode="none"), runs_dir=self.runs_dir)
+        self.assertNotIn("--rigor-mode", argv)
+        self.assertNotIn("--rigor", argv)
+
+    def test_rigor_mode_and_ids_pass_through(self) -> None:
+        argv = build_run_argv(
+            self.payload(rigor_mode="select", rigors=["G", "H"]),
+            runs_dir=self.runs_dir,
+        )
+        joined = " ".join(argv)
+        self.assertIn("--rigor-mode select", joined)
+        # Each id becomes its own repeated --rigor flag.
+        self.assertEqual(argv.count("--rigor"), 2)
+        self.assertIn("--rigor G", joined)
+        self.assertIn("--rigor H", joined)
+
+    def test_rigor_mode_rejects_unknown_value(self) -> None:
+        with self.assertRaises(LaunchError):
+            build_run_argv(
+                self.payload(rigor_mode="ablation"), runs_dir=self.runs_dir
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

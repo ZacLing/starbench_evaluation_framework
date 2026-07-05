@@ -113,6 +113,12 @@ export interface HumanReferenceStepDetail {
   instruction: string
 }
 
+export interface RigorDetail {
+  id: string
+  rubric_id: string
+  requirement: string
+}
+
 export interface ExecutionEstimate {
   per_contender: number
   total: number

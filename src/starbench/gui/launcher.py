@@ -22,6 +22,7 @@ AUTH_MODES = ("env", "global", "copy-auth")
 BACKENDS = ("local", "docker")
 THINKING_EFFORTS = ("none", "low", "medium", "high")
 INSTRUCTION_MODES = ("none", "traverse", "select", "ablation")
+RIGOR_MODES = ("none", "select")
 
 
 class LaunchError(ValueError):
@@ -198,6 +199,17 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
         ]
     for step_id in _string_list(payload.get("instruction_steps"), "Instruction steps"):
         argv += ["--instruction-step", step_id]
+
+    # Rigor injection: a research knob that restates selected rubric-level
+    # requirements as hard requirements in the executor prompt. `none` is the
+    # default and passes no flag; `select` appends one `--rigor` per chosen id
+    # (the runner also infers select mode from any `--rigor`, but we pass the
+    # mode explicitly so the argv reads unambiguously).
+    rigor_mode = str(payload.get("rigor_mode") or "none").strip()
+    if rigor_mode and rigor_mode != "none":
+        argv += ["--rigor-mode", _require_choice(rigor_mode, RIGOR_MODES, "Rigor mode")]
+    for rigor_id in _string_list(payload.get("rigors"), "Rigors"):
+        argv += ["--rigor", rigor_id]
 
     extra = str(payload.get("extra_args") or "").strip()
     if extra:
