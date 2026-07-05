@@ -142,6 +142,9 @@ class _ExperimentPlanItemBase(TypedDict):
     run_id: str
     backend: str
     backend_downgraded: bool
+    # Advisory notices (e.g. a contender var also read by the judge, now safe
+    # because executor and judge run under isolated env scopes). Never fatal.
+    warnings: List[str]
     argv: List[str]
 
 

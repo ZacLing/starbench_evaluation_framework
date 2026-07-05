@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..adapters import list_builtin
+from ..runner.env_scope import EXECUTOR_ENV_PREFIX, JUDGE_ENV_PREFIX
 from .data import SAFE_ID
 
 # Built-in runtime ids come from the adapter registry (single source of truth).
@@ -182,6 +183,24 @@ def resolve_env_spec(spec: Any) -> Dict[str, str]:
             if value:
                 resolved[name] = value
     return resolved
+
+
+def scoped_launch_env(executor_spec: Any, judge_spec: Any) -> Dict[str, str]:
+    """Namespace the executor and judge env specs under their scope prefixes.
+
+    Each spec is resolved to concrete values (``resolve_env_spec``) and then
+    prefixed with ``STARBENCH_EXECUTOR_ENV_`` / ``STARBENCH_JUDGE_ENV_`` so the
+    runner can fold them into isolated executor/judge base envs (see
+    ``runner.env_scope``). This keeps a contender's injected endpoint/credentials
+    out of the judge's environment without ever putting a secret on argv (ps
+    visible) or in a plaintext file — only values in the subprocess env travel.
+    """
+    env_extra: Dict[str, str] = {}
+    for name, value in resolve_env_spec(executor_spec).items():
+        env_extra[f"{EXECUTOR_ENV_PREFIX}{name}"] = value
+    for name, value in resolve_env_spec(judge_spec).items():
+        env_extra[f"{JUDGE_ENV_PREFIX}{name}"] = value
+    return env_extra
 
 
 class LaunchRegistry:

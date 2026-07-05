@@ -1284,13 +1284,63 @@ class ExperimentCustomRuntimeTest(unittest.TestCase):
                 payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
             )
 
-    def test_contender_env_that_reroutes_judge_rejected(self) -> None:
+    def test_qwen_openrouter_with_codex_judge_isolated_not_rejected(self) -> None:
+        # Regression: a qwen-via-OpenRouter contender injecting OPENAI_BASE_URL
+        # alongside an official Codex judge used to be rejected (shared process
+        # env). Executor and judge now run under isolated env scopes, so the
+        # plan succeeds — the injection lands only in the executor scope and the
+        # collision is surfaced as an advisory warning.
         payload = self.payload()
         payload["shared"]["evaluator_agent"] = "codex"
-        with self.assertRaisesRegex(ExperimentError, "reroute"):
-            experiments.plan_experiment(
-                payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
-            )
+        plan = experiments.plan_experiment(
+            payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+        )
+        qwen = {item["agent"]: item for item in plan["plans"]}["custom:qwen-code"]
+        self.assertEqual(
+            qwen["executor_env_spec"]["OPENAI_BASE_URL"],
+            {"value": "https://openrouter.ai/api/v1"},
+        )
+        self.assertNotIn("OPENAI_BASE_URL", qwen["judge_env_spec"])
+        self.assertTrue(
+            any("OPENAI_BASE_URL" in warning for warning in qwen["warnings"]),
+            qwen["warnings"],
+        )
+
+    def test_claude_gateway_with_claude_judge_isolated_not_rejected(self) -> None:
+        # Same isolation, Anthropic side: a claude-via-gateway contender injecting
+        # ANTHROPIC_BASE_URL with an official Claude judge is now legal.
+        payload = self.payload(
+            contenders=[
+                {
+                    "label": "Claude via gateway",
+                    "agent": "claude",
+                    "model": "claude-opus-4-8",
+                    "auth_mode": "env",
+                    "env": {
+                        "ANTHROPIC_BASE_URL": {"value": "https://gw.example"},
+                        "ANTHROPIC_AUTH_TOKEN": {"from_env": "GW_TOKEN"},
+                    },
+                }
+            ],
+            shared={
+                "evaluator_agent": "claude",
+                "evaluator_model": "claude-opus-4-8",
+                "judge_mode": "single",
+                "executor_backend": "local",
+            },
+        )
+        plan = experiments.plan_experiment(
+            payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+        )
+        item = plan["plans"][0]
+        self.assertEqual(
+            item["executor_env_spec"]["ANTHROPIC_BASE_URL"], {"value": "https://gw.example"}
+        )
+        self.assertNotIn("ANTHROPIC_BASE_URL", item["judge_env_spec"])
+        self.assertTrue(
+            any("ANTHROPIC_BASE_URL" in warning for warning in item["warnings"]),
+            item["warnings"],
+        )
 
     def test_custom_judge_env_merges_and_conflicts_detected(self) -> None:
         payload = self.payload()

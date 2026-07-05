@@ -378,20 +378,28 @@ def plan_experiment(
             argv = build_run_argv(launch_payload, runs_dir=runs_dir)
         except LaunchError as error:
             raise ExperimentError(f"Contender {label}: {error}")
-        env_spec = contender.get("env") if isinstance(contender.get("env"), dict) else {}
+        executor_env_spec = contender.get("env") if isinstance(contender.get("env"), dict) else {}
 
-        # One subprocess runs the contender AND the judge; the environment is
-        # shared. Reject combinations where the contender's injected variables
-        # would reroute the judge's endpoint or credentials.
-        for key in env_spec:
-            if key in judge_sensitive and judge_env.get(key) != env_spec[key]:
-                raise ExperimentError(
-                    f"Contender {label}: injecting {key} would also reroute the "
-                    f"{evaluator_agent} judge (the environment is process-wide per "
-                    "run). Use a judge on a different protocol, or the same "
-                    "provider for both."
+        # The runner now scopes executor and judge env separately (the console
+        # ships each side's variables under STARBENCH_EXECUTOR_ENV_* /
+        # STARBENCH_JUDGE_ENV_* prefixes, which the runner unpacks into isolated
+        # base envs). A contender injecting a judge-sensitive variable therefore
+        # no longer reroutes the judge — what used to be a hard rejection is now
+        # an advisory warning surfaced in the plan.
+        warnings: List[str] = []
+        for key in executor_env_spec:
+            if key in judge_sensitive and judge_env.get(key) != executor_env_spec[key]:
+                warnings.append(
+                    f"Contender {label}: {key} is injected for the contender and is "
+                    f"also read by the {evaluator_agent} judge. Executor and judge run "
+                    "under isolated env scopes, so the judge keeps its own routing."
                 )
-        merged_env = dict(env_spec)
+        # `merged_env` (and the legacy env_spec/env_keys fields) is kept only for
+        # display/back-compat; the two scopes are shipped separately below. A
+        # judge that sets a variable the contender also sets to a *different*
+        # value is still surfaced as an error since the merged view cannot show
+        # both.
+        merged_env = dict(executor_env_spec)
         for key, entry in judge_env.items():
             if key in merged_env and merged_env[key] != entry:
                 raise ExperimentError(
@@ -418,8 +426,13 @@ def plan_experiment(
                 "backend": effective_backend,
                 "backend_downgraded": backend == "docker" and effective_backend == "local",
                 "docker_image": docker_image,
+                # Legacy merged view (kept for display/back-compat).
                 "env_spec": merged_env,
                 "env_keys": sorted(merged_env.keys()),
+                # Scoped views the server ships as STARBENCH_{EXECUTOR,JUDGE}_ENV_*.
+                "executor_env_spec": executor_env_spec,
+                "judge_env_spec": judge_env,
+                "warnings": warnings,
                 "argv": argv,
             }
         )

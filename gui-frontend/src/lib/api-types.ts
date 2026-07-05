@@ -96,6 +96,7 @@ export interface ExperimentPlanItem {
   run_id: string
   backend: string
   backend_downgraded: boolean
+  warnings: string[]
   argv: string[]
   docker_image?: string
 }

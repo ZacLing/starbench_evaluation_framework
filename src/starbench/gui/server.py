@@ -19,7 +19,13 @@ from urllib.parse import parse_qs, urlparse
 from . import agents, data, experiments, library, providers
 from .agents import AgentError, DEFAULT_RUNTIMES_DIR
 from .experiments import ExperimentError
-from .launcher import AGENT_CHOICES, LaunchError, LaunchRegistry, build_run_argv, resolve_env_spec
+from .launcher import (
+    AGENT_CHOICES,
+    LaunchError,
+    LaunchRegistry,
+    build_run_argv,
+    scoped_launch_env,
+)
 from .library import LibraryError
 from .providers import ProviderError
 
@@ -360,7 +366,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                     item["argv"],
                     cwd=state.cwd,
                     log_path=log_path,
-                    env_extra=resolve_env_spec(item.get("env_spec")),
+                    # Executor and judge injections ship under separate scope
+                    # prefixes so the runner keeps their environments isolated.
+                    env_extra=scoped_launch_env(
+                        item.get("executor_env_spec"), item.get("judge_env_spec")
+                    ),
                 )
             )
         record = experiments.record_experiment(

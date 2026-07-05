@@ -1319,6 +1319,18 @@ function StepReview({
                     </Badge>
                   )}
                 </div>
+                {item.warnings?.length ? (
+                  <div className="grid gap-0.5">
+                    {item.warnings.map((warning, index) => (
+                      <span
+                        key={index}
+                        className="inline-flex items-start gap-1 text-xs text-warn-ink"
+                      >
+                        <AlertTriangle className="mt-0.5 size-3 shrink-0" /> {warning}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <Collapsible>
                   <CollapsibleTrigger className="group flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
                     <ChevronDown className="size-3 transition-transform group-data-[state=open]:rotate-180" />
