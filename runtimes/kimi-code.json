@@ -6,5 +6,7 @@
   "args": ["--print", "--output-format", "text", "--final-message-only"],
   "prompt_via": "stdin",
   "parser": "text",
-  "protocol": "none"
+  "protocol": "openai",
+  "base_url_env": "OPENAI_BASE_URL",
+  "api_key_env": "OPENAI_API_KEY"
 }

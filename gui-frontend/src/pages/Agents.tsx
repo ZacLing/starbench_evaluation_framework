@@ -93,9 +93,9 @@ export default function Agents() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
           <p className="text-sm text-muted-foreground">
-            The coding-agent CLIs that can compete or judge. Custom runtimes are{" "}
+            The coding-agent CLIs that can compete or judge. Editable runtimes are{" "}
             <code className="font-mono text-xs">runtimes/&lt;id&gt;.json</code> specs shared
-            with the CLI (<code className="font-mono text-xs">--executor-agent custom:&lt;id&gt;</code>).
+            with the CLI.
           </p>
         </div>
         <Button
@@ -105,7 +105,7 @@ export default function Agents() {
             setEditing(emptyDraft())
           }}
         >
-          <Plus /> Add custom runtime
+          <Plus /> Add runtime
         </Button>
       </div>
 
@@ -263,8 +263,12 @@ function CustomCard({
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          <Badge variant="outline" className="font-mono text-[11px]">
-            custom:{agent.spec_id}
+          <Badge
+            variant="outline"
+            className="font-mono text-[11px]"
+            title={`CLI: --executor-agent ${agent.id}`}
+          >
+            {agent.spec_id}
           </Badge>
           {agent.docker_image ? (
             <Badge variant="outline" className="gap-1 text-[11px]" title={agent.docker_image}>
@@ -482,7 +486,7 @@ function RuntimeEditor({
     >
       <SheetContent className="w-full gap-0 overflow-y-auto sm:max-w-xl">
         <SheetHeader className="border-b">
-          <SheetTitle>{isNew ? "Add custom runtime" : `Edit custom:${draft?.id}`}</SheetTitle>
+          <SheetTitle>{isNew ? "Add runtime" : `Edit ${draft?.label || draft?.id}`}</SheetTitle>
           <SheetDescription>
             Saved as <code className="font-mono">runtimes/&lt;id&gt;.json</code> — the same
             spec the CLI reads. Verify flags against the installed CLI's --help; they drift

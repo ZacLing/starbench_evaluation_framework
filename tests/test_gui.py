@@ -1143,16 +1143,20 @@ class AgentRegistryTest(unittest.TestCase):
             self.assertIsNone(by_spec[spec_id]["error"], spec_id)
         self.assertTrue(by_spec["qwen-code"]["docker_capable"])
         self.assertTrue(by_spec["trae-agent"]["docker_capable"])
-        # Kimi authenticates through its own local login; host-local on purpose.
+        # Kimi speaks the OpenAI protocol via env overrides but stays
+        # host-local until containerized startup without its config is proven.
+        self.assertEqual(by_spec["kimi-code"]["protocol"], "openai")
         self.assertFalse(by_spec["kimi-code"]["docker_capable"])
 
     def test_provider_backed_templates_ship_docker_isolation(self) -> None:
         by_id = {template["template_id"]: template["spec"] for template in agents.agent_templates()}
         self.assertEqual(by_id["qwen-code"]["docker"]["image"], "starbench-qwen:latest")
         self.assertEqual(by_id["trae-agent"]["docker"]["image"], "starbench-trae-agent:latest")
-        # Kimi authenticates through its own local login; a container cannot
-        # reuse that, so the template stays host-local on purpose.
+        # Kimi supports API providers (OPENAI_* overrides), but starting it in
+        # a fresh container without its ~/.kimi/config.toml is unverified, so
+        # the template stays host-local until that is proven.
         self.assertNotIn("docker", by_id["kimi-code"])
+        self.assertEqual(by_id["kimi-code"]["protocol"], "openai")
 
     def test_launcher_accepts_custom_agents(self) -> None:
         tasks_dir = self.tmp / "tasks"

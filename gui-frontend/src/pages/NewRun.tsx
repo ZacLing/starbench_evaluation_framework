@@ -840,8 +840,12 @@ function ContenderCard({
             </span>
           </span>
           {custom && (
-            <Badge variant="outline" className="font-mono text-[11px] text-muted-foreground">
-              custom:{custom.spec_id}
+            <Badge
+              variant="outline"
+              className="font-mono text-[11px] text-muted-foreground"
+              title={`CLI: --executor-agent ${custom.id}`}
+            >
+              {custom.spec_id}
             </Badge>
           )}
           {custom?.cli && !custom.cli.present && (

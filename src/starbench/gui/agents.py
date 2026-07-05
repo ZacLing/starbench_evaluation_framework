@@ -310,10 +310,12 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
         "docs_url": "https://moonshotai.github.io/kimi-cli/en/customization/print-mode.html",
         "description": (
             "Moonshot AI's terminal agent. Print mode reads the prompt from stdin; "
-            "output is the final message as plain text. Runs on this machine only — "
-            "it authenticates through its own local `kimi` login, which a container "
-            "cannot reuse. No documented model flag or read-only judge mode; verify "
-            "against `kimi --help`."
+            "output is the final message as plain text. Speaks to API providers "
+            "through an OpenAI-compatible entry in ~/.kimi/config.toml (run /login "
+            "once); OPENAI_BASE_URL / OPENAI_API_KEY override that entry per run. "
+            "No model flag — the model comes from the CLI's config. Host-local for "
+            "now: starting in a fresh container without its config file is "
+            "unverified."
         ),
         "spec": {
             "id": "kimi-code",
@@ -323,7 +325,9 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
             "args": ["--print", "--output-format", "text", "--final-message-only"],
             "prompt_via": "stdin",
             "parser": "text",
-            "protocol": "none",
+            "protocol": "openai",
+            "base_url_env": "OPENAI_BASE_URL",
+            "api_key_env": "OPENAI_API_KEY",
         },
     },
     {
