@@ -4,48 +4,34 @@ import argparse
 import asyncio
 import hashlib
 import json
-import os
 import random
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
-from .codex_process import (
-    append_claude_compat_events,
-    append_opencode_compat_events,
-    build_claude_print_command,
-    build_codex_exec_command,
-    build_custom_command,
-    normalize_custom_events,
-    write_custom_final_output,
-    build_gemini_headless_command,
-    build_grok_headless_command,
-    build_opencode_run_command,
-    normalize_headless_events,
-    prepare_claude_env,
-    prepare_gemini_env,
-    prepare_grok_env,
-    prepare_opencode_env,
-    prepare_auth_home,
-    opencode_docker_export_env,
-    run_claude_process_in_docker,
-    run_codex_process,
-    run_codex_process_in_docker,
-    run_custom_process_in_docker,
-    run_gemini_process_in_docker,
-    run_grok_process_in_docker,
-    run_opencode_process_in_docker,
+from ..adapters import (
+    BUILTIN_AGENTS,
     DEFAULT_DOCKER_IMAGES,
-    write_claude_final_output,
-    write_claude_stream_final_output,
-    write_headless_final_output,
-    write_opencode_final_output,
+    ExecutorContext,
+    JudgeContext,
+    RuntimeAdapter,
+    get_builtin,
+    resolve,
 )
 from .custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .evaluation import aggregate_results, normalize_parallel_results, normalize_single_result, write_aggregate
 from .models import Rubric, TaskRunSpec, TaskSpec
 from .progress import BenchmarkProgress, make_benchmark_progress
+from .prompts import (
+    OPENCODE_JUDGE_AGENT,
+    build_augmented_prompt_text,
+    build_executor_prompt,
+    build_parallel_judge_prompt,
+    build_single_judge_prompt,
+    claude_executor_allowed_tools,
+    opencode_model_name,
+)
 from starbench.skills.registry import expand_skill_groups, load_registry_skills
 from .task_loader import build_task_runs, discover_tasks, duplicate_tasks
 from .trace import build_artifact_manifest, write_trace_summary
@@ -56,26 +42,19 @@ DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks"
 DEFAULT_RUNS_DIR = PROJECT_ROOT / "runs"
 DEFAULT_EXECUTOR_SKILLS_DIR = PROJECT_ROOT / "executor_skills"
 DEFAULT_RUNTIMES_DIR = PROJECT_ROOT / "runtimes"
-BUILTIN_AGENTS = {"codex", "claude", "opencode", "grok", "gemini"}
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 IGNORED_EXECUTOR_SKILL_NAMES = {".DS_Store", ".git", "__pycache__"}
-CLAUDE_THINKING_EFFORT_INSTRUCTIONS = {
-    "none": "",
-    "low": "Before responding, think carefully about the task and check for obvious gaps.",
-    "medium": "Before responding, think through the task carefully, including constraints, edge cases, and verification steps.",
-    "high": "Before responding, think deeply about the task. Build a complete plan, inspect relevant evidence, consider failure modes and alternatives, and self-check the final deliverable before finishing.",
-}
-CLAUDE_EXECUTOR_BASE_TOOLS = "Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS"
-CLAUDE_EXECUTOR_WEB_TOOLS = "WebSearch,WebFetch"
-# Judges must be read-only across runtimes; OpenCode's built-in plan agent
-# matches the read-only sandboxes used for Codex/Grok/Gemini judges.
-OPENCODE_JUDGE_AGENT = "plan"
+
+# Skill install paths for custom runtimes are runtime-agnostic; a bare base
+# adapter supplies those defaults when a real (spec-backed) adapter is not on
+# hand (e.g. tests that materialize a task by agent id).
+_SKILLS_DEFAULT_ADAPTER = RuntimeAdapter()
 
 
-def claude_executor_allowed_tools(allow_web_search: bool) -> str:
-    if allow_web_search:
-        return f"{CLAUDE_EXECUTOR_BASE_TOOLS},{CLAUDE_EXECUTOR_WEB_TOOLS}"
-    return CLAUDE_EXECUTOR_BASE_TOOLS
+def _skills_adapter(executor_agent: str) -> RuntimeAdapter:
+    if executor_agent in BUILTIN_AGENTS:
+        return get_builtin(executor_agent)
+    return _SKILLS_DEFAULT_ADAPTER
 
 
 def rubric_launch_order(rubrics: Sequence[Rubric], *, seed: int, run_task_id: str) -> List[Rubric]:
@@ -88,165 +67,6 @@ def rubric_launch_order(rubrics: Sequence[Rubric], *, seed: int, run_task_id: st
 def json_dump(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def build_augmented_prompt_text(task_run: TaskRunSpec) -> str:
-    prompt_text = task_run.task.prompt_text
-    sections = []
-
-    if task_run.selected_steps:
-        instructions = "\n".join(
-            f"{index}. {step.instruction}" for index, step in enumerate(task_run.selected_steps, start=1)
-        )
-        sections.append(f"""Here are some instructions you might find helpful:
-{instructions}""")
-
-    if task_run.selected_rigors:
-        rigors = "\n".join(
-            f"{index}. {rigor.requirement}" for index, rigor in enumerate(task_run.selected_rigors, start=1)
-        )
-        sections.append(f"""Ensure your answer reaches an equivalent level of rigor and depth to the following requirements:
-{rigors}""")
-
-    if not sections:
-        return prompt_text
-    return f"{prompt_text.rstrip()}\n\n" + "\n\n".join(sections) + "\n"
-
-
-def build_executor_prompt(
-    task_run: TaskRunSpec,
-    *,
-    executor_skill_location: str = "$CODEX_HOME/skills/<skill-id>/",
-) -> str:
-    executor_skill_section = ""
-    if task_run.selected_executor_skills:
-        skills = "\n".join(
-            f"- `{skill.id}`: {skill.activation}" for skill in task_run.selected_executor_skills
-        )
-        executor_skill_section = f"""
-
-Installed executor skills:
-{skills}
-
-Skill usage rules:
-- Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
-- You may read installed skill files under {executor_skill_location}.
-- The task prompt and materials remain authoritative if they conflict with a skill.
-- Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables."""
-
-    return f"""You are running inside an isolated benchmark task workspace.
-
-Rules:
-- Read task materials from ./inputs/.
-- Write all deliverables under ./outputs/.
-- Do not inspect parent directories or sibling benchmark tasks.
-- Do not look for or infer hidden rubrics.
-- Use only the capabilities requested by the task.
-- Before finishing, run the requested sample verification if the task asks for one.{executor_skill_section}
-
-Task prompt from ./inputs/prompt.md:
-
-{build_augmented_prompt_text(task_run)}
-"""
-
-
-def append_claude_thinking_instruction(prompt: str, effort: str) -> str:
-    instruction = CLAUDE_THINKING_EFFORT_INSTRUCTIONS[effort]
-    if not instruction:
-        return prompt
-    return f"{prompt.rstrip()}\n\nClaude thinking effort instruction:\n{instruction}\n"
-
-
-def append_json_schema_instruction(prompt: str, schema_path: Path) -> str:
-    schema = schema_path.read_text(encoding="utf-8")
-    return f"""{prompt.rstrip()}
-
-Return only one JSON value that matches this JSON schema. Do not wrap it in Markdown fences or add commentary.
-
-JSON schema:
-{schema}
-"""
-
-
-def opencode_model_name(model: str | None, provider: str | None) -> str | None:
-    if not model or not provider or "/" in model:
-        return model
-    return f"{provider}/{model}"
-
-
-def build_single_judge_prompt(task: TaskSpec) -> str:
-    rubrics = [rubric.to_dict() for rubric in task.rubrics]
-    return f"""You are an evaluator for a StarBench benchmark task.
-
-Inspect this task run directory. The executor deliverables are under ./workspace/outputs/.
-The executor trace is available in ./logs/events.jsonl, ./logs/trace_summary.json, ./logs/artifact_manifest.json, and ./logs/final.md.
-Executor timing is available in ./logs/status.json.
-Raw input materials are intentionally omitted from this evaluator workspace for speed and isolation; use ./manifest.json and the trace/artifact summaries to understand what was available to the executor.
-
-Your job is rubric evidence checking, not solving the original task again.
-Use this review order:
-1. Read ./workspace/outputs/ and the log summaries first.
-2. Read ./workspace/inputs/prompt.md only to understand what the executor was asked to do.
-3. Read ./manifest.json and ./logs/artifact_manifest.json for file inventory.
-4. If a rubric appears to require raw-material verification that is not present here, judge from the executor-visible evidence and explain the limitation.
-
-Strict evaluator limits:
-- Do not redo the task, write a replacement answer, or conduct open-ended analysis.
-- Do not browse the web.
-- Prefer bounded reads such as file listings, small excerpts, targeted grep/rg, or focused jq queries over reading entire large files.
-- If a rubric asks whether the executor cited or used evidence, judge what the executor delivered; do not give credit for evidence you discovered yourself but the executor did not use.
-- If a rubric is ambiguous after reasonable bounded inspection, answer using the visible executor package and explain the uncertainty in evidence.
-
-Judge every rubric independently. Each rubric is a yes/no question. For each rubric:
-- answer is your yes/no judgment as a boolean.
-- expected is the rubric's expected boolean.
-- passed is true only when answer == expected.
-- fail_fast must match the rubric.
-- evidence must cite concrete files, commands, outputs, or trace entries.
-
-Return one JSON object matching the schema, with a result for every rubric.
-
-Task id: {task.id}
-Rubrics:
-{json.dumps(rubrics, indent=2, sort_keys=True)}
-"""
-
-
-def build_parallel_judge_prompt(task: TaskSpec, rubric: Rubric) -> str:
-    return f"""You are an evaluator for one StarBench benchmark rubric.
-
-Inspect this task run directory. The executor deliverables are under ./workspace/outputs/.
-The executor trace is available in ./logs/events.jsonl, ./logs/trace_summary.json, ./logs/artifact_manifest.json, and ./logs/final.md.
-Executor timing is available in ./logs/status.json.
-Raw input materials are intentionally omitted from this evaluator workspace for speed and isolation; use ./manifest.json and the trace/artifact summaries to understand what was available to the executor.
-
-Your job is rubric evidence checking, not solving the original task again.
-Use this review order:
-1. Read ./workspace/outputs/ and the log summaries first.
-2. Read ./workspace/inputs/prompt.md only to understand what the executor was asked to do.
-3. Read ./manifest.json and ./logs/artifact_manifest.json for file inventory.
-4. If this rubric appears to require raw-material verification that is not present here, judge from the executor-visible evidence and explain the limitation.
-
-Strict evaluator limits:
-- Do not redo the task, write a replacement answer, or conduct open-ended analysis.
-- Do not browse the web.
-- Prefer bounded reads such as file listings, small excerpts, targeted grep/rg, or focused jq queries over reading entire large files.
-- If this rubric asks whether the executor cited or used evidence, judge what the executor delivered; do not give credit for evidence you discovered yourself but the executor did not use.
-- If this rubric is ambiguous after reasonable bounded inspection, answer using the visible executor package and explain the uncertainty in evidence.
-
-Judge only this rubric. It is a yes/no question.
-- answer is your yes/no judgment as a boolean.
-- expected is the rubric's expected boolean.
-- passed is true only when answer == expected.
-- fail_fast must match the rubric.
-- evidence must cite concrete files, commands, outputs, or trace entries.
-
-Return one JSON object matching the schema.
-
-Task id: {task.id}
-Rubric:
-{json.dumps(rubric.to_dict(), indent=2, sort_keys=True)}
-"""
 
 
 def copy_task_material(source: Path, destination: Path) -> None:
@@ -281,49 +101,18 @@ def hash_executor_skill_directory(source: Path) -> str:
     return hasher.hexdigest()
 
 
-def executor_skill_install_root(paths: Dict[str, Path], executor_backend: str, executor_agent: str) -> Path:
-    if executor_agent == "codex":
-        if executor_backend == "docker":
-            return paths["codex_home"] / "docker" / "skills"
-        if executor_backend == "local":
-            return paths["codex_home"] / "skills"
-    if executor_agent == "grok":
-        return paths["workspace"] / ".grok" / "skills"
-    if executor_agent == "gemini":
-        return paths["workspace"] / ".gemini" / "skills"
-    if executor_agent == "claude":
-        return paths["workspace"] / ".claude" / "skills"
-    if executor_agent == "opencode" or executor_agent.startswith("custom:"):
-        return paths["workspace"] / ".starbench" / "executor_skills"
-    raise ValueError(f"Unknown executor backend: {executor_backend}")
-
-
-def executor_skill_prompt_location(executor_agent: str) -> str:
-    if executor_agent == "codex":
-        return "$CODEX_HOME/skills/<skill-id>/"
-    if executor_agent == "grok":
-        return "./.grok/skills/<skill-id>/"
-    if executor_agent == "gemini":
-        return "./.gemini/skills/<skill-id>/"
-    if executor_agent == "claude":
-        return "./.claude/skills/<skill-id>/"
-    if executor_agent == "opencode" or executor_agent.startswith("custom:"):
-        return "./.starbench/executor_skills/<skill-id>/"
-    return "./<skill-id>/"
-
-
 def install_executor_skills(
     task_run: TaskRunSpec,
     paths: Dict[str, Path],
     *,
     executor_backend: str,
-    executor_agent: str = "codex",
+    executor_adapter: RuntimeAdapter,
 ) -> List[Dict[str, Any]]:
     installed: List[Dict[str, Any]] = []
     if not task_run.selected_executor_skills:
         return installed
 
-    install_root = executor_skill_install_root(paths, executor_backend, executor_agent)
+    install_root = executor_adapter.executor_skill_install_root(paths, executor_backend)
     install_root.mkdir(parents=True, exist_ok=True)
     for skill in task_run.selected_executor_skills:
         digest = hash_executor_skill_directory(skill.source_path)
@@ -407,6 +196,7 @@ def materialize_task(
     *,
     executor_backend: str = "docker",
     executor_agent: str = "codex",
+    executor_adapter: RuntimeAdapter | None = None,
 ) -> Dict[str, Path]:
     task = task_run.task
     task_root = run_root / run_task_id
@@ -450,7 +240,7 @@ def materialize_task(
         task_run,
         paths,
         executor_backend=executor_backend,
-        executor_agent=executor_agent,
+        executor_adapter=executor_adapter or _skills_adapter(executor_agent),
     )
 
     json_dump(
@@ -475,353 +265,17 @@ async def run_executor(
     task_run: TaskRunSpec,
     paths: Dict[str, Path],
     *,
-    agent: str,
-    codex_bin: str,
-    claude_bin: str,
-    grok_bin: str,
-    gemini_bin: str,
-    opencode_bin: str,
-    opencode_provider: str | None,
-    opencode_base_url: str | None,
-    opencode_api_key_env: str | None,
-    claude_thinking_effort: str,
-    claude_max_turns: int | None,
-    auth_mode: str,
-    model: str | None,
-    executor_backend: str,
-    docker_bin: str,
-    docker_image: str,
-    custom_spec: CustomRuntimeSpec | None = None,
+    adapter: RuntimeAdapter,
+    ctx: ExecutorContext,
 ) -> Dict[str, Any]:
-    task = task_run.task
     logs = paths["logs"]
-    if agent.startswith("custom:") and executor_backend != "local":
-        if custom_spec is None or custom_spec.docker_image is None:
-            raise ValueError(f"{agent} executor requires a docker section for --executor-backend docker")
-
-    if agent.startswith("custom:"):
-        if custom_spec is None:
-            raise ValueError(f"Custom runtime spec missing for {agent}")
-        prompt_text = build_executor_prompt(
-            task_run, executor_skill_location=executor_skill_prompt_location(agent)
-        )
-        if executor_backend == "docker":
-            result = await run_custom_process_in_docker(
-                custom_spec,
-                docker_bin=docker_bin,
-                workspace=paths["workspace"],
-                prompt=prompt_text,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-                model=model,
-            )
-        else:
-            command = build_custom_command(custom_spec, role="executor", model=model, prompt=prompt_text)
-            env = os.environ.copy()
-            env.update(custom_spec.env)
-            result = await run_codex_process(
-                command,
-                cwd=paths["workspace"],
-                prompt=prompt_text if custom_spec.prompt_via == "stdin" else "",
-                env=env,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-            )
-        if result.status == "success":
-            try:
-                write_custom_final_output(logs / "events.jsonl", logs / "final.md", parser=custom_spec.parser)
-                normalize_custom_events(logs / "events.jsonl", parser=custom_spec.parser, provider=custom_spec.id)
-            except Exception as exc:
-                result = result.__class__(
-                    command=result.command,
-                    exit_code=result.exit_code,
-                    status="failed",
-                    timed_out=result.timed_out,
-                    started_at=result.started_at,
-                    ended_at=result.ended_at,
-                    duration_seconds=result.duration_seconds,
-                )
-                (logs / "stderr.log").open("a", encoding="utf-8").write(
-                    f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
-                )
-    elif agent == "claude":
-        claude_prompt = append_claude_thinking_instruction(
-            build_executor_prompt(
-                task_run,
-                executor_skill_location=executor_skill_prompt_location(agent),
-            ),
-            claude_thinking_effort,
-        )
-        if executor_backend == "docker":
-            result = await run_claude_process_in_docker(
-                claude_bin=claude_bin,
-                docker_bin=docker_bin,
-                docker_image=docker_image,
-                workspace=paths["workspace"],
-                prompt=claude_prompt,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-                model=model,
-                allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
-                max_turns=claude_max_turns,
-            )
-        else:
-            command = build_claude_print_command(
-                claude_bin,
-                cwd=paths["workspace"],
-                model=model,
-                permission_mode="acceptEdits",
-                allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
-                max_turns=claude_max_turns,
-                output_format="stream-json",
-            )
-            env = prepare_claude_env(paths["codex_home"] / "claude_executor", auth_mode)
-            result = await run_codex_process(
-                command,
-                cwd=paths["workspace"],
-                prompt=claude_prompt,
-                env=env,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-            )
-        if result.status == "success":
-            try:
-                write_claude_stream_final_output(logs / "events.jsonl", logs / "final.md")
-                append_claude_compat_events(logs / "events.jsonl")
-            except Exception as exc:
-                result = result.__class__(
-                    command=result.command,
-                    exit_code=result.exit_code,
-                    status="failed",
-                    timed_out=result.timed_out,
-                    started_at=result.started_at,
-                    ended_at=result.ended_at,
-                    duration_seconds=result.duration_seconds,
-                )
-                (logs / "stderr.log").open("a", encoding="utf-8").write(
-                    f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
-                )
-    elif agent == "opencode":
-        model_name = opencode_model_name(model, opencode_provider)
-        opencode_prompt = build_executor_prompt(
-            task_run,
-            executor_skill_location=executor_skill_prompt_location(agent),
-        )
-        if executor_backend == "docker":
-            result = await run_opencode_process_in_docker(
-                opencode_bin=opencode_bin,
-                docker_bin=docker_bin,
-                docker_image=docker_image,
-                workspace=paths["workspace"],
-                prompt=opencode_prompt,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-                model=model_name,
-                provider=opencode_provider,
-                base_url=opencode_base_url,
-                api_key_env=opencode_api_key_env,
-            )
-            env = opencode_docker_export_env(paths["workspace"])
-        else:
-            command = build_opencode_run_command(
-                opencode_bin,
-                cwd=paths["workspace"],
-                model=model_name,
-                agent="build",
-            )
-            env = prepare_opencode_env(
-                paths["codex_home"] / "opencode_executor",
-                auth_mode,
-                provider=opencode_provider,
-                base_url=opencode_base_url,
-                model=model_name,
-                api_key_env=opencode_api_key_env,
-            )
-            result = await run_codex_process(
-                command,
-                cwd=paths["workspace"],
-                prompt=opencode_prompt,
-                env=env,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-            )
-        if result.status == "success":
-            try:
-                append_opencode_compat_events(logs / "events.jsonl")
-                write_opencode_final_output(
-                    logs / "events.jsonl",
-                    logs / "final.md",
-                    opencode_bin=opencode_bin,
-                    env=env,
-                )
-            except Exception as exc:
-                result = result.__class__(
-                    command=result.command,
-                    exit_code=result.exit_code,
-                    status="failed",
-                    timed_out=result.timed_out,
-                    started_at=result.started_at,
-                    ended_at=result.ended_at,
-                    duration_seconds=result.duration_seconds,
-                )
-                (logs / "stderr.log").open("a", encoding="utf-8").write(
-                    f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
-                )
-    elif agent == "grok":
-        prompt = build_executor_prompt(
-            task_run,
-            executor_skill_location=executor_skill_prompt_location(agent),
-        )
-        if executor_backend == "docker":
-            result = await run_grok_process_in_docker(
-                grok_bin=grok_bin,
-                docker_bin=docker_bin,
-                docker_image=docker_image,
-                workspace=paths["workspace"],
-                prompt=prompt,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-                model=model,
-            )
-        else:
-            command = build_grok_headless_command(
-                grok_bin,
-                cwd=paths["workspace"],
-                prompt=prompt,
-                model=model,
-                permission_mode="bypassPermissions",
-                sandbox="workspace",
-            )
-            env = prepare_grok_env(paths["codex_home"] / "grok_executor", auth_mode)
-            result = await run_codex_process(
-                command,
-                cwd=paths["workspace"],
-                prompt="",
-                env=env,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-            )
-        if result.status == "success":
-            try:
-                write_headless_final_output(logs / "events.jsonl", logs / "final.md")
-                normalize_headless_events(logs / "events.jsonl", provider="grok")
-            except Exception as exc:
-                result = result.__class__(
-                    command=result.command,
-                    exit_code=result.exit_code,
-                    status="failed",
-                    timed_out=result.timed_out,
-                    started_at=result.started_at,
-                    ended_at=result.ended_at,
-                    duration_seconds=result.duration_seconds,
-                )
-                (logs / "stderr.log").open("a", encoding="utf-8").write(
-                    f"\nGrok output post-processing failed: {type(exc).__name__}: {exc}\n"
-                )
-    elif agent == "gemini":
-        gemini_prompt = build_executor_prompt(
-            task_run,
-            executor_skill_location=executor_skill_prompt_location(agent),
-        )
-        if executor_backend == "docker":
-            result = await run_gemini_process_in_docker(
-                gemini_bin=gemini_bin,
-                docker_bin=docker_bin,
-                docker_image=docker_image,
-                workspace=paths["workspace"],
-                prompt=gemini_prompt,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-                model=model,
-            )
-        else:
-            command = build_gemini_headless_command(
-                gemini_bin,
-                model=model,
-                approval_mode="yolo",
-            )
-            env = prepare_gemini_env(paths["codex_home"] / "gemini_executor", auth_mode)
-            result = await run_codex_process(
-                command,
-                cwd=paths["workspace"],
-                prompt=gemini_prompt,
-                env=env,
-                stdout_path=logs / "events.jsonl",
-                stderr_path=logs / "stderr.log",
-                timeout_seconds=task.timeout_seconds,
-            )
-        if result.status == "success":
-            try:
-                write_headless_final_output(logs / "events.jsonl", logs / "final.md")
-                normalize_headless_events(logs / "events.jsonl", provider="gemini")
-            except Exception as exc:
-                result = result.__class__(
-                    command=result.command,
-                    exit_code=result.exit_code,
-                    status="failed",
-                    timed_out=result.timed_out,
-                    started_at=result.started_at,
-                    ended_at=result.ended_at,
-                    duration_seconds=result.duration_seconds,
-                )
-                (logs / "stderr.log").open("a", encoding="utf-8").write(
-                    f"\nGemini output post-processing failed: {type(exc).__name__}: {exc}\n"
-                )
-    elif executor_backend == "local":
-        command = build_codex_exec_command(
-            codex_bin,
-            cwd=paths["workspace"],
-            final_path=logs / "final.md",
-            sandbox="workspace-write",
-            model=model,
-            allow_web_search=task.allow_web_search,
-            include_trace_config=True,
-        )
-        env = prepare_auth_home(paths["codex_home"], auth_mode)
-        result = await run_codex_process(
-            command,
-            cwd=paths["workspace"],
-            prompt=build_executor_prompt(task_run),
-            env=env,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            timeout_seconds=task.timeout_seconds,
-        )
-    elif executor_backend == "docker":
-        result = await run_codex_process_in_docker(
-            codex_bin=codex_bin,
-            docker_bin=docker_bin,
-            docker_image=docker_image,
-            workspace=paths["workspace"],
-            codex_home=paths["codex_home"],
-            prompt=build_executor_prompt(task_run),
-            auth_mode=auth_mode,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            host_final_path=logs / "final.md",
-            timeout_seconds=task.timeout_seconds,
-            sandbox="danger-full-access",
-            model=model,
-            allow_web_search=task.allow_web_search,
-            include_trace_config=True,
-        )
-    else:
-        raise ValueError(f"Unknown executor backend: {executor_backend}")
+    result = await adapter.run_executor(task_run, paths, ctx=ctx)
     trace_summary = write_trace_summary(logs / "events.jsonl", logs / "trace_summary.json")
     artifact_manifest = build_artifact_manifest(paths["outputs"], logs / "artifact_manifest.json")
     status = {
         **result.to_dict(),
-        "executor_backend": executor_backend,
-        "docker_image": docker_image if executor_backend == "docker" else None,
+        "executor_backend": ctx.executor_backend,
+        "docker_image": ctx.docker_image if ctx.executor_backend == "docker" else None,
         "trace_summary_path": str(logs / "trace_summary.json"),
         "artifact_manifest_path": str(logs / "artifact_manifest.json"),
         "usage": trace_summary.get("usage"),
@@ -835,22 +289,11 @@ async def run_single_judge(
     task: TaskSpec,
     paths: Dict[str, Path],
     *,
-    agent: str,
-    codex_bin: str,
-    claude_bin: str,
-    grok_bin: str,
-    gemini_bin: str,
-    opencode_bin: str,
-    opencode_provider: str | None,
-    opencode_base_url: str | None,
-    opencode_api_key_env: str | None,
-    claude_thinking_effort: str,
-    auth_mode: str,
-    model: str | None,
+    adapter: RuntimeAdapter,
+    judge_ctx: JudgeContext,
     timeout_seconds: int,
     executor_timing: Dict[str, Any] | None = None,
     semaphore: asyncio.Semaphore | None = None,
-    custom_spec: CustomRuntimeSpec | None = None,
 ) -> Dict[str, Any]:
     judges = paths["judges"]
     final_path = judges / "single_result.json"
@@ -858,174 +301,18 @@ async def run_single_judge(
     async def run() -> Dict[str, Any]:
         judge_workspace = prepare_evaluator_workspace(paths, "single")
         judge_final_path = judge_workspace / "single_result.json"
-        prompt = build_single_judge_prompt(task)
-        if agent.startswith("custom:"):
-            if custom_spec is None:
-                raise ValueError(f"Custom runtime spec missing for {agent}")
-            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
-            command = build_custom_command(custom_spec, role="judge", model=model, prompt=prompt)
-            env = os.environ.copy()
-            env.update(custom_spec.env)
-        elif agent == "claude":
-            command = build_claude_print_command(
-                claude_bin,
-                cwd=judge_workspace,
-                model=model,
-                output_schema=SCHEMAS_DIR / "single_result.schema.json",
-                allowed_tools="Read,Glob,Grep,Bash,LS",
-            )
-            env = prepare_claude_env(paths["codex_home"] / "judge_single_claude", auth_mode)
-        elif agent == "opencode":
-            model_name = opencode_model_name(model, opencode_provider)
-            command = build_opencode_run_command(
-                opencode_bin,
-                cwd=judge_workspace,
-                model=model_name,
-                agent=OPENCODE_JUDGE_AGENT,
-            )
-            env = prepare_opencode_env(
-                paths["codex_home"] / "judge_single_opencode",
-                auth_mode,
-                provider=opencode_provider,
-                base_url=opencode_base_url,
-                model=model_name,
-                api_key_env=opencode_api_key_env,
-            )
-            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
-        elif agent == "grok":
-            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
-            command = build_grok_headless_command(
-                grok_bin,
-                cwd=judge_workspace,
-                prompt=prompt,
-                model=model,
-                permission_mode="dontAsk",
-                sandbox="read-only",
-            )
-            env = prepare_grok_env(paths["codex_home"] / "judge_single_grok", auth_mode)
-        elif agent == "gemini":
-            command = build_gemini_headless_command(
-                gemini_bin,
-                model=model,
-                approval_mode="plan",
-            )
-            env = prepare_gemini_env(paths["codex_home"] / "judge_single_gemini", auth_mode)
-            prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "single_result.schema.json")
-        else:
-            command = build_codex_exec_command(
-                codex_bin,
-                cwd=judge_workspace,
-                final_path=judge_final_path,
-                sandbox="read-only",
-                output_schema=SCHEMAS_DIR / "single_result.schema.json",
-                model=model,
-                include_trace_config=False,
-            )
-            env = prepare_auth_home(paths["codex_home"] / "judge_single", auth_mode)
-        prompt_over_stdin = not (
-            agent == "grok"
-            or (agent.startswith("custom:") and custom_spec is not None and custom_spec.prompt_via == "arg")
-        )
-        process_result = await run_codex_process(
-            command,
-            cwd=judge_workspace,
-            prompt=append_claude_thinking_instruction(
-                prompt,
-                claude_thinking_effort if agent == "claude" else "none",
-            ) if prompt_over_stdin else "",
-            env=env,
-            stdout_path=judges / "single_events.jsonl",
+        process_result = await adapter.run_judge(
+            base_prompt=build_single_judge_prompt(task),
+            schema_path=SCHEMAS_DIR / "single_result.schema.json",
+            judge_workspace=judge_workspace,
+            judge_final_path=judge_final_path,
+            events_path=judges / "single_events.jsonl",
             stderr_path=judges / "single_stderr.log",
+            judge_home_base=paths["codex_home"] / "judge_single",
+            model=judge_ctx.model,
             timeout_seconds=timeout_seconds,
+            ctx=judge_ctx,
         )
-        if agent.startswith("custom:") and process_result.status == "success":
-            try:
-                write_custom_final_output(
-                    judges / "single_events.jsonl",
-                    judge_final_path,
-                    parser=custom_spec.parser,
-                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
-                )
-                normalize_custom_events(
-                    judges / "single_events.jsonl", parser=custom_spec.parser, provider=custom_spec.id
-                )
-            except Exception as exc:
-                process_result = process_result.__class__(
-                    command=process_result.command,
-                    exit_code=process_result.exit_code,
-                    status="failed",
-                    timed_out=process_result.timed_out,
-                    started_at=process_result.started_at,
-                    ended_at=process_result.ended_at,
-                    duration_seconds=process_result.duration_seconds,
-                )
-                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
-                    f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
-                )
-        if agent == "claude" and process_result.status == "success":
-            try:
-                write_claude_final_output(
-                    judges / "single_events.jsonl",
-                    judge_final_path,
-                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
-                )
-            except Exception as exc:
-                process_result = process_result.__class__(
-                    command=process_result.command,
-                    exit_code=process_result.exit_code,
-                    status="failed",
-                    timed_out=process_result.timed_out,
-                    started_at=process_result.started_at,
-                    ended_at=process_result.ended_at,
-                    duration_seconds=process_result.duration_seconds,
-                )
-                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
-                    f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
-        )
-        if agent == "opencode" and process_result.status == "success":
-            try:
-                append_opencode_compat_events(judges / "single_events.jsonl")
-                write_opencode_final_output(
-                    judges / "single_events.jsonl",
-                    judge_final_path,
-                    opencode_bin=opencode_bin,
-                    env=env,
-                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
-                )
-            except Exception as exc:
-                process_result = process_result.__class__(
-                    command=process_result.command,
-                    exit_code=process_result.exit_code,
-                    status="failed",
-                    timed_out=process_result.timed_out,
-                    started_at=process_result.started_at,
-                    ended_at=process_result.ended_at,
-                    duration_seconds=process_result.duration_seconds,
-                )
-                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
-                    f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
-                )
-        if agent in {"grok", "gemini"} and process_result.status == "success":
-            try:
-                write_headless_final_output(
-                    judges / "single_events.jsonl",
-                    judge_final_path,
-                    output_schema=SCHEMAS_DIR / "single_result.schema.json",
-                )
-                normalize_headless_events(judges / "single_events.jsonl", provider=agent)
-            except Exception as exc:
-                process_result = process_result.__class__(
-                    command=process_result.command,
-                    exit_code=process_result.exit_code,
-                    status="failed",
-                    timed_out=process_result.timed_out,
-                    started_at=process_result.started_at,
-                    ended_at=process_result.ended_at,
-                    duration_seconds=process_result.duration_seconds,
-                )
-                (judges / "single_stderr.log").open("a", encoding="utf-8").write(
-                    f"\n{agent.title()} output post-processing failed: {type(exc).__name__}: {exc}\n"
-                )
         if judge_final_path.exists():
             shutil.copy2(judge_final_path, final_path)
         return process_result.to_dict()
@@ -1060,25 +347,14 @@ async def run_parallel_judges(
     task: TaskSpec,
     paths: Dict[str, Path],
     *,
-    agent: str,
-    codex_bin: str,
-    claude_bin: str,
-    grok_bin: str,
-    gemini_bin: str,
-    opencode_bin: str,
-    opencode_provider: str | None,
-    opencode_base_url: str | None,
-    opencode_api_key_env: str | None,
-    claude_thinking_effort: str,
-    auth_mode: str,
-    model: str | None,
+    adapter: RuntimeAdapter,
+    judge_ctx: JudgeContext,
     timeout_seconds: int,
     executor_timing: Dict[str, Any] | None,
     semaphore: asyncio.Semaphore,
     launch_order: Sequence[Rubric],
     progress: BenchmarkProgress | None = None,
     run_task_id: str | None = None,
-    custom_spec: CustomRuntimeSpec | None = None,
 ) -> Dict[str, Any]:
     async def run_one(rubric: Rubric) -> None:
         async with semaphore:
@@ -1088,174 +364,18 @@ async def run_parallel_judges(
             rubric_dir.mkdir(parents=True, exist_ok=True)
             judge_workspace = prepare_evaluator_workspace(paths, f"parallel_{rubric.id}")
             judge_final_path = judge_workspace / "result.json"
-            prompt = build_parallel_judge_prompt(task, rubric)
-            if agent.startswith("custom:"):
-                if custom_spec is None:
-                    raise ValueError(f"Custom runtime spec missing for {agent}")
-                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
-                command = build_custom_command(custom_spec, role="judge", model=model, prompt=prompt)
-                env = os.environ.copy()
-                env.update(custom_spec.env)
-            elif agent == "claude":
-                command = build_claude_print_command(
-                    claude_bin,
-                    cwd=judge_workspace,
-                    model=model,
-                    output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
-                    allowed_tools="Read,Glob,Grep,Bash,LS",
-                )
-                env = prepare_claude_env(paths["codex_home"] / f"judge_{rubric.id}_claude", auth_mode)
-            elif agent == "opencode":
-                model_name = opencode_model_name(model, opencode_provider)
-                command = build_opencode_run_command(
-                    opencode_bin,
-                    cwd=judge_workspace,
-                    model=model_name,
-                    agent=OPENCODE_JUDGE_AGENT,
-                )
-                env = prepare_opencode_env(
-                    paths["codex_home"] / f"judge_{rubric.id}_opencode",
-                    auth_mode,
-                    provider=opencode_provider,
-                    base_url=opencode_base_url,
-                    model=model_name,
-                    api_key_env=opencode_api_key_env,
-                )
-                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
-            elif agent == "grok":
-                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
-                command = build_grok_headless_command(
-                    grok_bin,
-                    cwd=judge_workspace,
-                    prompt=prompt,
-                    model=model,
-                    permission_mode="dontAsk",
-                    sandbox="read-only",
-                )
-                env = prepare_grok_env(paths["codex_home"] / f"judge_{rubric.id}_grok", auth_mode)
-            elif agent == "gemini":
-                command = build_gemini_headless_command(
-                    gemini_bin,
-                    model=model,
-                    approval_mode="plan",
-                )
-                env = prepare_gemini_env(paths["codex_home"] / f"judge_{rubric.id}_gemini", auth_mode)
-                prompt = append_json_schema_instruction(prompt, SCHEMAS_DIR / "rubric_result.schema.json")
-            else:
-                command = build_codex_exec_command(
-                    codex_bin,
-                    cwd=judge_workspace,
-                    final_path=judge_final_path,
-                    sandbox="read-only",
-                    output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
-                    model=model,
-                    include_trace_config=False,
-                )
-                env = prepare_auth_home(paths["codex_home"] / f"judge_{rubric.id}", auth_mode)
-            prompt_over_stdin = not (
-                agent == "grok"
-                or (agent.startswith("custom:") and custom_spec is not None and custom_spec.prompt_via == "arg")
-            )
-            process_result = await run_codex_process(
-                command,
-                cwd=judge_workspace,
-                prompt=append_claude_thinking_instruction(
-                    prompt,
-                    claude_thinking_effort if agent == "claude" else "none",
-                ) if prompt_over_stdin else "",
-                env=env,
-                stdout_path=rubric_dir / "events.jsonl",
+            process_result = await adapter.run_judge(
+                base_prompt=build_parallel_judge_prompt(task, rubric),
+                schema_path=SCHEMAS_DIR / "rubric_result.schema.json",
+                judge_workspace=judge_workspace,
+                judge_final_path=judge_final_path,
+                events_path=rubric_dir / "events.jsonl",
                 stderr_path=rubric_dir / "stderr.log",
+                judge_home_base=paths["codex_home"] / f"judge_{rubric.id}",
+                model=judge_ctx.model,
                 timeout_seconds=timeout_seconds,
+                ctx=judge_ctx,
             )
-            if agent.startswith("custom:") and process_result.status == "success":
-                try:
-                    write_custom_final_output(
-                        rubric_dir / "events.jsonl",
-                        judge_final_path,
-                        parser=custom_spec.parser,
-                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
-                    )
-                    normalize_custom_events(
-                        rubric_dir / "events.jsonl", parser=custom_spec.parser, provider=custom_spec.id
-                    )
-                except Exception as exc:
-                    process_result = process_result.__class__(
-                        command=process_result.command,
-                        exit_code=process_result.exit_code,
-                        status="failed",
-                        timed_out=process_result.timed_out,
-                        started_at=process_result.started_at,
-                        ended_at=process_result.ended_at,
-                        duration_seconds=process_result.duration_seconds,
-                    )
-                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
-                        f"\nCustom runtime output post-processing failed: {type(exc).__name__}: {exc}\n"
-                    )
-            if agent == "claude" and process_result.status == "success":
-                try:
-                    write_claude_final_output(
-                        rubric_dir / "events.jsonl",
-                        judge_final_path,
-                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
-                    )
-                except Exception as exc:
-                    process_result = process_result.__class__(
-                        command=process_result.command,
-                        exit_code=process_result.exit_code,
-                        status="failed",
-                        timed_out=process_result.timed_out,
-                        started_at=process_result.started_at,
-                        ended_at=process_result.ended_at,
-                        duration_seconds=process_result.duration_seconds,
-                    )
-                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
-                        f"\nClaude output post-processing failed: {type(exc).__name__}: {exc}\n"
-            )
-            if agent == "opencode" and process_result.status == "success":
-                try:
-                    append_opencode_compat_events(rubric_dir / "events.jsonl")
-                    write_opencode_final_output(
-                        rubric_dir / "events.jsonl",
-                        judge_final_path,
-                        opencode_bin=opencode_bin,
-                        env=env,
-                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
-                    )
-                except Exception as exc:
-                    process_result = process_result.__class__(
-                        command=process_result.command,
-                        exit_code=process_result.exit_code,
-                        status="failed",
-                        timed_out=process_result.timed_out,
-                        started_at=process_result.started_at,
-                        ended_at=process_result.ended_at,
-                        duration_seconds=process_result.duration_seconds,
-                    )
-                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
-                        f"\nOpenCode output post-processing failed: {type(exc).__name__}: {exc}\n"
-                    )
-            if agent in {"grok", "gemini"} and process_result.status == "success":
-                try:
-                    write_headless_final_output(
-                        rubric_dir / "events.jsonl",
-                        judge_final_path,
-                        output_schema=SCHEMAS_DIR / "rubric_result.schema.json",
-                    )
-                    normalize_headless_events(rubric_dir / "events.jsonl", provider=agent)
-                except Exception as exc:
-                    process_result = process_result.__class__(
-                        command=process_result.command,
-                        exit_code=process_result.exit_code,
-                        status="failed",
-                        timed_out=process_result.timed_out,
-                        started_at=process_result.started_at,
-                        ended_at=process_result.ended_at,
-                        duration_seconds=process_result.duration_seconds,
-                    )
-                    (rubric_dir / "stderr.log").open("a", encoding="utf-8").write(
-                        f"\n{agent.title()} output post-processing failed: {type(exc).__name__}: {exc}\n"
-                    )
             if judge_final_path.exists():
                 shutil.copy2(judge_final_path, rubric_dir / "result.json")
             status = process_result.to_dict()
@@ -1608,6 +728,42 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     }
     json_dump(run_root / "run_config.json", run_config)
 
+    executor_adapter = resolve(
+        args.executor_agent, spec=args.executor_runtime_spec, runtimes_dir=args.runtimes_dir
+    )
+    evaluator_adapter = resolve(
+        args.evaluator_agent, spec=args.evaluator_runtime_spec, runtimes_dir=args.runtimes_dir
+    )
+    runtime_bins = {
+        "codex": args.codex_bin,
+        "claude": args.claude_bin,
+        "grok": args.grok_bin,
+        "gemini": args.gemini_bin,
+        "opencode": args.opencode_bin,
+    }
+    executor_ctx = ExecutorContext(
+        bins=runtime_bins,
+        docker_bin=args.docker_bin,
+        docker_image=args.docker_image,
+        executor_backend=args.executor_backend,
+        auth_mode=args.executor_auth_mode,
+        model=args.executor_model,
+        claude_thinking_effort=args.claude_thinking_effort,
+        claude_max_turns=args.claude_max_turns,
+        opencode_provider=args.opencode_provider,
+        opencode_base_url=args.opencode_base_url,
+        opencode_api_key_env=args.opencode_api_key_env,
+    )
+    judge_ctx = JudgeContext(
+        bins=runtime_bins,
+        auth_mode=args.evaluator_auth_mode,
+        model=args.evaluator_model,
+        claude_thinking_effort=args.claude_thinking_effort,
+        opencode_provider=args.opencode_provider,
+        opencode_base_url=args.opencode_base_url,
+        opencode_api_key_env=args.opencode_api_key_env,
+    )
+
     records = []
     for task_run, run_task_id in zip(ordered_task_runs, run_task_ids):
         records.append(
@@ -1621,6 +777,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     run_task_id,
                     executor_backend=args.executor_backend,
                     executor_agent=args.executor_agent,
+                    executor_adapter=executor_adapter,
                 ),
             }
         )
@@ -1653,23 +810,8 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     status = await run_executor(
                         record["task_run"],
                         record["paths"],
-                        agent=args.executor_agent,
-                        codex_bin=args.codex_bin,
-                        claude_bin=args.claude_bin,
-                        grok_bin=args.grok_bin,
-                        gemini_bin=args.gemini_bin,
-                        opencode_bin=args.opencode_bin,
-                        opencode_provider=args.opencode_provider,
-                        opencode_base_url=args.opencode_base_url,
-                        opencode_api_key_env=args.opencode_api_key_env,
-                        claude_thinking_effort=args.claude_thinking_effort,
-                        claude_max_turns=args.claude_max_turns,
-                        auth_mode=args.executor_auth_mode,
-                        model=args.executor_model,
-                        executor_backend=args.executor_backend,
-                        docker_bin=args.docker_bin,
-                        docker_image=args.docker_image,
-                        custom_spec=args.executor_runtime_spec,
+                        adapter=executor_adapter,
+                        ctx=executor_ctx,
                     )
                 except Exception as exc:
                     # One crashing task must not abort the whole run.
@@ -1713,22 +855,11 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         modes["single"] = await run_single_judge(
                             task,
                             paths,
-                            agent=args.evaluator_agent,
-                            codex_bin=args.codex_bin,
-                            claude_bin=args.claude_bin,
-                            grok_bin=args.grok_bin,
-                            gemini_bin=args.gemini_bin,
-                            opencode_bin=args.opencode_bin,
-                            opencode_provider=args.opencode_provider,
-                            opencode_base_url=args.opencode_base_url,
-                            opencode_api_key_env=args.opencode_api_key_env,
-                            claude_thinking_effort=args.claude_thinking_effort,
-                            auth_mode=args.evaluator_auth_mode,
-                            model=args.evaluator_model,
+                            adapter=evaluator_adapter,
+                            judge_ctx=judge_ctx,
                             timeout_seconds=args.evaluator_timeout_seconds,
                             executor_timing=executor_timing,
                             semaphore=evaluator_semaphore,
-                            custom_spec=args.evaluator_runtime_spec,
                         )
                     except Exception as exc:
                         modes["single"] = {
@@ -1755,25 +886,14 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         modes["parallel"] = await run_parallel_judges(
                             task,
                             paths,
-                            agent=args.evaluator_agent,
-                            codex_bin=args.codex_bin,
-                            claude_bin=args.claude_bin,
-                            grok_bin=args.grok_bin,
-                            gemini_bin=args.gemini_bin,
-                            opencode_bin=args.opencode_bin,
-                            opencode_provider=args.opencode_provider,
-                            opencode_base_url=args.opencode_base_url,
-                            opencode_api_key_env=args.opencode_api_key_env,
-                            claude_thinking_effort=args.claude_thinking_effort,
-                            auth_mode=args.evaluator_auth_mode,
-                            model=args.evaluator_model,
+                            adapter=evaluator_adapter,
+                            judge_ctx=judge_ctx,
                             timeout_seconds=args.evaluator_timeout_seconds,
                             executor_timing=executor_timing,
                             semaphore=evaluator_semaphore,
                             launch_order=rubric_order,
                             progress=progress,
                             run_task_id=record["run_task_id"],
-                            custom_spec=args.evaluator_runtime_spec,
                         )
                     except Exception as exc:
                         modes["parallel"] = {
@@ -2037,16 +1157,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     args.executor_runtime_spec = resolve_runtime_spec(args.executor_agent, "--executor-agent")
     args.evaluator_runtime_spec = resolve_runtime_spec(args.evaluator_agent, "--evaluator-agent")
-    def backend_supports_docker(agent: str, spec: CustomRuntimeSpec | None) -> bool:
-        if agent in BUILTIN_AGENTS:
-            return True
-        return agent.startswith("custom:") and spec is not None and spec.docker_image is not None
-
+    executor_adapter = resolve(
+        args.executor_agent, spec=args.executor_runtime_spec, runtimes_dir=args.runtimes_dir
+    )
+    # Docker capability and the default backend are facts of the runtime, read
+    # off its RuntimeInfo rather than branched on the agent id here.
     if args.executor_backend is None:
-        args.executor_backend = "docker" if args.executor_agent == "codex" else "local"
-    elif args.executor_backend == "docker" and not backend_supports_docker(
-        args.executor_agent, args.executor_runtime_spec
-    ):
+        args.executor_backend = executor_adapter.info.default_executor_backend
+    elif args.executor_backend == "docker" and not executor_adapter.info.docker_capable:
         parser.error(
             f"--executor-agent {args.executor_agent} currently requires --executor-backend local; "
             "Docker isolation needs a docker section in the custom runtime spec."
