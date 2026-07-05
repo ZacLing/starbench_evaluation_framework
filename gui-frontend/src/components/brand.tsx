@@ -19,6 +19,7 @@ import {
   Vercel,
 } from "@lobehub/icons"
 import { Plug, SquareTerminal } from "lucide-react"
+import type { AgentsPayload, ProviderFilter } from "@/lib/api"
 
 /* Brand icons for model families and agent runtimes (lobe-icons, MIT). */
 
@@ -125,68 +126,42 @@ export function AgentIcon({
 }
 
 /* Runtime <-> provider compatibility is decided by wire protocol, not vendor.
-   Every runtime accepts every provider that speaks its protocol:
-   - Claude Code: Anthropic protocol (official, or any anthropic_base_url) via env
-   - Codex: OpenAI Responses protocol (official, or any OpenAI-compatible
-     gateway) via config overrides in the codex bin prefix
-   - OpenCode: OpenAI protocol via gateway flags
-   - Gemini CLI: Gemini protocol (official, or any gemini_base_url) via env
-   - Grok Build: official only (the CLI has no endpoint override mechanism) */
-const OPENAI_PROTOCOL_KINDS = new Set(["openai-compatible", "openai", "xai"])
-
+   The matrix is owned by the backend adapter registry and arrives via
+   /api/agents as each runtime's `provider_filter`; this is a single data-driven
+   code path — built-in and custom runtimes are filtered the same way, with no
+   per-runtime switch to keep in sync with the backend. */
 interface CompatProvider {
   kind: string
   anthropic_base_url?: string | null
   gemini_base_url?: string | null
 }
 
-export function compatibleProviders<T extends CompatProvider>(
-  runtime: string,
-  providers: T[],
-  protocol?: string | null,
-): T[] {
-  if (runtime.startsWith("custom:")) {
-    switch (protocol ?? "none") {
-      case "openai":
-        return providers.filter((provider) => OPENAI_PROTOCOL_KINDS.has(provider.kind))
-      case "anthropic":
-        return providers.filter(
-          (provider) => provider.kind === "anthropic" || Boolean(provider.anthropic_base_url),
-        )
-      case "gemini":
-        return providers.filter(
-          (provider) => provider.kind === "google" || Boolean(provider.gemini_base_url),
-        )
-      default:
-        // protocol "none": the CLI uses its own login/config; no provider applies.
-        return []
-    }
-  }
-  switch (runtime) {
-    case "claude":
-      return providers.filter(
-        (provider) => provider.kind === "anthropic" || Boolean(provider.anthropic_base_url),
-      )
-    case "opencode":
-      return providers.filter((provider) => OPENAI_PROTOCOL_KINDS.has(provider.kind))
-    case "codex":
-      return providers.filter(
-        (provider) => provider.kind === "openai" || provider.kind === "openai-compatible",
-      )
-    case "gemini":
-      return providers.filter(
-        (provider) => provider.kind === "google" || Boolean(provider.gemini_base_url),
-      )
-    case "grok":
-      return providers.filter((provider) => provider.kind === "xai")
-    default:
-      return providers
-  }
+export function providerMatchesFilter(
+  filter: ProviderFilter,
+  provider: CompatProvider,
+): boolean {
+  if (filter.kinds.includes(provider.kind)) return true
+  if (filter.accepts_anthropic_endpoint && Boolean(provider.anthropic_base_url)) return true
+  if (filter.accepts_gemini_endpoint && Boolean(provider.gemini_base_url)) return true
+  return false
 }
 
-export const DEFAULT_OPENAI_BASE_URLS: Record<string, string> = {
-  openai: "https://api.openai.com/v1",
-  xai: "https://api.x.ai/v1",
+export function compatibleProviders<T extends CompatProvider>(
+  filter: ProviderFilter | undefined,
+  providers: T[],
+): T[] {
+  if (!filter) return []
+  return providers.filter((provider) => providerMatchesFilter(filter, provider))
+}
+
+/* Map every runtime id (built-in and custom) to its provider filter, so call
+   sites can resolve a filter from a runtime id and the /api/agents payload. */
+export function runtimeFilters(agents?: AgentsPayload): Record<string, ProviderFilter> {
+  const map: Record<string, ProviderFilter> = {}
+  for (const runtime of agents?.builtin ?? []) map[runtime.id] = runtime.provider_filter
+  for (const runtime of agents?.custom ?? [])
+    if (runtime.provider_filter) map[runtime.id] = runtime.provider_filter
+  return map
 }
 
 export const AGENT_TO_FAMILY: Record<string, FamilyId> = {

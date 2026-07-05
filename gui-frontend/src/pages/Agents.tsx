@@ -119,7 +119,7 @@ export default function Agents() {
             label={agent.label}
             description={agent.note}
             protocol={agent.protocol}
-            providerCount={compatibleProviders(agent.id, providers).length}
+            providerCount={compatibleProviders(agent.provider_filter, providers).length}
             dockerImage={agent.docker_image}
             cli={agent.cli}
             actionLabel={`About ${agent.label}`}
@@ -149,7 +149,7 @@ export default function Agents() {
               label={agent.label ?? agent.spec_id}
               description={agent.description || (agent.command ?? "")}
               protocol={agent.protocol ?? "none"}
-              providerCount={compatibleProviders(agent.id, providers, agent.protocol).length}
+              providerCount={compatibleProviders(agent.provider_filter, providers).length}
               dockerImage={agent.docker_image}
               cli={agent.cli}
               actionLabel={`Edit ${agent.label ?? agent.spec_id}`}
@@ -310,7 +310,7 @@ function BuiltinDetails({
                 {PROTOCOL_LABELS[agent.protocol] ?? agent.protocol}
               </DetailRow>
               <DetailRow label="Compatible providers">
-                {compatibleProviders(agent.id, providers).length || "none configured"}
+                {compatibleProviders(agent.provider_filter, providers).length || "none configured"}
               </DetailRow>
               <DetailRow label="Docker image">
                 <span className="font-mono text-xs">{agent.docker_image}</span>

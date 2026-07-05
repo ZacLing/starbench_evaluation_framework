@@ -1,5 +1,40 @@
 /* Typed client for the StarBench Console API (src/starbench/gui/server.py). */
 
+/* Core API shapes are generated from src/starbench/gui/contracts.py
+   (`make gen-types`) so the front and back ends cannot drift. Import them for
+   local use and re-export them so consumers keep importing from "@/lib/api". */
+import type {
+  AgentsPayload,
+  AiProvider,
+  AuthKind,
+  BuiltinRuntime,
+  Contender,
+  CustomRuntime,
+  ExperimentPlanItem,
+  ModelsSource,
+  ProviderFilter,
+  ProviderKind,
+  ProvidersPayload,
+  RuntimeCli,
+  RuntimeProtocol,
+} from "./api-types"
+
+export type {
+  AgentsPayload,
+  AiProvider,
+  AuthKind,
+  BuiltinRuntime,
+  Contender,
+  CustomRuntime,
+  ExperimentPlanItem,
+  ModelsSource,
+  ProviderFilter,
+  ProviderKind,
+  ProvidersPayload,
+  RuntimeCli,
+  RuntimeProtocol,
+}
+
 export interface ExecutorStats {
   success: number
   failed: number
@@ -292,71 +327,6 @@ export interface ProfilesPayload {
   persisted?: boolean
 }
 
-export interface Contender {
-  label: string
-  agent: string
-  model: string
-  auth_mode: string
-  thinking_effort?: string
-  opencode_provider?: string
-  opencode_base_url?: string
-  opencode_api_key_env?: string
-  codex_bin?: string
-  env?: Record<string, { value?: string; from_env?: string }>
-}
-
-export type RuntimeProtocol = "openai" | "anthropic" | "gemini" | "xai" | "none"
-
-export interface RuntimeCli {
-  bin: string
-  present: boolean
-  path: string | null
-}
-
-export interface BuiltinRuntime {
-  id: string
-  label: string
-  note: string
-  protocol: RuntimeProtocol
-  docker_capable: boolean
-  docker_image: string
-  builtin: true
-  cli: RuntimeCli
-}
-
-export interface CustomRuntime {
-  id: string
-  spec_id: string
-  builtin: false
-  label?: string
-  description?: string
-  icon?: string
-  protocol?: RuntimeProtocol
-  base_url_env?: string
-  api_key_env?: string
-  command?: string
-  args?: string[]
-  judge_args?: string[]
-  judge_args_inherited?: boolean
-  model_flag?: string | null
-  prompt_via?: string
-  prompt_flag?: string
-  parser?: string
-  env?: Record<string, string>
-  docker_image?: string | null
-  docker_env_passthrough?: string[]
-  docker_capable?: boolean
-  cli?: RuntimeCli
-  source_path: string
-  error: string | null
-}
-
-export interface AgentsPayload {
-  runtimes_dir: string
-  builtin: BuiltinRuntime[]
-  custom: CustomRuntime[]
-}
-
 export interface AgentTemplate {
   template_id: string
   title: string
@@ -383,40 +353,6 @@ export interface CustomRuntimePayload {
   api_key_env?: string
   docker_image?: string
   docker_env_passthrough?: string[]
-}
-
-export type ProviderKind = "anthropic" | "openai" | "google" | "xai" | "openai-compatible"
-
-export interface AiProvider {
-  id: string
-  name: string
-  kind: ProviderKind
-  auth: "api_key" | "cli_login"
-  base_url: string
-  anthropic_base_url?: string | null
-  gemini_base_url?: string | null
-  api_key_env: string
-  models: string[]
-  models_fetched_at: string | null
-  models_source: "api" | "catalog" | null
-  agent: string
-  key_present: boolean
-}
-
-export interface ProvidersPayload {
-  providers: AiProvider[]
-  persisted?: boolean
-}
-
-export interface ExperimentPlanItem {
-  label: string
-  agent: string
-  model: string
-  run_id: string
-  backend: string
-  backend_downgraded: boolean
-  docker_image?: string
-  argv: string[]
 }
 
 export interface ExperimentRecord {

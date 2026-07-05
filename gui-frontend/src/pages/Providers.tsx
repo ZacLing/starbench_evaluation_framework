@@ -32,7 +32,13 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AGENT_LABELS, AgentIcon, compatibleProviders, ProviderIcon } from "@/components/brand"
+import {
+  AGENT_LABELS,
+  AgentIcon,
+  compatibleProviders,
+  ProviderIcon,
+  runtimeFilters,
+} from "@/components/brand"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type AiProvider, type CustomRuntime, type ProviderKind } from "@/lib/api"
 import { fmtTime } from "@/lib/format"
@@ -89,15 +95,14 @@ export default function Providers() {
   )
 
   /* Which agents can run models from this provider — the decoupling matrix,
-     drawn on the resource side. */
+     drawn on the resource side. Filters come from /api/agents (single source). */
+  const filterMap = runtimeFilters(agentsQuery.data)
   const runtimesFor = (provider: AiProvider): RuntimeRef[] => [
     ...Object.keys(AGENT_LABELS)
-      .filter((runtime) => compatibleProviders(runtime, [provider]).length > 0)
+      .filter((runtime) => compatibleProviders(filterMap[runtime], [provider]).length > 0)
       .map((runtime) => ({ id: runtime, label: AGENT_LABELS[runtime] })),
     ...customRuntimes
-      .filter(
-        (agent) => compatibleProviders(agent.id, [provider], agent.protocol ?? "none").length > 0,
-      )
+      .filter((agent) => compatibleProviders(agent.provider_filter, [provider]).length > 0)
       .map((agent) => ({ id: agent.id, icon: agent.icon, label: agent.label ?? agent.spec_id })),
   ]
 

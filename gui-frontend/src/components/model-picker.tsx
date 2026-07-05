@@ -8,7 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { compatibleProviders, ProviderIcon } from "@/components/brand"
-import { api, type AiProvider } from "@/lib/api"
+import { api, type AiProvider, type ProviderFilter } from "@/lib/api"
 
 const RUNTIME_DEFAULT = "__runtime_default__"
 
@@ -18,23 +18,20 @@ export function ProviderModelPicker({
   providerId,
   model,
   onChange,
-  agent,
-  protocol,
+  providerFilter,
   filter,
 }: {
   providerId?: string
   model: string
   onChange: (value: { provider: AiProvider; model: string }) => void
-  /** Restrict the provider list to providers protocol-compatible with this runtime. */
-  agent?: string
-  /** Protocol declared by a custom runtime (drives the provider filter). */
-  protocol?: string | null
+  /** The runtime's provider filter (from /api/agents); undefined = show none. */
+  providerFilter?: ProviderFilter
   /** Extra narrowing on top of protocol compatibility. */
   filter?: (provider: AiProvider) => boolean
 }) {
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const all = providersQuery.data?.providers ?? []
-  const compatible = agent ? compatibleProviders(agent, all, protocol) : all
+  const compatible = compatibleProviders(providerFilter, all)
   const providers = filter ? compatible.filter(filter) : compatible
   const provider = providers.find((item) => item.id === providerId)
 

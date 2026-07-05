@@ -38,7 +38,13 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
-import { AGENT_LABELS, AGENT_NOTES, AgentIcon, compatibleProviders, DEFAULT_OPENAI_BASE_URLS } from "@/components/brand"
+import {
+  AGENT_LABELS,
+  AGENT_NOTES,
+  AgentIcon,
+  compatibleProviders,
+  runtimeFilters,
+} from "@/components/brand"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/pages/Dashboard"
 import {
@@ -48,6 +54,7 @@ import {
   type CustomRuntime,
   type ExperimentPlanItem,
   type Profile,
+  type ProviderFilter,
   type SharedConfig,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -86,110 +93,10 @@ function timestampName(prefix: string): string {
   )}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 
-/* A (runtime, provider) pair fully determines auth mode, gateway flags,
-   codex config overrides, and env overrides — one channel per runtime:
-   Claude Code and Gemini CLI take env vars, Codex takes config overrides in
-   its bin prefix (endpoint must speak the OpenAI Responses API), OpenCode
-   takes gateway flags. Grok Build has no override channel. */
-interface ContenderSettings {
-  auth_mode: string
-  gateway: Record<string, string | undefined>
-  codex_bin?: string
-  env?: Record<string, { value?: string; from_env?: string }>
-}
-
-/* Endpoint the provider exposes for a given wire protocol. */
-function providerEndpoint(protocol: string, provider: AiProvider): string {
-  switch (protocol) {
-    case "openai":
-      return provider.base_url || DEFAULT_OPENAI_BASE_URLS[provider.kind] || ""
-    case "anthropic":
-      return provider.kind === "anthropic"
-        ? provider.base_url
-        : (provider.anthropic_base_url ?? "")
-    case "gemini":
-      return provider.kind === "google" ? provider.base_url : (provider.gemini_base_url ?? "")
-    default:
-      return ""
-  }
-}
-
-function providerSettings(
-  runtime: string,
-  provider: AiProvider,
-  custom?: CustomRuntime,
-): ContenderSettings {
-  const authMode = provider.auth === "cli_login" ? "global" : "env"
-  if (runtime.startsWith("custom:") && custom) {
-    /* Custom runtimes declare which env vars carry the endpoint and key. */
-    const env: Record<string, { value?: string; from_env?: string }> = {}
-    const endpoint = providerEndpoint(custom.protocol ?? "none", provider)
-    if (custom.base_url_env && endpoint) env[custom.base_url_env] = { value: endpoint }
-    if (custom.api_key_env && provider.api_key_env)
-      env[custom.api_key_env] = { from_env: provider.api_key_env }
-    return {
-      auth_mode: authMode,
-      gateway: {},
-      env: Object.keys(env).length ? env : undefined,
-    }
-  }
-  if (runtime === "opencode") {
-    return {
-      auth_mode: authMode,
-      gateway: {
-        opencode_provider: provider.id,
-        opencode_base_url:
-          provider.base_url || DEFAULT_OPENAI_BASE_URLS[provider.kind] || undefined,
-        opencode_api_key_env: provider.api_key_env || undefined,
-      },
-    }
-  }
-  if (runtime === "codex" && provider.kind !== "openai" && provider.base_url) {
-    /* Official codex config overrides; ids are SAFE_ID so values need no quoting. */
-    const gw = provider.id.replace(/[^A-Za-z0-9_]/g, "_")
-    return {
-      auth_mode: authMode,
-      gateway: {},
-      codex_bin: [
-        "codex",
-        `-c model_provider=${gw}`,
-        `-c model_providers.${gw}.name=${gw}`,
-        `-c model_providers.${gw}.base_url=${provider.base_url}`,
-        `-c model_providers.${gw}.env_key=${provider.api_key_env || "OPENAI_API_KEY"}`,
-        `-c model_providers.${gw}.wire_api=responses`,
-      ].join(" "),
-    }
-  }
-  if (runtime === "claude") {
-    const gatewayUrl =
-      provider.kind === "anthropic" ? provider.base_url : provider.anthropic_base_url
-    if (gatewayUrl) {
-      return {
-        auth_mode: authMode,
-        gateway: {},
-        env: {
-          ANTHROPIC_BASE_URL: { value: gatewayUrl },
-          ANTHROPIC_AUTH_TOKEN: { from_env: provider.api_key_env || "ANTHROPIC_AUTH_TOKEN" },
-        },
-      }
-    }
-  }
-  if (runtime === "gemini") {
-    const gatewayUrl =
-      provider.kind === "google" ? provider.base_url : provider.gemini_base_url
-    if (gatewayUrl) {
-      return {
-        auth_mode: authMode,
-        gateway: {},
-        env: {
-          GOOGLE_GEMINI_BASE_URL: { value: gatewayUrl },
-          GEMINI_API_KEY: { from_env: provider.api_key_env || "GEMINI_API_KEY" },
-        },
-      }
-    }
-  }
-  return { auth_mode: authMode, gateway: {} }
-}
+/* Contenders and the judge are sent as pure references to a provider
+   (`provider_id`); the backend resolves the auth mode, gateway flags, codex
+   config overrides and env injection from the runtime's channel + the provider
+   (see gui/injection.py). No wire-protocol knowledge lives in this view. */
 
 let contenderCounter = 0
 
@@ -232,6 +139,12 @@ export default function NewRun() {
         : true,
     [customByRuntime],
   )
+  /* Provider-compatibility filters, keyed by runtime id, from /api/agents. */
+  const filterByRuntime = useMemo(() => runtimeFilters(agentsQuery.data), [agentsQuery.data])
+  const filterFor = useCallback(
+    (runtime: string): ProviderFilter | undefined => filterByRuntime[runtime],
+    [filterByRuntime],
+  )
 
   const [step, setStep] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -272,7 +185,7 @@ export default function NewRun() {
 
   const addContender = (runtime: string) => {
     contenderCounter += 1
-    const compatible = compatibleProviders(runtime, providers, customByRuntime[runtime]?.protocol)
+    const compatible = compatibleProviders(filterFor(runtime), providers)
     const provider = compatible.find((item) => item.models.length) ?? compatible[0]
     setContenders((current) => [
       ...current,
@@ -297,21 +210,16 @@ export default function NewRun() {
       const provider = providers.find((item) => item.id === draft.provider_id)
       const providerless = custom && (custom.protocol ?? "none") === "none"
       if (!provider && !providerless) return []
-      const settings: ContenderSettings = provider
-        ? providerSettings(draft.runtime, provider, custom)
-        : { auth_mode: "global", gateway: {} }
       /* A custom runtime without a model flag cannot receive a model choice. */
       const model = custom && !custom.model_flag ? "" : draft.model.trim()
+      /* Pure reference: the backend resolves auth/gateway/env from provider_id. */
       return [
         {
           label: `${runtimeLabel(draft.runtime)} ${model || "default"}`.trim(),
           agent: draft.runtime,
+          provider_id: draft.provider_id,
           model,
-          auth_mode: settings.auth_mode,
           thinking_effort: perFields.includes("thinking_effort") ? draft.thinking_effort : "none",
-          ...settings.gateway,
-          codex_bin: settings.codex_bin,
-          env: settings.env,
         },
       ]
     })
@@ -424,6 +332,7 @@ export default function NewRun() {
           customRuntimes={customRuntimes}
           customByRuntime={customByRuntime}
           dockerCapable={dockerCapable}
+          filterFor={filterFor}
           contenders={contenders}
           perFields={perFields}
           backend={String(shared.executor_backend ?? "local")}
@@ -459,6 +368,7 @@ export default function NewRun() {
           judgeConflicts={judgeConflicts.length}
           customRuntimes={customRuntimes}
           customByRuntime={customByRuntime}
+          filterFor={filterFor}
           runtimeLabel={runtimeLabel}
           localRuntimeNames={[
             ...new Set(
@@ -683,6 +593,7 @@ function StepContenders({
   customRuntimes,
   customByRuntime,
   dockerCapable,
+  filterFor,
   contenders,
   perFields,
   backend,
@@ -694,6 +605,7 @@ function StepContenders({
   customRuntimes: CustomRuntime[]
   customByRuntime: Record<string, CustomRuntime>
   dockerCapable: (runtime: string) => boolean
+  filterFor: (runtime: string) => ProviderFilter | undefined
   contenders: ContenderDraft[]
   perFields: string[]
   backend: string
@@ -733,7 +645,7 @@ function StepContenders({
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
             {options.map((option) => {
-              const compatible = compatibleProviders(option.id, providers, option.protocol)
+              const compatible = compatibleProviders(filterFor(option.id), providers)
               const modelCount = compatible.reduce((sum, item) => sum + item.models.length, 0)
               const ownLogin = option.protocol === "none"
               return (
@@ -786,6 +698,7 @@ function StepContenders({
               providers={providers}
               custom={customByRuntime[draft.runtime]}
               dockerCapable={dockerCapable(draft.runtime)}
+              providerFilter={filterFor(draft.runtime)}
               perFields={perFields}
               backend={backend}
               onUpdate={(patch) => onUpdate(draft.key, patch)}
@@ -808,6 +721,7 @@ function ContenderCard({
   providers,
   custom,
   dockerCapable,
+  providerFilter,
   perFields,
   backend,
   onUpdate,
@@ -818,6 +732,7 @@ function ContenderCard({
   providers: AiProvider[]
   custom?: CustomRuntime
   dockerCapable: boolean
+  providerFilter?: ProviderFilter
   perFields: string[]
   backend: string
   onUpdate: (patch: Partial<ContenderDraft>) => void
@@ -826,8 +741,7 @@ function ContenderCard({
   const provider = providers.find((item) => item.id === draft.provider_id)
   const dockerDowngraded = backend === "docker" && !dockerCapable
   const ownLogin = custom ? (custom.protocol ?? "none") === "none" : false
-  const hasCompatibleProvider =
-    compatibleProviders(draft.runtime, providers, custom?.protocol).length > 0
+  const hasCompatibleProvider = compatibleProviders(providerFilter, providers).length > 0
   return (
     <Card className="py-4">
       <CardContent className="grid gap-3 px-4">
@@ -875,8 +789,7 @@ function ContenderCard({
             </span>
           ) : hasCompatibleProvider ? (
             <ProviderModelPicker
-              agent={draft.runtime}
-              protocol={custom?.protocol}
+              providerFilter={providerFilter}
               providerId={draft.provider_id}
               model={draft.model}
               onChange={({ provider: next, model }) =>
@@ -947,6 +860,7 @@ function StepShared({
   judgeConflicts,
   customRuntimes,
   customByRuntime,
+  filterFor,
   runtimeLabel,
   localRuntimeNames,
 }: {
@@ -964,6 +878,7 @@ function StepShared({
   judgeConflicts: number
   customRuntimes: CustomRuntime[]
   customByRuntime: Record<string, CustomRuntime>
+  filterFor: (runtime: string) => ProviderFilter | undefined
   runtimeLabel: (runtime: string) => string
   localRuntimeNames: string[]
 }) {
@@ -1101,8 +1016,7 @@ function StepShared({
               <div className="grid gap-1.5">
                 <Label>Judge model (from a provider)</Label>
                 <ProviderModelPicker
-                  agent={judgeRuntime}
-                  protocol={judgeCustom?.protocol}
+                  providerFilter={filterFor(judgeRuntime)}
                   filter={
                     judgeRuntime === "codex"
                       ? (provider) => provider.kind === "openai"
@@ -1111,24 +1025,16 @@ function StepShared({
                   providerId={judgeProvider?.id}
                   model={String(shared.evaluator_model ?? "")}
                   onChange={({ provider, model }) => {
-                    const settings = providerSettings(judgeRuntime, provider, judgeCustom)
+                    /* Pure reference: the backend computes auth/gateway/judge_env
+                       from evaluator_provider_id at plan time. */
                     setShared((current) => ({
                       ...current,
                       evaluator_agent: judgeRuntime,
                       evaluator_provider_id: provider.id,
                       evaluator_model: model,
-                      evaluator_auth_mode: settings.auth_mode,
-                      evaluator_gateway:
-                        judgeRuntime === "opencode"
-                          ? {
-                              opencode_provider: String(
-                                settings.gateway.opencode_provider ?? "",
-                              ),
-                              opencode_base_url: settings.gateway.opencode_base_url,
-                              opencode_api_key_env: settings.gateway.opencode_api_key_env,
-                            }
-                          : null,
-                      judge_env: settings.env ?? null,
+                      evaluator_auth_mode: undefined,
+                      evaluator_gateway: null,
+                      judge_env: null,
                     }))
                   }}
                 />
