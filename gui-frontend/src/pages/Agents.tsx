@@ -416,6 +416,7 @@ function draftFromAgent(agent: CustomRuntime): Draft {
 function draftFromTemplate(template: AgentTemplate): Draft {
   const spec = template.spec as Record<string, unknown>
   const list = (key: string) => ((spec[key] as string[] | undefined) ?? []).join("\n")
+  const docker = (spec.docker ?? {}) as { image?: string; env_passthrough?: string[] }
   return {
     ...emptyDraft(),
     id: String(spec.id ?? ""),
@@ -432,6 +433,8 @@ function draftFromTemplate(template: AgentTemplate): Draft {
     protocol: String(spec.protocol ?? "none"),
     base_url_env: String(spec.base_url_env ?? ""),
     api_key_env: String(spec.api_key_env ?? ""),
+    docker_image: String(docker.image ?? ""),
+    dockerEnvText: (docker.env_passthrough ?? []).join("\n"),
   }
 }
 

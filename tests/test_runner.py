@@ -1034,6 +1034,59 @@ class CustomRuntimeSpecTests(unittest.TestCase):
             self.assertIn("https://openrouter.ai/api/v1", config_entry)
             self.assertIn("{env:OPENROUTER_API_KEY}", config_entry)
 
+    def test_custom_docker_command_defaults_home_into_workspace(self) -> None:
+        from starbench.runner.codex_process import build_custom_docker_command
+        from starbench.runner.custom_runtime import load_custom_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "runtimes"
+            self.write_runtime(
+                root,
+                "boxed",
+                {
+                    "id": "boxed",
+                    "command": "boxcli",
+                    "parser": "text",
+                    "docker": {"image": "boxed:latest", "env_passthrough": ["OPENAI_API_KEY"]},
+                },
+            )
+            spec = load_custom_runtime(root, "boxed")
+            command = build_custom_docker_command(
+                spec,
+                docker_bin="docker",
+                workspace=Path(tmp),
+                prompt="do it",
+                model=None,
+                auth_env={"OPENAI_API_KEY": "x"},
+                container_name="starbench-b1",
+            )
+            self.assertIn("HOME=/workspace/.runner/custom_home", command)
+            self.assertIn("OPENAI_API_KEY", command)
+
+            # A spec that sets HOME itself wins over the default.
+            self.write_runtime(
+                root,
+                "homed",
+                {
+                    "id": "homed",
+                    "command": "boxcli",
+                    "parser": "text",
+                    "env": {"HOME": "/tmp/elsewhere"},
+                    "docker": {"image": "boxed:latest"},
+                },
+            )
+            homed = load_custom_runtime(root, "homed")
+            command = build_custom_docker_command(
+                homed,
+                docker_bin="docker",
+                workspace=Path(tmp),
+                prompt="do it",
+                model=None,
+                auth_env={},
+            )
+            self.assertIn("HOME=/tmp/elsewhere", command)
+            self.assertNotIn("HOME=/workspace/.runner/custom_home", command)
+
     def test_opencode_docker_export_env_points_at_workspace_home(self) -> None:
         from starbench.runner.codex_process import opencode_docker_export_env
 

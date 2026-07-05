@@ -298,6 +298,10 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
             "protocol": "openai",
             "base_url_env": "OPENAI_BASE_URL",
             "api_key_env": "OPENAI_API_KEY",
+            "docker": {
+                "image": "starbench-qwen:latest",
+                "env_passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+            },
         },
     },
     {
@@ -344,6 +348,10 @@ AGENT_TEMPLATES: List[Dict[str, Any]] = [
             "protocol": "openai",
             "base_url_env": "OPENAI_BASE_URL",
             "api_key_env": "OPENAI_API_KEY",
+            "docker": {
+                "image": "starbench-trae-agent:latest",
+                "env_passthrough": ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
+            },
         },
     },
 ]

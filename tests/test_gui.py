@@ -1135,6 +1135,14 @@ class AgentRegistryTest(unittest.TestCase):
             self.assertIn(template["spec"].get("protocol"), agents.PROTOCOL_CHOICES)
             path.unlink()
 
+    def test_provider_backed_templates_ship_docker_isolation(self) -> None:
+        by_id = {template["template_id"]: template["spec"] for template in agents.agent_templates()}
+        self.assertEqual(by_id["qwen-code"]["docker"]["image"], "starbench-qwen:latest")
+        self.assertEqual(by_id["trae-agent"]["docker"]["image"], "starbench-trae-agent:latest")
+        # Kimi authenticates through its own local login; a container cannot
+        # reuse that, so the template stays host-local on purpose.
+        self.assertNotIn("docker", by_id["kimi-code"])
+
     def test_launcher_accepts_custom_agents(self) -> None:
         tasks_dir = self.tmp / "tasks"
         tasks_dir.mkdir()

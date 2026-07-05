@@ -1401,6 +1401,35 @@ async def run_opencode_process_in_docker(
     return result
 
 
+def build_custom_docker_command(
+    spec: CustomRuntimeSpec,
+    *,
+    docker_bin: str,
+    workspace: Path,
+    prompt: str,
+    model: str | None,
+    auth_env: Dict[str, str],
+    container_name: str | None = None,
+) -> List[str]:
+    if not spec.docker_image:
+        raise ValueError(f"Custom runtime {spec.id} has no docker image configured")
+    inner_command = build_custom_command(spec, role="executor", model=model, prompt=prompt)
+    # Same treatment as the built-in runtimes: the container rootfs is
+    # read-only, so HOME must point into the workspace mount. The spec's
+    # static env wins if it sets HOME itself.
+    extra_env = {"HOME": "/workspace/.runner/custom_home", **dict(spec.env)}
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=spec.docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=list(spec.docker_env_passthrough),
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_env=extra_env,
+    )
+
+
 async def run_custom_process_in_docker(
     spec: CustomRuntimeSpec,
     *,
@@ -1412,21 +1441,18 @@ async def run_custom_process_in_docker(
     timeout_seconds: int,
     model: str | None = None,
 ) -> ProcessResult:
-    if not spec.docker_image:
-        raise ValueError(f"Custom runtime {spec.id} has no docker image configured")
-    inner_command = build_custom_command(spec, role="executor", model=model, prompt=prompt)
+    (workspace / ".runner" / "custom_home").mkdir(parents=True, exist_ok=True)
     auth_env = os.environ.copy()
     auth_env.update(spec.env)
     container_name = f"starbench-{uuid.uuid4().hex[:12]}"
-    command = build_docker_agent_command(
+    command = build_custom_docker_command(
+        spec,
         docker_bin=docker_bin,
-        docker_image=spec.docker_image,
         workspace=workspace,
-        inner_command=inner_command,
-        env_whitelist=list(spec.docker_env_passthrough),
+        prompt=prompt,
+        model=model,
         auth_env=auth_env,
         container_name=container_name,
-        extra_env=dict(spec.env),
     )
     result = await run_codex_process(
         command,

@@ -18,7 +18,7 @@ Use `--runtimes-dir` to point at a different directory.
 | `prompt_flag` | no | `"-p"` | Only used when `prompt_via` is `"arg"`. `null` or `""` passes the prompt as a positional argument (e.g. `trae-cli run "<task>"`). |
 | `parser` | yes | — | One of `headless-json`, `jsonl-events`, `text` (see below). |
 | `env` | no | `{}` | Static environment variables set for executor and judge runs. |
-| `docker` | no | — | Enables `--executor-backend docker` for this runtime: `{"image": "...", "env_passthrough": ["VAR", ...]}`. |
+| `docker` | no | — | Enables `--executor-backend docker` for this runtime: `{"image": "...", "env_passthrough": ["VAR", ...]}`. Inside the container, `HOME` points at `/workspace/.runner/custom_home` (the rootfs is read-only); set `HOME` in `env` to override. |
 
 Warning: `prompt_via: "arg"` puts the full task prompt on the command line.
 Large prompts can exceed the OS argument-size limit (ARG_MAX); prefer
