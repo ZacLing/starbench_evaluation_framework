@@ -64,7 +64,7 @@ const PER_FIELD_OPTIONS = [
   { id: "thinking_effort", label: "Claude thinking effort" },
 ]
 
-const STEPS = ["Tasks", "Contenders", "Shared config", "Review & launch"]
+const STEPS = ["Tasks", "Agents", "Shared config", "Review & launch"]
 
 /* A contender IS an agent runtime; provider+model is its configuration. */
 const RUNTIMES = ["claude", "codex", "gemini", "grok", "opencode"] as const
@@ -328,7 +328,7 @@ export default function NewRun() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">New experiment</h1>
         <p className="text-sm text-muted-foreground">
-          One task set, one judge, many contender agent runtimes: comparable by construction.
+          One task set, one judge, many agents under test: comparable by construction.
         </p>
       </div>
 
@@ -607,9 +607,9 @@ function StepContenders({
       <Card>
         <CardContent className="grid gap-3">
           <div>
-            <Label>Add contender agent runtimes</Label>
+            <Label>Add agents</Label>
             <p className="text-xs text-muted-foreground">
-              The contenders are the coding agents under test. Each one is configured with a
+              The agents are the coding CLIs under test. Each one is configured with a
               model from your AI providers and runs the same tasks under the same judge.
             </p>
           </div>
@@ -661,7 +661,7 @@ function StepContenders({
         </div>
       ) : (
         <p className="text-center text-sm text-muted-foreground">
-          No contenders yet. Add at least one runtime above.
+          No agents yet. Add at least one runtime above.
         </p>
       )}
     </div>
@@ -711,7 +711,7 @@ function ContenderCard({
             variant="ghost"
             size="icon"
             className="ml-auto size-7 text-muted-foreground hover:text-fail-ink"
-            aria-label={`Remove contender ${index + 1}`}
+            aria-label={`Remove agent ${index + 1}`}
             onClick={onRemove}
           >
             <Trash2 className="size-4" />
@@ -867,7 +867,7 @@ function StepShared({
         <CardContent className="grid gap-5">
           <div className="flex items-center gap-2">
             <Scale className="size-4 text-live-ink" />
-            <span className="text-sm font-semibold">Judge — shared across all contenders</span>
+            <span className="text-sm font-semibold">Judge — shared across all agents</span>
           </div>
           <div className="grid gap-3">
             <div className="grid gap-1.5">
@@ -940,9 +940,9 @@ function StepShared({
           {judgeConflicts > 0 && (
             <Alert className="border-warn-ink/40 bg-warn-soft/60">
               <AlertTriangle className="size-4" />
-              <AlertTitle>Judge equals a contender</AlertTitle>
+              <AlertTitle>Judge equals an agent under test</AlertTitle>
               <AlertDescription>
-                {judgeConflicts} contender{judgeConflicts > 1 ? "s use" : " uses"} the same model
+                {judgeConflicts} agent{judgeConflicts > 1 ? "s use" : " uses"} the same model
                 as the judge. Self-grading biases scores; consider an independent judge.
               </AlertDescription>
             </Alert>
@@ -1012,10 +1012,10 @@ function StepShared({
           {String(shared.executor_backend) === "docker" && hasNonCodex && (
             <Alert className="border-warn-ink/40 bg-warn-soft/60">
               <AlertTriangle className="size-4" />
-              <AlertTitle>Docker applies to Codex contenders only</AlertTitle>
+              <AlertTitle>Docker applies to Codex agents only</AlertTitle>
               <AlertDescription>
                 The CLI currently supports Docker isolation for the Codex runtime; other
-                contenders will run on this machine and are labeled accordingly.
+                agents will run on this machine and are labeled accordingly.
               </AlertDescription>
             </Alert>
           )}
@@ -1024,9 +1024,9 @@ function StepShared({
 
       <Card className="py-4">
         <CardContent className="grid gap-2 px-4">
-          <span className="text-sm font-semibold">Per-contender fields</span>
+          <span className="text-sm font-semibold">Per-agent fields</span>
           <p className="text-xs text-muted-foreground">
-            Which run-time knobs each contender sets individually. Endpoints and credentials
+            Which run-time knobs each agent sets individually. Endpoints and credentials
             always come from the provider.
           </p>
           <div className="flex flex-wrap gap-2">
@@ -1104,7 +1104,7 @@ function StepReview({
               {taskCount} × {contenders.length}
             </span>
             <span className="text-xs text-muted-foreground">
-              tasks × contenders{repeat > 1 ? ` × ${repeat} repeats` : ""} = {executions}{" "}
+              tasks × agents{repeat > 1 ? ` × ${repeat} repeats` : ""} = {executions}{" "}
               executions + judging
             </span>
           </div>
@@ -1117,7 +1117,7 @@ function StepReview({
           label="Judge"
           value={`${String(shared.evaluator_model ?? "") || "runtime default"}`}
           hint={`${String(shared.evaluator_agent ?? "codex")} · ${String(shared.judge_mode ?? "single")} judge`}
-          warn={judgeConflicts > 0 ? "same model as a contender" : undefined}
+          warn={judgeConflicts > 0 ? "same model as an agent" : undefined}
         />
         <SummaryTile
           label="Environment"
@@ -1131,7 +1131,7 @@ function StepReview({
           <AlertTriangle className="size-4" />
           <AlertTitle>Self-grading configuration</AlertTitle>
           <AlertDescription>
-            The judge and a contender share the same model. Scores may be biased.
+            The judge and an agent under test share the same model. Scores may be biased.
           </AlertDescription>
         </Alert>
       )}

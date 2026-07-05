@@ -43,7 +43,7 @@ export default function ExperimentDetail() {
           </h1>
           <p className="text-sm text-muted-foreground">
             {fmtTime(detail.created_at)} · {detail.tasks.length || "all"} tasks ×{" "}
-            {detail.contenders.length} contenders · judge{" "}
+            {detail.contenders.length} agents · judge{" "}
             <span className="font-mono">
               {String(detail.shared?.evaluator_model ?? "runtime default")}
             </span>{" "}
