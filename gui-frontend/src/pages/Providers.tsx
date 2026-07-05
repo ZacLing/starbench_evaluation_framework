@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   CheckCircle2,
+  DownloadCloud,
   KeyRound,
   MonitorCheck,
   Pencil,
@@ -31,18 +32,43 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ProviderIcon } from "@/components/brand"
+import { AGENT_LABELS, AgentIcon, compatibleProviders, ProviderIcon } from "@/components/brand"
 import { ErrorNote } from "@/pages/Dashboard"
-import { api, type AiProvider, type ProviderKind } from "@/lib/api"
+import { api, type AiProvider, type CustomRuntime, type ProviderKind } from "@/lib/api"
 import { fmtTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 const KIND_LABELS: Record<ProviderKind, string> = {
-  anthropic: "Anthropic API (Claude Code runtime)",
-  openai: "OpenAI API (Codex runtime)",
-  google: "Google API (Gemini CLI runtime)",
-  xai: "xAI API (Grok Build runtime)",
-  "openai-compatible": "OpenAI-compatible gateway (OpenCode runtime)",
+  anthropic: "Anthropic API",
+  openai: "OpenAI API",
+  google: "Google API",
+  xai: "xAI API",
+  "openai-compatible": "OpenAI-compatible endpoint",
+}
+
+/* Single-vendor services behind an OpenAI-compatible endpoint; everything
+   else that is openai-compatible reads as an aggregator gateway. */
+const VENDOR_HINTS = ["deepseek", "qwen", "kimi", "moonshot", "doubao", "zhipu", "glm", "minimax", "mistral"]
+
+function isVendorApi(provider: AiProvider): boolean {
+  if (provider.kind !== "openai-compatible") return true
+  const id = `${provider.id} ${provider.name}`.toLowerCase()
+  return VENDOR_HINTS.some((hint) => id.includes(hint))
+}
+
+function providerDescription(provider: AiProvider): string {
+  if (provider.kind !== "openai-compatible") {
+    return `Official ${KIND_LABELS[provider.kind].replace(" API", "")} API`
+  }
+  return isVendorApi(provider)
+    ? "Vendor API, OpenAI-compatible"
+    : "Gateway to many vendors' models"
+}
+
+interface RuntimeRef {
+  id: string
+  icon?: string
+  label: string
 }
 
 type Draft = Omit<AiProvider, "agent" | "key_present">
@@ -50,6 +76,7 @@ type Draft = Omit<AiProvider, "agent" | "key_present">
 export default function Providers() {
   const queryClient = useQueryClient()
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
   const [editing, setEditing] = useState<Draft | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [refreshing, setRefreshing] = useState<string | null>(null)
@@ -57,6 +84,25 @@ export default function Providers() {
   if (providersQuery.isPending) return <Skeleton className="h-96" />
   if (providersQuery.isError) return <ErrorNote message={(providersQuery.error as Error).message} />
   const payload = providersQuery.data
+  const customRuntimes = (agentsQuery.data?.custom ?? []).filter(
+    (agent): agent is CustomRuntime => !agent.error,
+  )
+
+  /* Which agents can run models from this provider — the decoupling matrix,
+     drawn on the resource side. */
+  const runtimesFor = (provider: AiProvider): RuntimeRef[] => [
+    ...Object.keys(AGENT_LABELS)
+      .filter((runtime) => compatibleProviders(runtime, [provider]).length > 0)
+      .map((runtime) => ({ id: runtime, label: AGENT_LABELS[runtime] })),
+    ...customRuntimes
+      .filter(
+        (agent) => compatibleProviders(agent.id, [provider], agent.protocol ?? "none").length > 0,
+      )
+      .map((agent) => ({ id: agent.id, icon: agent.icon, label: agent.label ?? agent.spec_id })),
+  ]
+
+  const vendors = payload.providers.filter(isVendorApi)
+  const gateways = payload.providers.filter((provider) => !isVendorApi(provider))
 
   const persist = async (next: Draft[], message: string) => {
     try {
@@ -103,8 +149,8 @@ export default function Providers() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">AI providers</h1>
           <p className="text-sm text-muted-foreground">
-            Endpoints, credentials, and model catalogs — the resource side of every experiment
-            {payload.persisted ? "" : " (built-in presets, saved on first edit)"}
+            Where models come from. Every agent runs models from any provider that speaks
+            its protocol.
           </p>
         </div>
         <Button
@@ -130,98 +176,34 @@ export default function Providers() {
         </Button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {payload.providers.map((provider) => (
-          <Card key={provider.id} className="py-4">
-            <CardContent className="grid gap-2.5 px-4">
-              <div className="flex items-center gap-2.5">
-                <ProviderIcon provider={provider} size={22} />
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold">
-                  {provider.name}
-                </span>
-                {provider.auth === "cli_login" ? (
-                  <Badge className="gap-1 border-transparent bg-accent text-accent-foreground">
-                    <MonitorCheck className="size-3" /> CLI login
-                  </Badge>
-                ) : provider.key_present ? (
-                  <Badge className="gap-1 border-transparent bg-pass-soft text-pass-ink">
-                    <KeyRound className="size-3" /> key set
-                  </Badge>
-                ) : (
-                  <Badge className="gap-1 border-transparent bg-warn-soft text-warn-ink">
-                    <KeyRound className="size-3" /> key missing
-                  </Badge>
-                )}
-              </div>
-              <div className="grid gap-1 text-xs text-muted-foreground">
-                <span>{KIND_LABELS[provider.kind]}</span>
-                {provider.base_url && (
-                  <span className="truncate font-mono" title={provider.base_url}>
-                    {provider.base_url}
-                  </span>
-                )}
-                {provider.anthropic_base_url && (
-                  <span className="truncate" title={provider.anthropic_base_url}>
-                    Claude Code ready ·{" "}
-                    <span className="font-mono">{provider.anthropic_base_url}</span>
-                  </span>
-                )}
-                {provider.auth === "api_key" && (
-                  <span className="font-mono">${provider.api_key_env || "—"}</span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">
-                  {provider.models.length} model{provider.models.length === 1 ? "" : "s"}
-                  {provider.models_fetched_at &&
-                    ` · ${provider.models_source === "catalog" ? "catalog snapshot" : "from API"} ${fmtTime(provider.models_fetched_at)}`}
-                </span>
-                <div className="ml-auto flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7"
-                    aria-label={`Refresh models for ${provider.name}`}
-                    title="Refresh the model catalog from the provider's API"
-                    disabled={refreshing === provider.id}
-                    onClick={() => refreshModels(provider)}
-                  >
-                    <RefreshCw
-                      className={cn("size-3.5", refreshing === provider.id && "animate-spin")}
-                    />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7"
-                    aria-label={`Edit ${provider.name}`}
-                    onClick={() => {
+      {(
+        [
+          ["Model vendors", vendors],
+          ["Gateways", gateways],
+        ] as const
+      ).map(
+        ([title, group]) =>
+          group.length > 0 && (
+            <section key={title} className="grid gap-3">
+              <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {group.map((provider) => (
+                  <ProviderCard
+                    key={provider.id}
+                    provider={provider}
+                    runtimes={runtimesFor(provider)}
+                    refreshing={refreshing === provider.id}
+                    onRefresh={() => refreshModels(provider)}
+                    onEdit={() => {
                       setIsNew(false)
                       setEditing(bare(provider))
                     }}
-                  >
-                    <Pencil className="size-3.5" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-7 text-muted-foreground hover:text-fail-ink"
-                    aria-label={`Delete ${provider.name}`}
-                    onClick={() =>
-                      persist(
-                        payload.providers.filter((item) => item.id !== provider.id).map(bare),
-                        `Provider ${provider.name} removed.`,
-                      )
-                    }
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
-                </div>
+                  />
+                ))}
               </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+            </section>
+          ),
+      )}
 
       <ProviderEditor
         key={editing?.id ?? "__closed"}
@@ -239,8 +221,118 @@ export default function Providers() {
           const ok = await persist(next, `Provider ${draft.name || draft.id} saved.`)
           if (ok) setEditing(null)
         }}
+        onDelete={
+          isNew || !editing
+            ? undefined
+            : async () => {
+                const ok = await persist(
+                  payload.providers.filter((item) => item.id !== editing.id).map(bare),
+                  `Provider ${editing.name || editing.id} removed.`,
+                )
+                if (ok) setEditing(null)
+              }
+        }
       />
     </div>
+  )
+}
+
+function ProviderCard({
+  provider,
+  runtimes,
+  refreshing,
+  onRefresh,
+  onEdit,
+}: {
+  provider: AiProvider
+  runtimes: RuntimeRef[]
+  refreshing: boolean
+  onRefresh: () => void
+  onEdit: () => void
+}) {
+  const modelCount = provider.models.length
+  const fetchedHint = provider.models_fetched_at
+    ? `${provider.models_source === "catalog" ? "public catalog" : "provider API"} · ${fmtTime(provider.models_fetched_at)}`
+    : "not fetched yet"
+  return (
+    <Card className="py-4">
+      <CardContent className="grid gap-2.5 px-4">
+        <div className="flex items-center gap-2.5">
+          <ProviderIcon provider={provider} size={22} />
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{provider.name}</span>
+          {provider.auth === "cli_login" ? (
+            <Badge className="gap-1 border-transparent bg-accent text-accent-foreground">
+              <MonitorCheck className="size-3" /> CLI login
+            </Badge>
+          ) : provider.key_present ? (
+            <Badge className="gap-1 border-transparent bg-pass-soft text-pass-ink">
+              <KeyRound className="size-3" /> key set
+            </Badge>
+          ) : (
+            <Badge className="gap-1 border-transparent bg-warn-soft text-warn-ink">
+              <KeyRound className="size-3" /> key missing
+            </Badge>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">{providerDescription(provider)}</p>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span>For</span>
+          {runtimes.length ? (
+            runtimes.map((runtime) => (
+              <span key={runtime.id} title={runtime.label} className="inline-flex">
+                <AgentIcon agent={runtime.id} icon={runtime.icon} size={16} />
+              </span>
+            ))
+          ) : (
+            <span className="text-warn-ink">no compatible agent</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {modelCount ? (
+            <>
+              <span className="text-xs text-muted-foreground" title={fetchedHint}>
+                {modelCount} model{modelCount === 1 ? "" : "s"}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label={`Refresh models for ${provider.name}`}
+                title={`Refresh the model list (${fetchedHint})`}
+                disabled={refreshing}
+                onClick={onRefresh}
+              >
+                <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-xs"
+              disabled={refreshing}
+              onClick={onRefresh}
+            >
+              {refreshing ? (
+                <RefreshCw className="size-3.5 animate-spin" />
+              ) : (
+                <DownloadCloud className="size-3.5" />
+              )}
+              Fetch models
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto size-7"
+            aria-label={`Edit ${provider.name}`}
+            onClick={onEdit}
+          >
+            <Pencil className="size-3.5" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -249,11 +341,13 @@ function ProviderEditor({
   isNew,
   onClose,
   onSave,
+  onDelete,
 }: {
   draft: Draft | null
   isNew: boolean
   onClose: () => void
   onSave: (draft: Draft) => void
+  onDelete?: () => void
 }) {
   const [form, setForm] = useState<Draft | null>(null)
   const value = form ?? draft
@@ -315,7 +409,7 @@ function ProviderEditor({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Decides which agent runtime executes models from this provider.
+                Sets the wire protocol — which agents can run models from this provider.
               </p>
             </div>
             <div className="grid gap-1.5">
@@ -424,18 +518,29 @@ function ProviderEditor({
               The model catalog is not edited by hand: save, then use the refresh button on the
               provider card to pull the list from the API.
             </p>
-            <div className="flex justify-end gap-2 border-t pt-4">
-              <Button variant="outline" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => {
-                  onSave(value)
-                  setForm(null)
-                }}
-              >
-                <CheckCircle2 /> Save provider
-              </Button>
+            <div className="flex items-center gap-2 border-t pt-4">
+              {onDelete && (
+                <Button
+                  variant="ghost"
+                  className="text-muted-foreground hover:text-fail-ink"
+                  onClick={onDelete}
+                >
+                  <Trash2 /> Remove
+                </Button>
+              )}
+              <div className="ml-auto flex gap-2">
+                <Button variant="outline" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    onSave(value)
+                    setForm(null)
+                  }}
+                >
+                  <CheckCircle2 /> Save provider
+                </Button>
+              </div>
             </div>
           </div>
         )}
