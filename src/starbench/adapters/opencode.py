@@ -30,7 +30,6 @@ from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
     OPENCODE_JUDGE_AGENT,
     append_json_schema_instruction,
-    append_thinking_instruction,
     build_executor_prompt,
     opencode_model_name,
 )
@@ -54,11 +53,17 @@ def build_opencode_run_command(
     model: str | None = None,
     agent: str = "build",
     output_format: str = "json",
+    variant: str | None = None,
 ) -> List[str]:
     command = split_command(opencode_bin)
     command.extend(["run", "--dir", str(cwd), "--agent", agent, "--format", output_format])
     if model:
         command.extend(["--model", model])
+    # OpenCode's native reasoning switch: `--variant` picks a built-in
+    # provider variant (OpenAI ships low/medium/high; unknown names are
+    # ignored by the CLI). "none" leaves the model's default alone.
+    if variant and variant != "none":
+        command.extend(["--variant", variant])
     command.append("--dangerously-skip-permissions")
     return command
 
@@ -135,9 +140,10 @@ def build_opencode_docker_command(
     base_url: str | None = None,
     api_key_env: str | None = None,
     container_name: str | None = None,
+    variant: str | None = None,
 ) -> List[str]:
     inner_command = build_opencode_run_command(
-        opencode_bin, cwd=Path("/workspace"), model=model, agent="build"
+        opencode_bin, cwd=Path("/workspace"), model=model, agent="build", variant=variant
     )
     extra_env = {
         # OpenCode stores config under $HOME/.config and sessions under
@@ -195,6 +201,7 @@ async def run_opencode_process_in_docker(
     base_url: str | None = None,
     api_key_env: str | None = None,
     base_env: Dict[str, str] | None = None,
+    variant: str | None = None,
 ) -> ProcessResult:
     (workspace / ".runner" / "opencode_home").mkdir(parents=True, exist_ok=True)
     auth_env = dict(base_env) if base_env is not None else os.environ.copy()
@@ -210,6 +217,7 @@ async def run_opencode_process_in_docker(
         base_url=base_url,
         api_key_env=api_key_env,
         container_name=container_name,
+        variant=variant,
     )
     result = await run_codex_process(
         command,
@@ -240,6 +248,8 @@ class OpenCodeAdapter(RuntimeAdapter):
         # unlike codex, opencode also drives xai-kind providers.
         provider_filter=ProviderFilter(kinds=("openai-compatible", "openai", "xai")),
         injection=InjectionChannel(kind="opencode_gateway"),
+        # OpenCode's own --variant switch (built-in provider reasoning variants).
+        thinking_channel="native_config",
     )
 
     def executor_skill_prompt_location(self) -> str:
@@ -259,11 +269,9 @@ class OpenCodeAdapter(RuntimeAdapter):
         logs = paths["logs"]
         opencode_bin = ctx.bins["opencode"]
         model_name = opencode_model_name(ctx.model, ctx.opencode_provider)
-        opencode_prompt = append_thinking_instruction(
-            build_executor_prompt(
-                task_run, executor_skill_location=self.executor_skill_prompt_location()
-            ),
-            ctx.thinking_effort,
+        # Thinking effort rides OpenCode's native --variant switch, not the prompt.
+        opencode_prompt = build_executor_prompt(
+            task_run, executor_skill_location=self.executor_skill_prompt_location()
         )
         if ctx.executor_backend == "docker":
             result = await run_opencode_process_in_docker(
@@ -280,6 +288,7 @@ class OpenCodeAdapter(RuntimeAdapter):
                 base_url=ctx.opencode_base_url,
                 api_key_env=ctx.opencode_api_key_env,
                 base_env=ctx.base_env,
+                variant=ctx.thinking_effort,
             )
             env = opencode_docker_export_env(paths["workspace"], base_env=ctx.base_env)
         else:
@@ -288,6 +297,7 @@ class OpenCodeAdapter(RuntimeAdapter):
                 cwd=paths["workspace"],
                 model=model_name,
                 agent="build",
+                variant=ctx.thinking_effort,
             )
             env = prepare_opencode_env(
                 paths["codex_home"] / "opencode_executor",

@@ -119,12 +119,11 @@ class RuntimeInfo:
     default_executor_backend: str = "local"
     provider_filter: ProviderFilter = field(default_factory=ProviderFilter)
     injection: InjectionChannel = field(default_factory=InjectionChannel)
-    # How --thinking-effort reaches this runtime: "native_budget" (a real
-    # thinking-token budget via env, e.g. Claude's MAX_THINKING_TOKENS),
-    # "native_config" (a real reasoning-effort switch on the CLI, e.g. Codex's
-    # model_reasoning_effort), or "prompt" (an instruction appended to the
-    # prompt — a request, not a guarantee). Surfaced in the GUI so nobody
-    # mistakes a prompt-level request for a native switch.
+    # How --thinking-effort reaches this runtime: "native_config" (a real
+    # reasoning switch on the CLI itself — Claude's --effort, Codex's
+    # model_reasoning_effort, OpenCode's --variant) or "prompt" (an instruction
+    # appended to the prompt — a request, not a guarantee). Surfaced in the GUI
+    # so nobody mistakes a prompt-level request for a native switch.
     thinking_channel: str = "prompt"
 
     @property

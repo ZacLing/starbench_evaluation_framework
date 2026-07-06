@@ -1,9 +1,10 @@
 """Thinking-effort channels and the run-level web-search override.
 
 --thinking-effort must reach each runtime through its native switch where one
-exists (Claude: MAX_THINKING_TOKENS budget, Codex: model_reasoning_effort) and
-as a prompt instruction elsewhere; --web-search must override the task flag
-only where the runner actually enforces web access.
+exists (Claude: --effort, Codex: model_reasoning_effort, OpenCode: --variant;
+all verified against the installed CLIs' --help) and as a prompt instruction
+elsewhere; --web-search must override the task flag only where the runner
+actually enforces web access.
 """
 from __future__ import annotations
 
@@ -11,21 +12,43 @@ import unittest
 
 from starbench.adapters import get_builtin
 from starbench.adapters.base import effective_web_search
-from starbench.adapters.claude import CLAUDE_DOCKER_ENV_WHITELIST
+from starbench.adapters.claude import build_claude_print_command
 from starbench.adapters.codex import build_codex_exec_command
-from starbench.runner.prompts import (
-    THINKING_BUDGET_TOKENS,
-    append_thinking_instruction,
-)
+from starbench.adapters.opencode import build_opencode_run_command
+from starbench.runner.prompts import append_thinking_instruction
 from pathlib import Path
 
 
 class ThinkingChannelTests(unittest.TestCase):
-    def test_registry_declares_native_channels_for_claude_and_codex(self) -> None:
-        self.assertEqual(get_builtin("claude").info.thinking_channel, "native_budget")
-        self.assertEqual(get_builtin("codex").info.thinking_channel, "native_config")
-        for agent in ("gemini", "grok", "opencode"):
+    def test_registry_declares_native_channels(self) -> None:
+        for agent in ("claude", "codex", "opencode"):
+            self.assertEqual(get_builtin(agent).info.thinking_channel, "native_config")
+        # Gemini's thinking knobs live in settings.json only, and Grok Build's
+        # CLI switch is unverified — both stay honest prompt-level requests.
+        for agent in ("gemini", "grok"):
             self.assertEqual(get_builtin(agent).info.thinking_channel, "prompt")
+
+    def test_claude_command_carries_native_effort_flag(self) -> None:
+        command = build_claude_print_command(
+            "claude", cwd=Path("/tmp/ws"), effort="high"
+        )
+        joined = " ".join(command)
+        self.assertIn("--effort high", joined)
+        none_command = build_claude_print_command(
+            "claude", cwd=Path("/tmp/ws"), effort="none"
+        )
+        self.assertNotIn("--effort", none_command)
+
+    def test_opencode_command_carries_native_variant_flag(self) -> None:
+        command = build_opencode_run_command(
+            "opencode", cwd=Path("/tmp/ws"), variant="medium"
+        )
+        joined = " ".join(command)
+        self.assertIn("--variant medium", joined)
+        none_command = build_opencode_run_command(
+            "opencode", cwd=Path("/tmp/ws"), variant="none"
+        )
+        self.assertNotIn("--variant", none_command)
 
     def test_codex_command_carries_native_reasoning_effort(self) -> None:
         command = build_codex_exec_command(
@@ -47,17 +70,6 @@ class ThinkingChannelTests(unittest.TestCase):
             reasoning_effort="none",
         )
         self.assertNotIn("model_reasoning_effort", " ".join(command))
-
-    def test_claude_budget_map_and_docker_whitelist(self) -> None:
-        # "none" must not force a budget (setting MAX_THINKING_TOKENS makes
-        # every request a thinking request); the other levels map to budgets.
-        self.assertIsNone(THINKING_BUDGET_TOKENS["none"])
-        self.assertEqual(THINKING_BUDGET_TOKENS["high"], 31999)
-        self.assertLess(
-            THINKING_BUDGET_TOKENS["low"], THINKING_BUDGET_TOKENS["medium"]
-        )
-        # The env var must be able to reach the container.
-        self.assertIn("MAX_THINKING_TOKENS", CLAUDE_DOCKER_ENV_WHITELIST)
 
     def test_prompt_instruction_is_appended_only_when_effort_set(self) -> None:
         self.assertEqual(append_thinking_instruction("base", "none"), "base")

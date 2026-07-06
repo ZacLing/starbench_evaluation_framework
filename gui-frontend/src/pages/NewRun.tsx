@@ -914,18 +914,12 @@ function ContenderCard({
           <span
             className="text-[11px] text-muted-foreground"
             title={
-              thinkingChannel === "native_budget"
-                ? "Applied as a real thinking-token budget (MAX_THINKING_TOKENS)."
-                : thinkingChannel === "native_config"
-                  ? "Applied through the CLI's own reasoning-effort setting (model_reasoning_effort)."
-                  : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."
+              thinkingChannel === "native_config"
+                ? "Applied through the CLI's own reasoning switch (Claude Code --effort, Codex model_reasoning_effort, OpenCode --variant)."
+                : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."
             }
           >
-            {thinkingChannel === "native_budget"
-              ? "native thinking budget"
-              : thinkingChannel === "native_config"
-                ? "native reasoning setting"
-                : "prompt-level request"}
+            {thinkingChannel === "native_config" ? "native reasoning setting" : "prompt-level request"}
           </span>
         </div>
       </CardContent>

@@ -10,7 +10,7 @@ export type AuthKind = "api_key" | "cli_login"
 
 export type ModelsSource = "api" | "catalog"
 
-export type ThinkingChannel = "native_budget" | "native_config" | "prompt"
+export type ThinkingChannel = "native_config" | "prompt"
 
 export type WebSearchMode = "task" | "allow" | "deny"
 
@@ -36,7 +36,7 @@ export interface BuiltinRuntime {
   builtin: true
   cli: RuntimeCli
   provider_filter: ProviderFilter
-  thinking_channel: "native_budget" | "native_config" | "prompt"
+  thinking_channel: "native_config" | "prompt"
 }
 
 export interface CustomRuntime {
@@ -64,7 +64,7 @@ export interface CustomRuntime {
   docker_image?: string | null
   docker_env_passthrough?: string[]
   docker_capable?: boolean
-  thinking_channel?: "native_budget" | "native_config" | "prompt"
+  thinking_channel?: "native_config" | "prompt"
   cli?: RuntimeCli
 }
 

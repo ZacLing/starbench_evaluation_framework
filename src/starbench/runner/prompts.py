@@ -29,11 +29,6 @@ THINKING_EFFORT_INSTRUCTIONS = {
 }
 # Back-compat name; prefer THINKING_EFFORT_INSTRUCTIONS.
 CLAUDE_THINKING_EFFORT_INSTRUCTIONS = THINKING_EFFORT_INSTRUCTIONS
-
-# Native thinking budget per effort level for runtimes controlled through a
-# token-budget env var (Claude Code's MAX_THINKING_TOKENS; 31999 is its own
-# default budget when thinking is on).
-THINKING_BUDGET_TOKENS = {"none": None, "low": 4096, "medium": 16384, "high": 31999}
 CLAUDE_EXECUTOR_BASE_TOOLS = "Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS"
 CLAUDE_EXECUTOR_WEB_TOOLS = "WebSearch,WebFetch"
 # Judges must be read-only across runtimes; OpenCode's built-in plan agent

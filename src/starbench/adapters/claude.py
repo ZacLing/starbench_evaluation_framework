@@ -31,7 +31,6 @@ from ..execution.parsers import (
 from ..execution.process import run_codex_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
-    THINKING_BUDGET_TOKENS,
     append_thinking_instruction,
     build_executor_prompt,
     claude_executor_allowed_tools,
@@ -47,13 +46,7 @@ from .base import (
     finalize_success,
 )
 
-CLAUDE_DOCKER_ENV_WHITELIST = [
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-    # Native thinking budget (--thinking-effort) must reach the container.
-    "MAX_THINKING_TOKENS",
-]
+CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
 
 CLAUDE_JUDGE_ALLOWED_TOOLS = "Read,Glob,Grep,Bash,LS"
 
@@ -84,6 +77,7 @@ def build_claude_print_command(
     allowed_tools: str | None = None,
     max_turns: int | None = None,
     output_format: str = "json",
+    effort: str | None = None,
 ) -> List[str]:
     command = split_command(claude_bin)
     command.extend(["-p", "--output-format", output_format, "--no-session-persistence"])
@@ -92,6 +86,10 @@ def build_claude_print_command(
         command.append("--verbose")
     if model:
         command.extend(["--model", model])
+    # Claude Code's native reasoning switch (adaptive-thinking effort level);
+    # "none" leaves the CLI's own default alone.
+    if effort and effort != "none":
+        command.extend(["--effort", effort])
     if permission_mode:
         command.extend(["--permission-mode", permission_mode])
     if allowed_tools:
@@ -114,6 +112,7 @@ def build_claude_docker_command(
     max_turns: int | None,
     auth_env: Dict[str, str],
     container_name: str | None = None,
+    effort: str | None = None,
 ) -> List[str]:
     inner_command = build_claude_print_command(
         claude_bin,
@@ -123,6 +122,7 @@ def build_claude_docker_command(
         allowed_tools=allowed_tools,
         max_turns=max_turns,
         output_format="stream-json",
+        effort=effort,
     )
     return build_docker_agent_command(
         docker_bin=docker_bin,
@@ -153,6 +153,7 @@ async def run_claude_process_in_docker(
     allowed_tools: str | None,
     max_turns: int | None,
     base_env: Dict[str, str] | None = None,
+    effort: str | None = None,
 ) -> ProcessResult:
     (workspace / ".runner" / "claude_home").mkdir(parents=True, exist_ok=True)
     auth_env = dict(base_env) if base_env is not None else os.environ.copy()
@@ -167,6 +168,7 @@ async def run_claude_process_in_docker(
         max_turns=max_turns,
         auth_env=auth_env,
         container_name=container_name,
+        effort=effort,
     )
     result = await run_codex_process(
         command,
@@ -202,8 +204,8 @@ class ClaudeAdapter(RuntimeAdapter):
             api_key_var="ANTHROPIC_AUTH_TOKEN",
             default_api_key_env="ANTHROPIC_AUTH_TOKEN",
         ),
-        # A real thinking-token budget via MAX_THINKING_TOKENS, not a prompt request.
-        thinking_channel="native_budget",
+        # Claude Code's own --effort switch (adaptive-thinking effort level).
+        thinking_channel="native_config",
     )
 
     def executor_skill_prompt_location(self) -> str:
@@ -226,11 +228,6 @@ class ClaudeAdapter(RuntimeAdapter):
             task_run, executor_skill_location=self.executor_skill_prompt_location()
         )
         allow_web = effective_web_search(ctx.web_search_mode, task.allow_web_search)
-        # Thinking effort rides Claude Code's native budget switch, not the prompt.
-        thinking_budget = THINKING_BUDGET_TOKENS[ctx.thinking_effort]
-        base_env = dict(ctx.base_env)
-        if thinking_budget is not None:
-            base_env["MAX_THINKING_TOKENS"] = str(thinking_budget)
         if ctx.executor_backend == "docker":
             result = await run_claude_process_in_docker(
                 claude_bin=claude_bin,
@@ -244,7 +241,8 @@ class ClaudeAdapter(RuntimeAdapter):
                 model=ctx.model,
                 allowed_tools=claude_executor_allowed_tools(allow_web),
                 max_turns=ctx.claude_max_turns,
-                base_env=base_env,
+                base_env=ctx.base_env,
+                effort=ctx.thinking_effort,
             )
         else:
             command = build_claude_print_command(
@@ -255,9 +253,10 @@ class ClaudeAdapter(RuntimeAdapter):
                 allowed_tools=claude_executor_allowed_tools(allow_web),
                 max_turns=ctx.claude_max_turns,
                 output_format="stream-json",
+                effort=ctx.thinking_effort,
             )
             env = prepare_claude_env(
-                paths["codex_home"] / "claude_executor", ctx.auth_mode, base_env=base_env
+                paths["codex_home"] / "claude_executor", ctx.auth_mode, base_env=ctx.base_env
             )
             result = await run_codex_process(
                 command,
