@@ -14,6 +14,7 @@ from typing import Any, Dict
 
 
 SCHEMA_ROOT = Path(__file__).resolve().parents[3] / "schemas" / "starbench" / "v1"
+ARTIFACT_SCHEMA_VERSION = 1
 
 
 class ContractValidationError(ValueError):

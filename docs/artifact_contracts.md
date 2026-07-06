@@ -266,7 +266,8 @@ Implemented in this branch:
 - Bundled example-task validation against task package schemas.
 - Fake-runtime runner output validation against public run artifact schemas.
 - Shared runner/GUI validation via `starbench.contracts`.
+- `schema_version: 1` emitted on stable public run artifacts.
 
 Planned next steps:
 
-- Add `schema_version` to stable emitted artifacts in a compatibility-safe step.
+- Decide when task package inputs should declare `schema_version`.

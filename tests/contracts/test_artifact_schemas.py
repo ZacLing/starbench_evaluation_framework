@@ -12,7 +12,11 @@ import unittest
 from pathlib import Path
 from typing import Any, Dict
 
-from starbench.contracts import ContractValidationError, validate_json_schema
+from starbench.contracts import (
+    ARTIFACT_SCHEMA_VERSION,
+    ContractValidationError,
+    validate_json_schema,
+)
 from starbench.runner.task_loader import load_task
 
 
@@ -44,6 +48,10 @@ def read_json(path: Path) -> Any:
 
 def schema(name: str) -> Dict[str, Any]:
     return read_json(SCHEMA_ROOT / name)
+
+
+def assert_current_schema_version(testcase: unittest.TestCase, payload: Dict[str, Any]) -> None:
+    testcase.assertEqual(payload.get("schema_version"), ARTIFACT_SCHEMA_VERSION)
 
 
 def fake_codex_script(path: Path) -> None:
@@ -206,30 +214,44 @@ class ArtifactSchemaTests(unittest.TestCase):
             task_root = run_root / "demo_python_cli"
             logs = task_root / "logs"
 
-            validate_json_schema(schema("run_summary.schema.json"), read_json(run_root / "summary.json"))
+            run_summary = read_json(run_root / "summary.json")
+            assert_current_schema_version(self, run_summary)
+            validate_json_schema(schema("run_summary.schema.json"), run_summary)
             for index, line in enumerate(
                 (run_root / "progress_events.jsonl").read_text(encoding="utf-8").splitlines()
             ):
+                event = json.loads(line)
+                assert_current_schema_version(self, event)
                 validate_json_schema(
                     schema("progress_event.schema.json"),
-                    json.loads(line),
+                    event,
                     path=f"progress[{index}]",
                 )
-            validate_json_schema(
-                schema("task_manifest.schema.json"), read_json(task_root / "manifest.json")
-            )
-            validate_json_schema(
-                schema("task_summary.schema.json"), read_json(task_root / "task_summary.json")
-            )
-            validate_json_schema(schema("executor_status.schema.json"), read_json(logs / "status.json"))
-            validate_json_schema(schema("trace_summary.schema.json"), read_json(logs / "trace_summary.json"))
-            validate_json_schema(
-                schema("artifact_manifest.schema.json"),
-                read_json(logs / "artifact_manifest.json"),
-            )
+            task_manifest = read_json(task_root / "manifest.json")
+            task_summary = read_json(task_root / "task_summary.json")
+            executor_status = read_json(logs / "status.json")
+            trace_summary = read_json(logs / "trace_summary.json")
+            artifact_manifest = read_json(logs / "artifact_manifest.json")
+            judge_aggregate = read_json(task_root / "judges" / "single_aggregate.json")
+
+            for payload in (
+                task_manifest,
+                task_summary,
+                executor_status,
+                trace_summary,
+                artifact_manifest,
+                judge_aggregate,
+            ):
+                assert_current_schema_version(self, payload)
+
+            validate_json_schema(schema("task_manifest.schema.json"), task_manifest)
+            validate_json_schema(schema("task_summary.schema.json"), task_summary)
+            validate_json_schema(schema("executor_status.schema.json"), executor_status)
+            validate_json_schema(schema("trace_summary.schema.json"), trace_summary)
+            validate_json_schema(schema("artifact_manifest.schema.json"), artifact_manifest)
             validate_json_schema(
                 schema("judge_aggregate.schema.json"),
-                read_json(task_root / "judges" / "single_aggregate.json"),
+                judge_aggregate,
             )
 
     def test_runner_task_loader_rejects_non_contract_boolean_strings(self) -> None:

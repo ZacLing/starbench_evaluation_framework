@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from ..adapters import JudgeContext, RuntimeAdapter
+from ..contracts import ARTIFACT_SCHEMA_VERSION
 from .evaluation import (
     aggregate_results,
     normalize_parallel_results,
@@ -142,6 +143,7 @@ async def run_single_judge(
         )
     except Exception as exc:
         aggregate = {
+            "schema_version": ARTIFACT_SCHEMA_VERSION,
             "mode": "single",
             "overall_pass": False,
             "error": f"{type(exc).__name__}: {exc}",
@@ -210,6 +212,7 @@ async def run_parallel_judges(
         )
     except Exception as exc:
         aggregate = {
+            "schema_version": ARTIFACT_SCHEMA_VERSION,
             "mode": "parallel",
             "overall_pass": False,
             "error": f"{type(exc).__name__}: {exc}",

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from ..contracts import ARTIFACT_SCHEMA_VERSION
 from .models import Rubric, RubricResult
 
 
@@ -71,6 +72,7 @@ def aggregate_results(
     passed_count = sum(1 for row in rows if row["passed"])
     overall_pass = not missing and passed_count == len(rubrics) and not fail_fast_failures
     return {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "mode": mode,
         "overall_pass": overall_pass,
         "passed_count": passed_count,
@@ -84,4 +86,5 @@ def aggregate_results(
 
 def write_aggregate(path: Path, aggregate: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(aggregate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    payload = {**aggregate, "schema_version": ARTIFACT_SCHEMA_VERSION}
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

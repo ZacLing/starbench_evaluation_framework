@@ -6,6 +6,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from ..contracts import ARTIFACT_SCHEMA_VERSION
+
 
 def read_jsonl(path: Path) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
@@ -93,7 +95,10 @@ def summarize_events(events: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def write_trace_summary(events_path: Path, output_path: Path) -> Dict[str, Any]:
-    summary = summarize_events(read_jsonl(events_path))
+    summary = {
+        **summarize_events(read_jsonl(events_path)),
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+    }
     output_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
 
@@ -124,6 +129,7 @@ def build_artifact_manifest(outputs_dir: Path, output_path: Path) -> Dict[str, A
                 )
 
     manifest = {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "outputs_dir": str(outputs_dir),
         "file_count": sum(1 for item in files if item["kind"] == "file"),
         "entries": files,
