@@ -2,27 +2,32 @@
 
 Starbench is a small benchmark runner for evaluating coding-agent CLIs with rubric judges.
 
-It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Codex executors run in a Docker workspace by default; Claude Code and docker-enabled custom runtimes can opt into Docker, other runtimes run host-local. Evaluators inspect only the delivered package, trace summaries, and rubrics.
+It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Every built-in runtime has its own Docker executor image for isolated runs (Codex defaults to Docker; the others opt in with `--executor-backend docker`), and docker-enabled custom runtimes get the same isolation. Evaluators inspect only the delivered package, trace summaries, and rubrics.
 
 ## What Is Included
 
-- Batch execution with `--seed`, `--batch-size`, and deterministic task ordering.
-- Docker-backed executor isolation by default.
-- Independent executor and evaluator model selection.
+- Batch execution with `--seed`, `--batch-size`, `--repeat`, and deterministic task ordering.
+- Per-runtime Docker executor images for isolated execution (see [docs/docker.md](docs/docker.md)).
+- Independent executor and evaluator model selection, with separate auth modes and isolated executor/judge environment scopes.
 - Runtime selection for Codex, Claude Code, OpenCode, Grok Build, or Gemini CLI executors/evaluators.
   - Use Claude Code for Claude-family models.
   - Use Codex for GPT/OpenAI-family models.
   - Use OpenCode for other OpenAI-compatible models, such as Doubao or Qwen.
   - Use Grok Build for xAI Grok Build runs.
   - Use Gemini CLI for existing Gemini CLI environments.
+- Declarative custom runtimes (`custom:<id>`), with Qwen Code, Kimi Code CLI, and Trae Agent specs bundled in `runtimes/`.
+- `--thinking-effort {none,low,medium,high}` applied through each runtime's native reasoning switch where one exists (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`) and as a prompt-level instruction elsewhere.
+- `--web-search {task,allow,deny}`: follow each task package's `allow_web_search` or override it for the run (enforced for Claude Code and Codex; other runtimes' own tooling decides).
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
 - Rule-based instruction ablation: baseline, one variant per expert instruction, and an all-instructions variant, with repeat runs and uplift summaries.
+- Rigor prompt injection: restate selected rubric requirements as hard requirements in the executor prompt.
+- Executor skills: install reusable skill folders into the executor workspace, individually or as named groups.
 - Trace capture: raw JSONL events, final message, status/timing, artifact manifest, and derived summary.
 - A default `tasks/` directory for user task packages.
 - Two sample task packages under `examples/tasks/`.
 - Unit and closed-loop fake-runner smoke tests that do not call a live model.
-- A local GUI console (`starbench-gui`) for browsing runs, rubric verdicts, and traces, and for launching runs.
+- A local GUI console (`starbench-gui`): a four-step experiment wizard with readiness checks (broken task packages surfaced, CLI/credential/Docker preflight gating Launch), plus run browsing with rubric verdicts and traces.
 
 ## Quick Start
 
@@ -36,17 +41,13 @@ pip install -e .
 
 Install the Codex CLI on the host, then authenticate it in the way your environment expects.
 
-Build the Docker executor image:
+Build the Docker executor image for Codex (the default Docker runtime):
 
 ```bash
 docker build -t starbench-codex:latest -f docker/codex-bench.Dockerfile .
 ```
 
-Optional Claude Code helper image, useful when the host does not have the `claude` CLI:
-
-```bash
-docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
-```
+Each runtime has its own image (`starbench-claude-code`, `starbench-gemini-cli`, `starbench-grok`, `starbench-opencode`, plus images for the bundled custom runtimes); build the ones you plan to isolate — see [docs/docker.md](docs/docker.md) for the full list and build commands.
 
 Run the sample task with real Codex execution and one GPT judge:
 
@@ -170,7 +171,21 @@ starbench-run \
   --judge-mode single
 ```
 
-Grok Build and Gemini CLI support currently run host-local only. Authenticate those CLIs before invoking StarBench, or use `--auth-mode env` when the CLI reads its API key from the environment.
+Grok Build and Gemini CLI run host-local by default; both also ship Docker images (`starbench-grok`, `starbench-gemini-cli`) for isolated runs with `--executor-backend docker`. Authenticate those CLIs before invoking StarBench, or use `--auth-mode env` when the CLI reads its API key from the environment.
+
+Run-level knobs that apply to any of the above:
+
+```text
+--thinking-effort {none,low,medium,high}   reasoning effort, via each runtime's native
+                                           switch (Claude --effort, Codex
+                                           model_reasoning_effort, OpenCode --variant);
+                                           prompt-level request for the rest
+--web-search {task,allow,deny}             follow the task package's allow_web_search,
+                                           or force it on/off for the whole run
+                                           (enforced for Claude Code and Codex)
+--instruction-mode / --rigor-mode          expert-step sweeps and rigor prompt injection
+                                           (see the docs below)
+```
 
 For a no-cost local framework smoke test:
 
@@ -194,6 +209,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Use Executor Skills In Evaluation Runs](docs/use_skills_in_eval.md)
 - [Authoring Rubrics](docs/rubrics.md)
 - [Human Reference Instructions](docs/human_reference.md)
+- [Rigor Prompt Injection](docs/rigor_prompt_injection.md)
 
 ## Where To Put Tasks
 
