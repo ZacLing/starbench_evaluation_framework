@@ -226,6 +226,9 @@ class ExperimentPlanItem(_ExperimentPlanItemBase, total=False):
     docker_image: str
     # Final, group-expanded skill ids injected into every contender (shared).
     executor_skills: List[str]
+    # Auth mode the launch will use; the review-step preflight passes it
+    # through so credential checks match reality.
+    executor_auth_mode: str
 
 
 class _ContenderBase(TypedDict):

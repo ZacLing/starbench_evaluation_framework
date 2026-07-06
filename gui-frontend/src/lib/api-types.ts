@@ -137,6 +137,7 @@ export interface ExperimentPlanItem {
   argv: string[]
   docker_image?: string
   executor_skills?: string[]
+  executor_auth_mode?: string
 }
 
 export interface Contender {

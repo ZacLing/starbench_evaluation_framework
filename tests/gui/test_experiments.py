@@ -519,17 +519,29 @@ class ExperimentInstructionTest(unittest.TestCase):
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         self.assertIn("--instruction-step H003", " ".join(plan["plans"][0]["argv"]))
 
-    def test_traverse_estimate_flags_stepless_tasks(self) -> None:
-        # Verified semantics (traverse/ablation without human_reference): a
-        # stepless task is REJECTED by the runner, not run as a baseline. The
-        # estimate counts 0 for it and the note says so honestly.
+    def test_traverse_and_ablation_reject_stepless_tasks_at_plan_time(self) -> None:
+        # Verified semantics: the runner rejects the WHOLE run when a selected
+        # task lacks expert steps in traverse/ablation. B5 upgrades the console
+        # from an amber note to a plan-time hard block: a plan known to die at
+        # launch must not produce a Launch-able green light.
         self._write_task("task_c", None)  # no human_reference.json
+        for mode in ("traverse", "ablation"):
+            with self.assertRaisesRegex(ExperimentError, "task_c"):
+                experiments.plan_experiment(
+                    self.payload(["task_a", "task_c"], shared_extra={"instruction_mode": mode}),
+                    runs_dir=self.runs_dir,
+                )
+        # All-steps selections still plan normally.
         est = experiments.plan_experiment(
-            self.payload(["task_a", "task_c"], shared_extra={"instruction_mode": "traverse"}),
+            self.payload(["task_a"], shared_extra={"instruction_mode": "traverse"}),
             runs_dir=self.runs_dir,
         )["execution_estimate"]
-        self.assertEqual(est["per_contender"], 2)  # task_a's 2 steps; task_c contributes 0
-        self.assertIn("reject", est["note"].lower())
+        self.assertEqual(est["per_contender"], 2)
+
+    def test_plan_items_carry_executor_auth_mode_for_preflight(self) -> None:
+        plan = experiments.plan_experiment(self.payload(["task_a"]), runs_dir=self.runs_dir)
+        for item in plan["plans"]:
+            self.assertIn(item["executor_auth_mode"], ("env", "global", "copy-auth"))
 
     def test_plan_never_exposes_reasoning(self) -> None:
         """PRIVACY RED LINE: no private reasoning trace reaches the plan payload."""

@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Check,
+  CheckCircle2,
   ChevronDown,
   FolderSearch,
   Loader2,
@@ -16,6 +17,7 @@ import {
   Scale,
   Sparkles,
   Trash2,
+  XCircle,
 } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -39,6 +41,8 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
+import { TaskBadges } from "@/components/task-badges"
+import { fmtDuration } from "@/lib/format"
 import {
   AGENT_LABELS,
   AGENT_NOTES,
@@ -54,6 +58,7 @@ import {
   type Contender,
   type CustomRuntime,
   type ExecutionEstimate,
+  type PreflightCheck,
   type ExperimentPlanItem,
   type Profile,
   type ProviderFilter,
@@ -160,6 +165,7 @@ export default function NewRun() {
   const [shared, setShared] = useState<Partial<SharedConfig>>({})
   const [perFields, setPerFields] = useState<string[]>(["model"])
   const [expName, setExpName] = useState(() => timestampName("exp"))
+  const [preflightBlocked, setPreflightBlocked] = useState(false)
 
   useEffect(() => {
     if (!profilesQuery.data || profileId !== null) return
@@ -281,7 +287,16 @@ export default function NewRun() {
   if (providersQuery.isError) return <ErrorNote message={(providersQuery.error as Error).message} />
 
   const activeLibrary = libraries.find((library) => library.dir === tasksDir)
-  const taskCount = tasks.length || activeLibrary?.tasks.length || 0
+  const libraryTasks = activeLibrary?.tasks ?? []
+  const healthyTasks = libraryTasks.filter((task) => !task.error)
+  const brokenCount = libraryTasks.length - healthyTasks.length
+  /* The tasks this experiment will actually run: the explicit selection, or
+     every healthy package when nothing is checked. Broken packages are never
+     runnable, so they never count. */
+  const selectedTaskObjs = tasks.length
+    ? healthyTasks.filter((task) => tasks.includes(task.id))
+    : healthyTasks
+  const taskCount = selectedTaskObjs.length
   const judgeConflicts = contenders.filter(
     (draft) =>
       draft.model.trim() &&
@@ -290,7 +305,7 @@ export default function NewRun() {
 
   const canNext =
     step === 0
-      ? Boolean(activeLibrary && activeLibrary.tasks.length)
+      ? healthyTasks.length > 0 && (tasks.length > 0 || brokenCount === 0)
       : step === 1
         ? contenders.length > 0
         : true
@@ -325,6 +340,8 @@ export default function NewRun() {
       </div>
 
       <Stepper current={step} onSelect={(target) => target < step && setStep(target)} />
+
+      {step > 0 && <TaskFactsStrip tasks={selectedTaskObjs} />}
 
       {step === 0 && (
         <StepTasks
@@ -375,13 +392,7 @@ export default function NewRun() {
           providers={providers}
           skills={skillsQuery.data}
           tasksDir={tasksDir}
-          selectedTasks={
-            activeLibrary
-              ? tasks.length
-                ? activeLibrary.tasks.filter((task) => tasks.includes(task.id))
-                : activeLibrary.tasks
-              : []
-          }
+          selectedTasks={selectedTaskObjs}
           shared={shared}
           setShared={setShared}
           setSharedField={setSharedField}
@@ -412,19 +423,25 @@ export default function NewRun() {
           plan={plan}
           judgeConflicts={judgeConflicts.length}
           runtimeLabel={runtimeLabel}
+          onPreflightBlocked={setPreflightBlocked}
         />
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <Button variant="outline" disabled={step === 0} onClick={() => setStep(step - 1)}>
           <ArrowLeft /> Back
         </Button>
+        {step === 3 && preflightBlocked && plan.plans && (
+          <span className="text-right text-xs text-fail-ink">
+            Launch is disabled until the readiness checks below pass.
+          </span>
+        )}
         {step < STEPS.length - 1 ? (
           <Button disabled={!canNext} onClick={() => setStep(step + 1)}>
             Next <ArrowRight />
           </Button>
         ) : (
-          <Button disabled={!plan.plans || launching} onClick={launch}>
+          <Button disabled={!plan.plans || launching || preflightBlocked} onClick={launch}>
             {launching ? <Loader2 className="animate-spin" /> : <Rocket />}
             {launching ? "Launching…" : `Launch ${contenders.length} runs`}
           </Button>
@@ -502,7 +519,7 @@ function StepTasks({
   onOpenPicker,
   onImported,
 }: {
-  libraries: { dir: string; tasks: { id: string; name: string; rubric_count: number }[] }[]
+  libraries: { dir: string; tasks: TaskPackage[] }[]
   tasksDir: string
   tasks: string[]
   setTasksDir: (dir: string) => void
@@ -546,37 +563,57 @@ function StepTasks({
               <Label>Tasks to run</Label>
               <span className="text-xs text-muted-foreground">
                 {tasks.length
-                  ? `${tasks.length} of ${library.tasks.length} selected`
-                  : `all ${library.tasks.length} will run`}
+                  ? `${tasks.length} of ${library.tasks.filter((task) => !task.error).length} selected`
+                  : `all ${library.tasks.filter((task) => !task.error).length} runnable will run`}
               </span>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               {library.tasks.map((task) => {
                 const checked = tasks.includes(task.id)
+                const broken = Boolean(task.error)
                 return (
                   <label
-                    key={task.id}
+                    key={task.dir_name}
                     className={cn(
-                      "flex cursor-pointer items-start gap-3 rounded-md border p-3 transition-colors",
-                      checked ? "border-primary bg-accent/60" : "hover:border-primary/40",
+                      "flex items-start gap-3 rounded-md border p-3 transition-colors",
+                      broken
+                        ? "cursor-not-allowed border-fail-ink/40 bg-fail-soft/30"
+                        : checked
+                          ? "cursor-pointer border-primary bg-accent/60"
+                          : "cursor-pointer hover:border-primary/40",
                     )}
                   >
                     <Checkbox
                       className="mt-0.5"
                       checked={checked}
+                      disabled={broken}
                       onCheckedChange={(value) =>
                         setTasks(
                           value ? [...tasks, task.id] : tasks.filter((id) => id !== task.id),
                         )
                       }
                     />
-                    <span className="min-w-0">
+                    <span className="min-w-0 flex-1">
                       <span className="block truncate font-mono text-sm font-medium">
                         {task.id}
                       </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {task.name} · {task.rubric_count} rubrics
-                      </span>
+                      {broken ? (
+                        <span className="block text-xs text-fail-ink">
+                          Not runnable: {task.error}
+                        </span>
+                      ) : (
+                        <>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {task.name} · {task.rubric_count} rubrics
+                          </span>
+                          {task.warning && (
+                            <span className="block text-xs text-warn-ink">{task.warning}</span>
+                          )}
+                          <span className="mt-1 block">
+                            <TaskBadges task={task} />
+                          </span>
+                        </>
+                      )}
                     </span>
                   </label>
                 )
@@ -585,6 +622,12 @@ function StepTasks({
             <p className="text-xs text-muted-foreground">
               Leave everything unchecked to run the whole folder.
             </p>
+            {library.tasks.some((task) => task.error) && (
+              <p className="text-xs text-warn-ink">
+                This folder contains broken packages. Pick the tasks to run explicitly; the
+                runner stops on a broken package when asked to run the whole folder.
+              </p>
+            )}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
@@ -1124,15 +1167,17 @@ function StepShared({
         </CardContent>
       </Card>
 
-      <PromptAssistanceBlock
-        tasksDir={tasksDir}
-        selectedTasks={selectedTasks}
-        shared={shared}
-        setShared={setShared}
-        setSharedField={setSharedField}
-      />
-
-      <ExecutorSkillsBlock skills={skills} shared={shared} setShared={setShared} />
+      <div className="grid gap-2">
+        <h3 className="px-1 text-sm font-semibold text-muted-foreground">Research add-ons</h3>
+        <PromptAssistanceBlock
+          tasksDir={tasksDir}
+          selectedTasks={selectedTasks}
+          shared={shared}
+          setShared={setShared}
+          setSharedField={setSharedField}
+        />
+        <ExecutorSkillsBlock skills={skills} shared={shared} setShared={setShared} />
+      </div>
 
       <Card>
         <CardContent className="grid gap-4">
@@ -1488,17 +1533,54 @@ function PromptAssistanceBlock({
       return { ...current, rigors: [...chosen] }
     })
 
+  /* Collapsed by default while inactive: research layers are additions, not
+     required configuration, and the closed row states exactly what is on. */
+  const assistActive = mode !== "none" || rigorEnabled
+  const assistSummary = [
+    mode === "none"
+      ? "instructions off"
+      : mode === "select"
+        ? `instructions: selected steps (${selectedSteps.length})`
+        : `instructions: ${mode}`,
+    rigorEnabled ? `rigor: ${selectedRigors.length} requirement${selectedRigors.length === 1 ? "" : "s"}` : "rigor off",
+  ].join(" · ")
+  const [open, setOpen] = useState(assistActive)
+  useEffect(() => {
+    if (assistActive) setOpen(true)
+  }, [assistActive])
+
   return (
-    <Card>
+    <Card className={open ? undefined : "py-3"}>
       <CardContent className="grid gap-4">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <Sparkles className="size-4 self-center text-live-ink" />
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          className="flex w-full flex-wrap items-center gap-2 text-left"
+        >
+          <Sparkles className="size-4 text-live-ink" />
           <span className="text-sm font-semibold">Prompt assistance (research)</span>
-          <p className="text-xs text-muted-foreground">
-            Optional experiments that add expert guidance to the prompt. Shared across all
-            agents, like the judge, so the comparison stays fair.
-          </p>
-        </div>
+          {open ? (
+            <span className="text-xs text-muted-foreground">
+              Optional experiments that add expert guidance to the prompt. Shared across all
+              agents, like the judge, so the comparison stays fair.
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">{assistSummary}</span>
+          )}
+          <span
+            className={cn(
+              "ml-auto size-1.5 rounded-full",
+              assistActive ? "bg-live-ink" : "bg-muted-foreground/40",
+            )}
+            aria-hidden
+          />
+          <ChevronDown
+            className={cn("size-4 text-muted-foreground transition-transform", open && "rotate-180")}
+          />
+        </button>
+        {open && (
+          <>
 
         {/* --- Expert instructions --- */}
         <div className="grid gap-3">
@@ -1792,6 +1874,8 @@ function PromptAssistanceBlock({
             </>
           )}
         </div>
+          </>
+        )}
       </CardContent>
     </Card>
   )
@@ -1811,11 +1895,17 @@ function ExecutorSkillsBlock({
   shared: Partial<SharedConfig>
   setShared: React.Dispatch<React.SetStateAction<Partial<SharedConfig>>>
 }) {
-  // Hidden entirely when the library is empty or unreadable — nothing to inject.
-  if (!skills || skills.error || skills.skills.length === 0) return null
-
   const selectedGroups = shared.executor_skill_groups ?? []
   const selectedSkills = shared.executor_skills ?? []
+  const skillsActive = selectedGroups.length + selectedSkills.length > 0
+  /* Hooks stay above the empty-library early return (rules of hooks). */
+  const [open, setOpen] = useState(skillsActive)
+  useEffect(() => {
+    if (skillsActive) setOpen(true)
+  }, [skillsActive])
+
+  // Hidden entirely when the library is empty or unreadable — nothing to inject.
+  if (!skills || skills.error || skills.skills.length === 0) return null
   const coveredByGroup = new Set<string>()
   for (const group of selectedGroups) {
     for (const id of skills.groups[group] ?? []) coveredByGroup.add(id)
@@ -1848,17 +1938,53 @@ function ExecutorSkillsBlock({
       return { ...current, executor_skills: [...individual] }
     })
 
+  const skillsSummary = skillsActive
+    ? [
+        selectedSkills.length
+          ? `${selectedSkills.length} skill${selectedSkills.length === 1 ? "" : "s"}`
+          : "",
+        selectedGroups.length
+          ? `${selectedGroups.length} group${selectedGroups.length === 1 ? "" : "s"}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : "none selected"
+
   return (
-    <Card>
+    <Card className={open ? undefined : "py-3"}>
       <CardContent className="grid gap-4">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span className="text-sm font-semibold">Executor skills — shared</span>
-          <p className="text-xs text-muted-foreground">
-            Expert guidance installed into every agent's workspace for this run. Shared across all
-            agents, like the judge, so the comparison stays fair.
-          </p>
-          <Link to="/skills" className="ml-auto text-xs text-primary hover:underline">
-            Browse skills
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+          className="flex w-full flex-wrap items-center gap-2 text-left"
+        >
+          <span className="text-sm font-semibold">Executor skills</span>
+          {open ? (
+            <span className="text-xs text-muted-foreground">
+              Expert guidance installed into every agent's workspace for this run. Shared
+              across all agents, like the judge, so the comparison stays fair.
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">{skillsSummary}</span>
+          )}
+          <span
+            className={cn(
+              "ml-auto size-1.5 rounded-full",
+              skillsActive ? "bg-live-ink" : "bg-muted-foreground/40",
+            )}
+            aria-hidden
+          />
+          <ChevronDown
+            className={cn("size-4 text-muted-foreground transition-transform", open && "rotate-180")}
+          />
+        </button>
+        {open && (
+          <>
+        <div className="-mt-2 flex justify-end">
+          <Link to="/skills" className="text-xs text-primary hover:underline">
+            Browse the skill library
           </Link>
         </div>
 
@@ -1942,6 +2068,8 @@ function ExecutorSkillsBlock({
             </Badge>
           ))}
         </div>
+          </>
+        )}
       </CardContent>
     </Card>
   )
@@ -1959,6 +2087,7 @@ function StepReview({
   plan,
   judgeConflicts,
   runtimeLabel,
+  onPreflightBlocked,
 }: {
   expName: string
   setExpName: (name: string) => void
@@ -1969,6 +2098,7 @@ function StepReview({
   plan: { plans: ExperimentPlanItem[] | null; estimate: ExecutionEstimate | null; error: string | null }
   judgeConflicts: number
   runtimeLabel: (runtime: string) => string
+  onPreflightBlocked: (blocked: boolean) => void
 }) {
   const repeat = Number(shared.repeat) || 1
   const planSkills = plan.plans?.[0]?.executor_skills ?? []
@@ -2100,6 +2230,13 @@ function StepReview({
         </Alert>
       )}
 
+      <PreflightPanel
+        plans={plan.plans}
+        shared={shared}
+        runtimeLabel={runtimeLabel}
+        onBlockedChange={onPreflightBlocked}
+      />
+
       <Card className="gap-0 overflow-hidden py-0">
         <div className="border-b bg-muted/30 px-4 py-2.5 text-sm font-semibold">
           Runs that will launch
@@ -2192,6 +2329,181 @@ function SummaryTile({
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/* ---------- task facts strip (steps 2-4) ---------- */
+
+/* The wizard-wide answer to "can these tasks use the web / how long can they
+   run": facts owned by the task packages, summarized where run configuration
+   happens so nobody hunts for a switch that does not exist. */
+function TaskFactsStrip({ tasks }: { tasks: TaskPackage[] }) {
+  if (!tasks.length) return null
+  const webOn = tasks.filter((task) => task.allow_web_search === true).length
+  const webOff = tasks.filter((task) => task.allow_web_search === false).length
+  const maxTimeout = Math.max(0, ...tasks.map((task) => task.timeout_seconds ?? 0))
+  const withSteps = tasks.filter((task) => task.has_human_reference).length
+  const rigors = tasks.reduce((sum, task) => sum + (task.rigor_count ?? 0), 0)
+  const webLabel =
+    webOn === tasks.length
+      ? "web search allowed"
+      : webOn === 0
+        ? webOff > 0
+          ? "web search off"
+          : "web search not declared"
+        : `web search on ${webOn}/${tasks.length}`
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+      title="Facts set by the selected task packages, not by this run's configuration"
+    >
+      <span className="font-medium text-foreground">
+        {tasks.length} task{tasks.length === 1 ? "" : "s"}
+      </span>
+      <span>{webLabel}</span>
+      {maxTimeout > 0 && <span>up to {fmtDuration(maxTimeout)} each</span>}
+      {withSteps > 0 && (
+        <span>
+          expert steps in {withSteps}/{tasks.length}
+        </span>
+      )}
+      {rigors > 0 && (
+        <span>
+          {rigors} rigor requirement{rigors === 1 ? "" : "s"}
+        </span>
+      )}
+      <span className="ml-auto hidden text-[11px] sm:inline">set by the task packages</span>
+    </div>
+  )
+}
+
+/* ---------- readiness checks (review step) ---------- */
+
+/* Environment readiness, surfaced before Launch instead of after a dead run:
+   CLI on PATH, credentials in the server environment, Docker images built.
+   A hard failure disables Launch; the button lighting up is a promise. */
+function PreflightPanel({
+  plans,
+  shared,
+  runtimeLabel,
+  onBlockedChange,
+}: {
+  plans: ExperimentPlanItem[] | null
+  shared: Partial<SharedConfig>
+  runtimeLabel: (runtime: string) => string
+  onBlockedChange: (blocked: boolean) => void
+}) {
+  const paramSets = useMemo(() => {
+    if (!plans) return [] as { key: string; agent: string; params: Record<string, string> }[]
+    const map = new Map<string, { agent: string; params: Record<string, string> }>()
+    for (const item of plans) {
+      const key = [item.agent, item.backend, item.docker_image ?? "", item.executor_auth_mode ?? "env"].join("|")
+      if (map.has(key)) continue
+      map.set(key, {
+        agent: item.agent,
+        params: {
+          executor_agent: item.agent,
+          evaluator_agent: String(shared.evaluator_agent ?? "codex"),
+          executor_backend: item.backend,
+          docker_image: item.docker_image ?? "",
+          executor_auth_mode: item.executor_auth_mode ?? "env",
+          evaluator_auth_mode: String(shared.evaluator_auth_mode ?? "env"),
+        },
+      })
+    }
+    return [...map.entries()].map(([key, value]) => ({ key, ...value }))
+  }, [plans, shared])
+
+  const checksQuery = useQuery({
+    queryKey: ["preflight", paramSets.map((set) => set.key).join(";")],
+    enabled: paramSets.length > 0,
+    queryFn: async () =>
+      Promise.all(
+        paramSets.map(async (set) => ({
+          agent: set.agent,
+          checks: (await api.preflight(set.params)).checks,
+        })),
+      ),
+  })
+
+  const groups = checksQuery.data ?? []
+  const judgeChecks = groups[0]?.checks.filter((check) => check.id.startsWith("evaluator")) ?? []
+  const hasFail = groups.some((group) => group.checks.some((check) => check.status === "fail"))
+  const blocked = paramSets.length > 0 && (checksQuery.isPending || checksQuery.isError || hasFail)
+
+  useEffect(() => {
+    onBlockedChange(blocked)
+  }, [blocked, onBlockedChange])
+
+  if (!plans) return null
+
+  return (
+    <Card className="py-4">
+      <CardContent className="grid gap-3 px-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">Ready to run?</span>
+          <span className="text-xs text-muted-foreground">
+            CLI, credentials, and Docker checks on this machine
+          </span>
+          {checksQuery.isPending && paramSets.length > 0 && (
+            <Loader2 className="ml-auto size-4 animate-spin text-muted-foreground" />
+          )}
+        </div>
+        {checksQuery.isError && (
+          <p className="text-xs text-fail-ink">
+            Readiness checks failed to load: {(checksQuery.error as Error).message}
+          </p>
+        )}
+        {groups.map((group) => (
+          <div key={group.agent} className="grid gap-1">
+            <span className="text-xs font-medium">{runtimeLabel(group.agent)}</span>
+            {group.checks
+              .filter((check) => !check.id.startsWith("evaluator"))
+              .map((check) => (
+                <PreflightRow key={`${group.agent}-${check.id}-${check.label}`} check={check} />
+              ))}
+          </div>
+        ))}
+        {judgeChecks.length > 0 && (
+          <div className="grid gap-1">
+            <span className="text-xs font-medium">
+              Judge · {runtimeLabel(String(shared.evaluator_agent ?? "codex"))}
+            </span>
+            {judgeChecks.map((check) => (
+              <PreflightRow key={`judge-${check.id}-${check.label}`} check={check} />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function PreflightRow({ check }: { check: PreflightCheck }) {
+  const icon =
+    check.status === "ok" ? (
+      <CheckCircle2 className="size-3.5 text-pass-ink" />
+    ) : check.status === "warn" ? (
+      <AlertTriangle className="size-3.5 text-warn-ink" />
+    ) : (
+      <XCircle className="size-3.5 text-fail-ink" />
+    )
+  return (
+    <div className="flex items-start gap-2 text-xs">
+      <span className="mt-0.5 shrink-0">{icon}</span>
+      <span
+        className={cn(
+          "shrink-0 font-medium",
+          check.status === "fail" && "text-fail-ink",
+          check.status === "warn" && "text-warn-ink",
+        )}
+      >
+        {check.label}
+      </span>
+      {check.hint && (
+        <span className="min-w-0 break-all text-muted-foreground">{check.hint}</span>
+      )}
+    </div>
   )
 }
 

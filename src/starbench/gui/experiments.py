@@ -432,6 +432,18 @@ def plan_experiment(
         if isinstance(step, str) and str(step).strip()
     ]
     resolved_steps = _resolve_selected_steps(payload.get("tasks_dir"), payload.get("tasks"))
+    if instruction_mode in ("traverse", "ablation"):
+        # The runner rejects the WHOLE run when any selected task lacks expert
+        # steps in these modes (verified semantics, not a baseline fallback).
+        # Launching a plan that is known to die is a false green light.
+        stepless_tasks = [task_id for task_id, step_ids in resolved_steps if not step_ids]
+        if stepless_tasks:
+            raise ExperimentError(
+                f"{instruction_mode.capitalize()} mode needs expert steps in every "
+                f"selected task; the runner rejects the whole run otherwise. "
+                f"Without steps: {', '.join(stepless_tasks)}. Deselect them or pick "
+                "tasks that ship a human reference."
+            )
     if instruction_mode == "select":
         if not instruction_steps:
             raise ExperimentError(
@@ -668,6 +680,9 @@ def plan_experiment(
                 "backend": effective_backend,
                 "backend_downgraded": backend == "docker" and effective_backend == "local",
                 "docker_image": docker_image,
+                # Auth mode the launch will use; the review-step preflight
+                # passes it through so credential checks match reality.
+                "executor_auth_mode": launch_payload["auth_mode"],
                 # Legacy merged view (kept for display/back-compat).
                 "env_spec": merged_env,
                 "env_keys": sorted(merged_env.keys()),

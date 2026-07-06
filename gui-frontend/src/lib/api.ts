@@ -215,6 +215,11 @@ export interface TaskPackage {
   allow_web_search: boolean | null
   rigor_count: number
   has_human_reference: boolean
+  /* Readiness facts: a broken package (unparseable task.json, missing prompt)
+     is listed with `error` instead of being silently dropped; `warning` marks
+     runnable-but-unscorable states such as an empty rubrics file. */
+  error?: string | null
+  warning?: string | null
 }
 
 export interface TaskLibrary {

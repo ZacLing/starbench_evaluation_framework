@@ -346,11 +346,16 @@ def _cli_check(role: str, agent: str, bin_override: Optional[str] = None) -> Dic
     found = shutil.which(bin_name)
     if found:
         return _check(f"{role}_cli", f"{role.capitalize()} CLI `{bin_name}`", "ok", found)
+    remedy = (
+        "Install it, or fix the command in the runtime's definition on the Agents page."
+        if agent.startswith("custom:")
+        else f"Install it or point --{agent}-bin at it via extra CLI flags."
+    )
     return _check(
         f"{role}_cli",
         f"{role.capitalize()} CLI `{bin_name}`",
         "fail",
-        f"`{bin_name}` was not found on PATH. Install it or point --{agent}-bin at it via extra flags.",
+        f"`{bin_name}` was not found on PATH. {remedy}",
     )
 
 

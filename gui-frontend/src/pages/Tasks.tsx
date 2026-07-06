@@ -16,24 +16,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
+import { WebSearchBadge } from "@/components/task-badges"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type TaskPackage } from "@/lib/api"
 import { renderMarkdown } from "@/lib/markdown"
 import { fmtDuration } from "@/lib/format"
-
-/* Tri-state web-search badge: allowed (outline), forbidden (muted), or
-   undeclared (nothing). A task package that never sets allow_web_search stays
-   silent rather than guessing. */
-function WebSearchBadge({ allow }: { allow: boolean | null }) {
-  if (allow === null || allow === undefined) return null
-  return allow ? (
-    <Badge variant="outline" className="text-xs text-muted-foreground">
-      web
-    </Badge>
-  ) : (
-    <Badge className="border-transparent bg-muted text-xs text-muted-foreground">no web</Badge>
-  )
-}
 
 export default function Tasks() {
   const navigate = useNavigate()
@@ -87,6 +74,15 @@ export default function Tasks() {
                   onClick={() => setPreview({ dir: library.dir, task })}
                 >
                   <CardContent className="grid gap-2 px-4">
+                    {task.error ? (
+                      <p className="text-xs text-fail-ink" title={task.error}>
+                        broken: {task.error}
+                      </p>
+                    ) : task.warning ? (
+                      <p className="text-xs text-warn-ink" title={task.warning}>
+                        {task.warning}
+                      </p>
+                    ) : null}
                     <div className="flex items-start justify-between gap-2">
                       <span className="font-mono text-sm font-semibold">{task.id}</span>
                       <div className="flex flex-wrap items-center justify-end gap-1">

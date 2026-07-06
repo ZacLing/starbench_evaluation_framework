@@ -504,12 +504,36 @@ def list_task_packages(tasks_dir: Path) -> List[Dict[str, Any]]:
             continue
         spec = _read_json(task_json)
         if not isinstance(spec, dict):
+            # A folder that claims to be a task package but cannot be parsed is
+            # rendered as an honest broken entry, never silently dropped: the
+            # operator must be able to see why a task on disk is not runnable.
+            packages.append(
+                {
+                    "id": entry.name,
+                    "dir_name": entry.name,
+                    "name": entry.name,
+                    "rubric_count": 0,
+                    "timeout_seconds": None,
+                    "allow_web_search": None,
+                    "rigor_count": 0,
+                    "has_human_reference": False,
+                    "error": "task.json is missing required fields or is not valid JSON",
+                    "warning": None,
+                }
+            )
             continue
         rubrics_name = str(spec.get("rubrics", "rubrics.json"))
         rubrics = _read_json(entry / rubrics_name)
         rubric_count = 0
         if isinstance(rubrics, dict) and isinstance(rubrics.get("rubrics"), list):
             rubric_count = len(rubrics["rubrics"])
+        prompt_name = str(spec.get("prompt", "prompt.md"))
+        error = None
+        warning = None
+        if not (entry / prompt_name).exists():
+            error = f"prompt file `{prompt_name}` is missing"
+        elif rubric_count == 0:
+            warning = f"`{rubrics_name}` is missing, invalid, or has no rubrics"
         packages.append(
             {
                 "id": str(spec.get("id", entry.name)),
@@ -520,6 +544,8 @@ def list_task_packages(tasks_dir: Path) -> List[Dict[str, Any]]:
                 "allow_web_search": spec.get("allow_web_search"),
                 "rigor_count": rigor_count(entry, spec),
                 "has_human_reference": (entry / "human_reference.json").exists(),
+                "error": error,
+                "warning": warning,
             }
         )
     return packages

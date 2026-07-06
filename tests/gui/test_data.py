@@ -107,6 +107,7 @@ class GuiDataTest(unittest.TestCase):
         task.mkdir(parents=True)
         write_json(task / "task.json", {"id": "demo", "name": "Demo", "timeout_seconds": 60})
         write_json(task / "rubrics.json", {"rubrics": [{"id": "R001"}]})
+        (task / "prompt.md").write_text("do the task", encoding="utf-8")
         packages = data.list_task_packages(tasks_dir)
         self.assertEqual(packages[0]["id"], "demo")
         self.assertEqual(packages[0]["rubric_count"], 1)
@@ -115,6 +116,32 @@ class GuiDataTest(unittest.TestCase):
         # count (no rigors.json here).
         self.assertIsNone(packages[0]["allow_web_search"])
         self.assertEqual(packages[0]["rigor_count"], 0)
+        # A healthy package carries neither error nor warning.
+        self.assertIsNone(packages[0]["error"])
+        self.assertIsNone(packages[0]["warning"])
+
+    def test_list_task_packages_surfaces_broken_and_warning_entries(self) -> None:
+        tasks_dir = self.tmp / "tasks"
+        # Unparseable task.json: an honest error entry, never a silent skip.
+        broken = tasks_dir / "broken"
+        broken.mkdir(parents=True)
+        (broken / "task.json").write_text("{not json", encoding="utf-8")
+        # Missing prompt file: the runner cannot execute this task.
+        promptless = tasks_dir / "promptless"
+        promptless.mkdir()
+        write_json(promptless / "task.json", {"id": "promptless", "name": "Promptless"})
+        write_json(promptless / "rubrics.json", {"rubrics": [{"id": "R001"}]})
+        # Zero rubrics: runnable but never scorable, a warning not an error.
+        norubrics = tasks_dir / "norubrics"
+        norubrics.mkdir()
+        write_json(norubrics / "task.json", {"id": "norubrics", "name": "No rubrics"})
+        (norubrics / "prompt.md").write_text("do it", encoding="utf-8")
+
+        by_id = {package["id"]: package for package in data.list_task_packages(tasks_dir)}
+        self.assertIn("not valid JSON", by_id["broken"]["error"])
+        self.assertIn("prompt", by_id["promptless"]["error"])
+        self.assertIsNone(by_id["norubrics"]["error"])
+        self.assertIn("rubrics", by_id["norubrics"]["warning"])
 
     def test_list_task_packages_reports_web_search_and_rigor_badges(self) -> None:
         tasks_dir = self.tmp / "tasks"
