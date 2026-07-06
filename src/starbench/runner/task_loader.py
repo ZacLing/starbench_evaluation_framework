@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
+from starbench.contracts import ContractValidationError, validate_payload
+
 from .models import ExecutorSkill, HumanReferenceStep, Rigor, Rubric, TaskRunSpec, TaskSpec
 
 
@@ -47,6 +49,7 @@ def load_task(task_dir: Path) -> TaskSpec:
         raise FileNotFoundError(f"Missing task.json in {task_dir}")
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
+    _validate_contract("task.schema.json", config, config_path)
     prompt_path = task_dir / config.get("prompt", "prompt.md")
     rubrics_path = task_dir / config.get("rubrics", "rubrics.json")
     human_reference_path = task_dir / config.get("human_reference", "human_reference.json")
@@ -66,6 +69,7 @@ def load_task(task_dir: Path) -> TaskSpec:
     executor_skill_exclusions: List[Path] = []
     if executor_skills_path is not None and executor_skills_path.exists():
         executor_skills_data = json.loads(executor_skills_path.read_text(encoding="utf-8"))
+        _validate_contract("executor_skills.schema.json", executor_skills_data, executor_skills_path)
         seen_executor_skill_ids = set()
         for item in executor_skills_data.get("skills", []):
             skill = ExecutorSkill.from_dict(item, task_dir=task_dir)
@@ -109,10 +113,12 @@ def load_task(task_dir: Path) -> TaskSpec:
         raise FileNotFoundError(f"Missing rubrics file for {task_dir}: {rubrics_path}")
 
     rubrics_data = json.loads(rubrics_path.read_text(encoding="utf-8"))
+    _validate_contract("rubrics.schema.json", rubrics_data, rubrics_path)
     rubrics = [Rubric.from_dict(item) for item in rubrics_data["rubrics"]]
     human_reference_steps: List[HumanReferenceStep] = []
     if human_reference_path.exists():
         human_reference_data = json.loads(human_reference_path.read_text(encoding="utf-8"))
+        _validate_contract("human_reference.schema.json", human_reference_data, human_reference_path)
         seen_step_ids = set()
         for step_index, item in enumerate(human_reference_data.get("steps", []), start=1):
             step = HumanReferenceStep.from_dict(item, step_index=step_index)
@@ -125,6 +131,7 @@ def load_task(task_dir: Path) -> TaskSpec:
     rigors: List[Rigor] = []
     if rigors_path.exists():
         rigors_data = json.loads(rigors_path.read_text(encoding="utf-8"))
+        _validate_contract("rigors.schema.json", rigors_data, rigors_path)
         seen_rigor_ids = set()
         for item in rigors_data.get("rigors", []):
             rigor = Rigor.from_dict(item)
@@ -153,6 +160,13 @@ def load_task(task_dir: Path) -> TaskSpec:
         rigors=rigors,
         executor_skills=executor_skills,
     )
+
+
+def _validate_contract(schema_name: str, data: object, source_path: Path) -> None:
+    try:
+        validate_payload(schema_name, data, path=source_path.name)
+    except ContractValidationError as error:
+        raise ValueError(f"{source_path} does not match StarBench artifact contract: {error}") from error
 
 
 def discover_tasks(tasks_dir: Path, selected_ids: Sequence[str] | None = None) -> List[TaskSpec]:

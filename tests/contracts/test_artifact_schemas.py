@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -12,6 +11,9 @@ import textwrap
 import unittest
 from pathlib import Path
 from typing import Any, Dict
+
+from starbench.contracts import ContractValidationError, validate_json_schema
+from starbench.runner.task_loader import load_task
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,91 +44,6 @@ def read_json(path: Path) -> Any:
 
 def schema(name: str) -> Dict[str, Any]:
     return read_json(SCHEMA_ROOT / name)
-
-
-def validate(schema_payload: Dict[str, Any], data: Any, *, path: str = "$") -> None:
-    """Validate the JSON Schema subset used by the public artifact schemas.
-
-    The project intentionally avoids adding a runtime dependency for schema
-    validation at this stage. This small validator is narrow by design: it
-    covers the keywords used in ``schemas/starbench/v1`` and fails loudly if a
-    schema starts using an unsupported keyword in future tests.
-    """
-    unsupported = set(schema_payload) & {
-        "$ref",
-        "allOf",
-        "anyOf",
-        "oneOf",
-        "not",
-        "patternProperties",
-        "dependentRequired",
-    }
-    if unsupported:
-        raise AssertionError(f"{path}: unsupported schema keyword(s): {sorted(unsupported)}")
-
-    expected_type = schema_payload.get("type")
-    if expected_type is not None and not _matches_type(data, expected_type):
-        raise AssertionError(
-            f"{path}: expected type {expected_type!r}, got {type(data).__name__}"
-        )
-
-    if "enum" in schema_payload and data not in schema_payload["enum"]:
-        raise AssertionError(f"{path}: expected one of {schema_payload['enum']!r}, got {data!r}")
-
-    if isinstance(data, dict):
-        required = schema_payload.get("required", [])
-        for key in required:
-            if key not in data:
-                raise AssertionError(f"{path}: missing required key {key!r}")
-
-        properties = schema_payload.get("properties", {})
-        for key, child_schema in properties.items():
-            if key in data:
-                validate(child_schema, data[key], path=f"{path}.{key}")
-
-        if schema_payload.get("additionalProperties") is False:
-            extra = set(data) - set(properties)
-            if extra:
-                raise AssertionError(f"{path}: unexpected key(s): {sorted(extra)}")
-
-    if isinstance(data, list):
-        min_items = schema_payload.get("minItems")
-        if min_items is not None and len(data) < min_items:
-            raise AssertionError(f"{path}: expected at least {min_items} item(s)")
-
-        item_schema = schema_payload.get("items")
-        if item_schema is not None:
-            for index, item in enumerate(data):
-                validate(item_schema, item, path=f"{path}[{index}]")
-
-    if isinstance(data, (int, float)) and not isinstance(data, bool):
-        minimum = schema_payload.get("minimum")
-        if minimum is not None and data < minimum:
-            raise AssertionError(f"{path}: expected >= {minimum}, got {data!r}")
-
-    pattern = schema_payload.get("pattern")
-    if pattern is not None and isinstance(data, str) and re.search(pattern, data) is None:
-        raise AssertionError(f"{path}: {data!r} does not match {pattern!r}")
-
-
-def _matches_type(data: Any, expected_type: Any) -> bool:
-    if isinstance(expected_type, list):
-        return any(_matches_type(data, item) for item in expected_type)
-    if expected_type == "object":
-        return isinstance(data, dict)
-    if expected_type == "array":
-        return isinstance(data, list)
-    if expected_type == "string":
-        return isinstance(data, str)
-    if expected_type == "integer":
-        return isinstance(data, int) and not isinstance(data, bool)
-    if expected_type == "number":
-        return isinstance(data, (int, float)) and not isinstance(data, bool)
-    if expected_type == "boolean":
-        return isinstance(data, bool)
-    if expected_type == "null":
-        return data is None
-    raise AssertionError(f"unsupported JSON Schema type: {expected_type!r}")
 
 
 def fake_codex_script(path: Path) -> None:
@@ -210,25 +127,25 @@ class ArtifactSchemaTests(unittest.TestCase):
         for task_dir in sorted(path for path in EXAMPLE_TASKS.iterdir() if path.is_dir()):
             with self.subTest(task=task_dir.name):
                 task = read_json(task_dir / "task.json")
-                validate(schema("task.schema.json"), task)
+                validate_json_schema(schema("task.schema.json"), task)
 
                 rubrics_path = task_dir / task.get("rubrics", "rubrics.json")
-                validate(schema("rubrics.schema.json"), read_json(rubrics_path))
+                validate_json_schema(schema("rubrics.schema.json"), read_json(rubrics_path))
 
                 human_reference = task.get("human_reference", "human_reference.json")
                 if (task_dir / human_reference).exists():
-                    validate(
+                    validate_json_schema(
                         schema("human_reference.schema.json"),
                         read_json(task_dir / human_reference),
                     )
 
                 rigors = task.get("rigors", "rigors.json")
                 if (task_dir / rigors).exists():
-                    validate(schema("rigors.schema.json"), read_json(task_dir / rigors))
+                    validate_json_schema(schema("rigors.schema.json"), read_json(task_dir / rigors))
 
                 executor_skills = task.get("executor_skills")
                 if executor_skills:
-                    validate(
+                    validate_json_schema(
                         schema("executor_skills.schema.json"),
                         read_json(task_dir / executor_skills),
                     )
@@ -289,18 +206,46 @@ class ArtifactSchemaTests(unittest.TestCase):
             task_root = run_root / "demo_python_cli"
             logs = task_root / "logs"
 
-            validate(schema("run_summary.schema.json"), read_json(run_root / "summary.json"))
-            for index, line in enumerate((run_root / "progress_events.jsonl").read_text(encoding="utf-8").splitlines()):
-                validate(schema("progress_event.schema.json"), json.loads(line), path=f"progress[{index}]")
-            validate(schema("task_manifest.schema.json"), read_json(task_root / "manifest.json"))
-            validate(schema("task_summary.schema.json"), read_json(task_root / "task_summary.json"))
-            validate(schema("executor_status.schema.json"), read_json(logs / "status.json"))
-            validate(schema("trace_summary.schema.json"), read_json(logs / "trace_summary.json"))
-            validate(schema("artifact_manifest.schema.json"), read_json(logs / "artifact_manifest.json"))
-            validate(
+            validate_json_schema(schema("run_summary.schema.json"), read_json(run_root / "summary.json"))
+            for index, line in enumerate(
+                (run_root / "progress_events.jsonl").read_text(encoding="utf-8").splitlines()
+            ):
+                validate_json_schema(
+                    schema("progress_event.schema.json"),
+                    json.loads(line),
+                    path=f"progress[{index}]",
+                )
+            validate_json_schema(
+                schema("task_manifest.schema.json"), read_json(task_root / "manifest.json")
+            )
+            validate_json_schema(
+                schema("task_summary.schema.json"), read_json(task_root / "task_summary.json")
+            )
+            validate_json_schema(schema("executor_status.schema.json"), read_json(logs / "status.json"))
+            validate_json_schema(schema("trace_summary.schema.json"), read_json(logs / "trace_summary.json"))
+            validate_json_schema(
+                schema("artifact_manifest.schema.json"),
+                read_json(logs / "artifact_manifest.json"),
+            )
+            validate_json_schema(
                 schema("judge_aggregate.schema.json"),
                 read_json(task_root / "judges" / "single_aggregate.json"),
             )
+
+    def test_runner_task_loader_rejects_non_contract_boolean_strings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp) / "task"
+            shutil.copytree(EXAMPLE_TASKS / "demo_python_cli", task_dir)
+            task_json = read_json(task_dir / "task.json")
+            task_json["allow_web_search"] = "false"
+            (task_dir / "task.json").write_text(json.dumps(task_json), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "artifact contract"):
+                load_task(task_dir)
+
+    def test_shared_validator_reports_schema_errors(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "missing required key 'id'"):
+            validate_json_schema(schema("task.schema.json"), {})
 
 
 if __name__ == "__main__":

@@ -265,8 +265,8 @@ Implemented in this branch:
 - Contract tests under `tests/contracts/`.
 - Bundled example-task validation against task package schemas.
 - Fake-runtime runner output validation against public run artifact schemas.
+- Shared runner/GUI validation via `starbench.contracts`.
 
 Planned next steps:
 
-- Move GUI import and runner task loading toward shared validation.
 - Add `schema_version` to stable emitted artifacts in a compatibility-safe step.
