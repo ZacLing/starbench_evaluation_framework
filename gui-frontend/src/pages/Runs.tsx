@@ -34,6 +34,13 @@ import { ExecutorStatsInline, PassSummaryBadge, StatusBadge } from "@/components
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type RunOverview } from "@/lib/api"
+
+/* Last two path segments: enough to recognize the folder, full path on hover. */
+function shortDir(path: string | undefined): string {
+  if (!path) return "this directory"
+  const parts = path.split("/").filter(Boolean)
+  return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : path
+}
 import { fmtTime, spanBetween } from "@/lib/format"
 
 export default function Runs() {
@@ -48,6 +55,7 @@ export default function Runs() {
     refetchInterval: (query) =>
       query.state.data?.runs.some((run) => run.status === "running") ? 4000 : false,
   })
+  const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta, staleTime: Infinity })
 
   const data = useMemo(() => {
     const runs = runsQuery.data?.runs ?? []
@@ -150,7 +158,11 @@ export default function Runs() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">All runs</h1>
           <p className="text-sm text-muted-foreground">
-            {runsQuery.data.runs.length} in this directory, including experiment members
+            {runsQuery.data.runs.length} in{" "}
+            <span className="font-mono" title={meta.data?.runs_dir}>
+              {shortDir(meta.data?.runs_dir)}
+            </span>
+            , including experiment members
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">

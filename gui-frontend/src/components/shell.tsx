@@ -1,11 +1,9 @@
 import { Link, NavLink, useLocation } from "react-router-dom"
-import { useQuery } from "@tanstack/react-query"
 import { Bot, Boxes, Gauge, Library, ListChecks, Plus, Puzzle, Star } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarHeader,
@@ -17,7 +15,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
-import { api } from "@/lib/api"
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: Gauge, end: true },
@@ -31,7 +28,6 @@ const NAV = [
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const location = useLocation()
-  const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta, staleTime: Infinity })
 
   return (
     <SidebarProvider>
@@ -75,16 +71,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
-        <SidebarFooter>
-          {meta.data ? (
-            <div
-              className="truncate px-2 pb-1 font-mono text-xs text-muted-foreground group-data-[collapsible=icon]:hidden"
-              title={meta.data.runs_dir}
-            >
-              {meta.data.runs_dir}
-            </div>
-          ) : null}
-        </SidebarFooter>
       </Sidebar>
       <SidebarInset>
         <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b bg-background/90 px-4 backdrop-blur">
