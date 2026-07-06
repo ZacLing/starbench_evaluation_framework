@@ -107,18 +107,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--thinking-effort",
         dest="thinking_effort",
-        choices=["none", "low", "medium", "high"],
+        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
         default="none",
         help=(
             "Reasoning effort for the executor, applied through each runtime's native switch "
-            "where one exists (Claude Code: MAX_THINKING_TOKENS budget; Codex: "
-            "model_reasoning_effort) and as a prompt-level instruction for the rest."
+            "where one exists (Claude Code --effort: low..max; Codex model_reasoning_effort: "
+            "minimal..xhigh; OpenCode --variant) and as a prompt-level instruction for the "
+            "rest (low/medium/high). Levels a runtime does not support are rejected at start."
         ),
     )
     parser.add_argument(
         "--claude-thinking-effort",
         dest="thinking_effort",
-        choices=["none", "low", "medium", "high"],
+        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
         default="none",
         help="Deprecated alias for --thinking-effort.",
     )

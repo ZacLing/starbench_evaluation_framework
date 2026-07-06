@@ -67,6 +67,8 @@ class BuiltinRuntime(TypedDict):
     cli: RuntimeCli
     provider_filter: ProviderFilter
     thinking_channel: ThinkingChannel
+    # The effort levels this runtime's CLI actually accepts ("none" first).
+    thinking_efforts: List[str]
 
 
 class _CustomRuntimeBase(TypedDict):
@@ -98,6 +100,7 @@ class CustomRuntime(_CustomRuntimeBase, total=False):
     docker_env_passthrough: List[str]
     docker_capable: bool
     thinking_channel: ThinkingChannel
+    thinking_efforts: List[str]
     cli: RuntimeCli
 
 

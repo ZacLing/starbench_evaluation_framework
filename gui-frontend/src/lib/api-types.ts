@@ -37,6 +37,7 @@ export interface BuiltinRuntime {
   cli: RuntimeCli
   provider_filter: ProviderFilter
   thinking_channel: "native_config" | "prompt"
+  thinking_efforts: string[]
 }
 
 export interface CustomRuntime {
@@ -65,6 +66,7 @@ export interface CustomRuntime {
   docker_env_passthrough?: string[]
   docker_capable?: boolean
   thinking_channel?: "native_config" | "prompt"
+  thinking_efforts?: string[]
   cli?: RuntimeCli
 }
 

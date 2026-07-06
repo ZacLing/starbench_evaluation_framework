@@ -248,8 +248,12 @@ class OpenCodeAdapter(RuntimeAdapter):
         # unlike codex, opencode also drives xai-kind providers.
         provider_filter=ProviderFilter(kinds=("openai-compatible", "openai", "xai")),
         injection=InjectionChannel(kind="opencode_gateway"),
-        # OpenCode's own --variant switch (built-in provider reasoning variants).
+        # OpenCode's own --variant switch. Built-in variant names are
+        # provider-specific (OpenAI ships minimal…xhigh, Anthropic high/max,
+        # Google low/high); unknown names are ignored by the CLI, so the set
+        # here is the union of the built-ins.
         thinking_channel="native_config",
+        thinking_efforts=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
 
     def executor_skill_prompt_location(self) -> str:

@@ -56,6 +56,7 @@ def _builtin_row(info: RuntimeInfo) -> Dict[str, Any]:
         "bin": info.bin,
         "provider_filter": _provider_filter_dict(info.provider_filter),
         "thinking_channel": info.thinking_channel,
+        "thinking_efforts": list(info.thinking_efforts),
     }
 
 
@@ -106,6 +107,7 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
             "cli": _cli_probe(agent["bin"]),
             "provider_filter": agent["provider_filter"],
             "thinking_channel": agent["thinking_channel"],
+            "thinking_efforts": agent["thinking_efforts"],
         }
         for agent in BUILTIN_AGENTS
     ]
@@ -159,6 +161,7 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
                     # Custom runtimes have no native switch the runner knows
                     # about; thinking effort reaches them as a prompt instruction.
                     "thinking_channel": "prompt",
+                    "thinking_efforts": ["none", "low", "medium", "high"],
                     "cli": _cli_probe(spec.command),
                     "source_path": str(path),
                     "error": None,

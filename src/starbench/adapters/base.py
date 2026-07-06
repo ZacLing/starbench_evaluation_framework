@@ -125,6 +125,11 @@ class RuntimeInfo:
     # appended to the prompt — a request, not a guarantee). Surfaced in the GUI
     # so nobody mistakes a prompt-level request for a native switch.
     thinking_channel: str = "prompt"
+    # The effort levels this runtime actually accepts ("none" = leave the
+    # CLI's default alone). Native runtimes declare their CLI's real level
+    # set; prompt runtimes get the three instruction tiers. The orchestrator
+    # rejects a level outside this set instead of quietly passing it on.
+    thinking_efforts: Tuple[str, ...] = ("none", "low", "medium", "high")
 
     @property
     def docker_capable(self) -> bool:

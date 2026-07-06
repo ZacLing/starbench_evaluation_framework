@@ -252,8 +252,11 @@ class CodexAdapter(RuntimeAdapter):
         # gateway); it does not take xai like opencode does.
         provider_filter=ProviderFilter(kinds=("openai", "openai-compatible")),
         injection=InjectionChannel(kind="codex_config", default_api_key_env="OPENAI_API_KEY"),
-        # Codex's own model_reasoning_effort config: a real switch, not a prompt request.
+        # Codex's own model_reasoning_effort config: a real switch, not a
+        # prompt request. xhigh is model-dependent; Codex coerces unsupported
+        # levels to the nearest one the model accepts.
         thinking_channel="native_config",
+        thinking_efforts=("none", "minimal", "low", "medium", "high", "xhigh"),
     )
 
     def executor_skill_prompt_location(self) -> str:

@@ -575,14 +575,32 @@ class ExperimentInstructionTest(unittest.TestCase):
                     "agent": "codex",
                     "model": "gpt-5.5",
                     "auth_mode": "global",
-                    "thinking_effort": "high",
+                    "thinking_effort": "xhigh",
                 }
             ],
         )
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         joined = " ".join(plan["plans"][0]["argv"])
-        self.assertIn("--thinking-effort high", joined)
+        self.assertIn("--thinking-effort xhigh", joined)
         self.assertNotIn("--claude-thinking-effort", joined)
+
+    def test_thinking_effort_outside_the_runtimes_set_is_rejected(self) -> None:
+        # gemini is a prompt runtime: xhigh has no instruction tier and no
+        # native switch, so the plan must refuse it instead of passing it on.
+        payload = self.payload(
+            ["task_a"],
+            contenders=[
+                {
+                    "label": "Gemini",
+                    "agent": "gemini",
+                    "model": "gemini-3-pro",
+                    "auth_mode": "global",
+                    "thinking_effort": "xhigh",
+                }
+            ],
+        )
+        with self.assertRaisesRegex(experiments.ExperimentError, "xhigh"):
+            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
 
     def test_plan_never_exposes_reasoning(self) -> None:
         """PRIVACY RED LINE: no private reasoning trace reaches the plan payload."""

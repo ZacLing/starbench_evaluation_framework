@@ -28,6 +28,26 @@ class ThinkingChannelTests(unittest.TestCase):
         for agent in ("gemini", "grok"):
             self.assertEqual(get_builtin(agent).info.thinking_channel, "prompt")
 
+    def test_registry_declares_each_clis_real_effort_levels(self) -> None:
+        # Claude Code: `claude --help` lists low, medium, high, xhigh, max.
+        self.assertEqual(
+            get_builtin("claude").info.thinking_efforts,
+            ("none", "low", "medium", "high", "xhigh", "max"),
+        )
+        # Codex config reference: minimal, low, medium, high, xhigh.
+        self.assertEqual(
+            get_builtin("codex").info.thinking_efforts,
+            ("none", "minimal", "low", "medium", "high", "xhigh"),
+        )
+        # OpenCode --variant: union of the built-in provider variants.
+        self.assertIn("max", get_builtin("opencode").info.thinking_efforts)
+        # Prompt runtimes carry only the three instruction tiers.
+        for agent in ("gemini", "grok"):
+            self.assertEqual(
+                get_builtin(agent).info.thinking_efforts,
+                ("none", "low", "medium", "high"),
+            )
+
     def test_claude_command_carries_native_effort_flag(self) -> None:
         command = build_claude_print_command(
             "claude", cwd=Path("/tmp/ws"), effort="high"

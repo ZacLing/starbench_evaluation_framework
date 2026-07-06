@@ -154,14 +154,27 @@ export default function NewRun() {
     (runtime: string): ProviderFilter | undefined => filterByRuntime[runtime],
     [filterByRuntime],
   )
-  /* How --thinking-effort reaches each runtime (native switch vs prompt),
-     straight from the adapter registry via /api/agents. */
+  /* How --thinking-effort reaches each runtime (native switch vs prompt) and
+     which levels its CLI really accepts, straight from the adapter registry
+     via /api/agents. */
   const thinkingChannelFor = useCallback(
     (runtime: string): string =>
       runtime.startsWith("custom:")
         ? (customByRuntime[runtime]?.thinking_channel ?? "prompt")
         : (agentsQuery.data?.builtin.find((agent) => agent.id === runtime)?.thinking_channel ??
           "prompt"),
+    [agentsQuery.data, customByRuntime],
+  )
+  const thinkingEffortsFor = useCallback(
+    (runtime: string): string[] =>
+      (runtime.startsWith("custom:")
+        ? customByRuntime[runtime]?.thinking_efforts
+        : agentsQuery.data?.builtin.find((agent) => agent.id === runtime)?.thinking_efforts) ?? [
+        "none",
+        "low",
+        "medium",
+        "high",
+      ],
     [agentsQuery.data, customByRuntime],
   )
 
@@ -375,6 +388,7 @@ export default function NewRun() {
           dockerCapable={dockerCapable}
           filterFor={filterFor}
           thinkingChannelFor={thinkingChannelFor}
+          thinkingEffortsFor={thinkingEffortsFor}
           contenders={contenders}
           backend={String(shared.executor_backend ?? "local")}
           onAdd={addContender}
@@ -671,6 +685,7 @@ function StepContenders({
   dockerCapable,
   filterFor,
   thinkingChannelFor,
+  thinkingEffortsFor,
   contenders,
   backend,
   onAdd,
@@ -683,6 +698,7 @@ function StepContenders({
   dockerCapable: (runtime: string) => boolean
   filterFor: (runtime: string) => ProviderFilter | undefined
   thinkingChannelFor: (runtime: string) => string
+  thinkingEffortsFor: (runtime: string) => string[]
   contenders: ContenderDraft[]
   backend: string
   onAdd: (runtime: string) => void
@@ -776,6 +792,7 @@ function StepContenders({
               dockerCapable={dockerCapable(draft.runtime)}
               providerFilter={filterFor(draft.runtime)}
               thinkingChannel={thinkingChannelFor(draft.runtime)}
+              thinkingEfforts={thinkingEffortsFor(draft.runtime)}
               backend={backend}
               onUpdate={(patch) => onUpdate(draft.key, patch)}
               onRemove={() => onRemove(draft.key)}
@@ -799,6 +816,7 @@ function ContenderCard({
   dockerCapable,
   providerFilter,
   thinkingChannel,
+  thinkingEfforts,
   backend,
   onUpdate,
   onRemove,
@@ -810,6 +828,7 @@ function ContenderCard({
   dockerCapable: boolean
   providerFilter?: ProviderFilter
   thinkingChannel: string
+  thinkingEfforts: string[]
   backend: string
   onUpdate: (patch: Partial<ContenderDraft>) => void
   onRemove: () => void
@@ -896,7 +915,7 @@ function ContenderCard({
             onValueChange={(value) => onUpdate({ thinking_effort: value })}
             className="flex flex-wrap gap-1.5"
           >
-            {["none", "low", "medium", "high"].map((effort) => (
+            {thinkingEfforts.map((effort) => (
               <label
                 key={effort}
                 className={cn(

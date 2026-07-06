@@ -204,8 +204,10 @@ class ClaudeAdapter(RuntimeAdapter):
             api_key_var="ANTHROPIC_AUTH_TOKEN",
             default_api_key_env="ANTHROPIC_AUTH_TOKEN",
         ),
-        # Claude Code's own --effort switch (adaptive-thinking effort level).
+        # Claude Code's own --effort switch (adaptive-thinking effort level);
+        # levels are the CLI's real set, verified against `claude --help`.
         thinking_channel="native_config",
+        thinking_efforts=("none", "low", "medium", "high", "xhigh", "max"),
     )
 
     def executor_skill_prompt_location(self) -> str:

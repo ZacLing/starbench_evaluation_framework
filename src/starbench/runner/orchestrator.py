@@ -176,6 +176,15 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     evaluator_adapter = resolve(
         args.evaluator_agent, spec=args.evaluator_runtime_spec, runtimes_dir=args.runtimes_dir
     )
+    # Effort levels are a runtime fact: reject a level this executor's CLI
+    # does not accept instead of passing it on to fail (or silently skew a
+    # comparison) mid-run.
+    supported_efforts = executor_adapter.info.thinking_efforts
+    if args.thinking_effort not in supported_efforts:
+        raise SystemExit(
+            f"--thinking-effort {args.thinking_effort} is not supported by "
+            f"{args.executor_agent} (supported: {', '.join(supported_efforts)})."
+        )
     runtime_bins = {
         "codex": args.codex_bin,
         "claude": args.claude_bin,

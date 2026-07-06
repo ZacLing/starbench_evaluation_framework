@@ -39,6 +39,22 @@ DOCKER_CAPABLE_AGENTS = {info.id for info in _BUILTIN_INFO.values() if info.dock
 # these would silently reroute the judge in the same subprocess.
 JUDGE_ENV_SENSITIVE = {info.id: info.judge_sensitive_env for info in _BUILTIN_INFO.values()}
 
+# Effort levels each built-in runtime's CLI actually accepts; custom runtimes
+# take the prompt tiers. Plans reject a level outside the runtime's set.
+THINKING_EFFORTS_BY_AGENT = {info.id: info.thinking_efforts for info in _BUILTIN_INFO.values()}
+PROMPT_THINKING_EFFORTS = ("none", "low", "medium", "high")
+
+
+def _validated_thinking_effort(agent: str, contender: Dict[str, Any], label: str) -> str:
+    effort = str(contender.get("thinking_effort") or "none")
+    supported = THINKING_EFFORTS_BY_AGENT.get(agent, PROMPT_THINKING_EFFORTS)
+    if effort not in supported:
+        raise ExperimentError(
+            f"Contender {label}: thinking effort {effort} is not supported by "
+            f"{agent} (supported: {', '.join(supported)})."
+        )
+    return effort
+
 PER_CONTENDER_FIELD_CHOICES = ["model", "credentials", "gateway", "thinking_effort"]
 
 BUILTIN_PROFILE = {
@@ -600,7 +616,7 @@ def plan_experiment(
                 DEFAULT_DOCKER_IMAGES.get(agent, "") if effective_backend == "docker" else ""
             ),
             "auth_mode": str(contender.get("auth_mode") or "env"),
-            "thinking_effort": str(contender.get("thinking_effort") or "none"),
+            "thinking_effort": _validated_thinking_effort(agent, contender, label),
             "web_search": str(shared.get("web_search_mode") or "task"),
             "claude_max_turns": shared.get("claude_max_turns"),
             "evaluator_agent": str(shared.get("evaluator_agent") or "codex"),
