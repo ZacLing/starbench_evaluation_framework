@@ -105,12 +105,33 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Directory containing custom runtime configs (<id>.json) for custom:<id> agents.",
     )
     parser.add_argument(
-        "--claude-thinking-effort",
+        "--thinking-effort",
+        dest="thinking_effort",
         choices=["none", "low", "medium", "high"],
         default="none",
         help=(
-            "Prompt-level thinking instruction for Claude Code. Claude Code does not expose a "
-            "native reasoning-effort flag, so this maps to explicit think/deep-think instructions."
+            "Reasoning effort for the executor, applied through each runtime's native switch "
+            "where one exists (Claude Code: MAX_THINKING_TOKENS budget; Codex: "
+            "model_reasoning_effort) and as a prompt-level instruction for the rest."
+        ),
+    )
+    parser.add_argument(
+        "--claude-thinking-effort",
+        dest="thinking_effort",
+        choices=["none", "low", "medium", "high"],
+        default="none",
+        help="Deprecated alias for --thinking-effort.",
+    )
+    parser.add_argument(
+        "--web-search",
+        dest="web_search",
+        choices=["task", "allow", "deny"],
+        default="task",
+        help=(
+            "Run-level web-search override. 'task' (default) follows each task package's "
+            "allow_web_search; 'allow'/'deny' force it for runtimes that enforce web access "
+            "(Claude Code's tool allowlist, Codex's --search). Other runtimes decide via "
+            "their own tooling and are not affected."
         ),
     )
     parser.add_argument(

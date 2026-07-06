@@ -55,6 +55,7 @@ def _builtin_row(info: RuntimeInfo) -> Dict[str, Any]:
         "docker_image": info.docker_image,
         "bin": info.bin,
         "provider_filter": _provider_filter_dict(info.provider_filter),
+        "thinking_channel": info.thinking_channel,
     }
 
 
@@ -104,6 +105,7 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
             "builtin": True,
             "cli": _cli_probe(agent["bin"]),
             "provider_filter": agent["provider_filter"],
+            "thinking_channel": agent["thinking_channel"],
         }
         for agent in BUILTIN_AGENTS
     ]
@@ -154,6 +156,9 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
                     "docker_image": spec.docker_image,
                     "docker_env_passthrough": spec.docker_env_passthrough,
                     "docker_capable": spec.docker_image is not None,
+                    # Custom runtimes have no native switch the runner knows
+                    # about; thinking effort reaches them as a prompt instruction.
+                    "thinking_channel": "prompt",
                     "cli": _cli_probe(spec.command),
                     "source_path": str(path),
                     "error": None,

@@ -186,7 +186,7 @@ class ExecutorSkillTests(unittest.TestCase):
             self.assertEqual(args.executor_agent, "claude")
             self.assertEqual(args.evaluator_agent, "claude")
             self.assertEqual(args.claude_bin, "/tmp/claude-wrapper")
-            self.assertEqual(args.claude_thinking_effort, "high")
+            self.assertEqual(args.thinking_effort, "high")
 
     def test_agent_runtime_cli_arguments_can_select_opencode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

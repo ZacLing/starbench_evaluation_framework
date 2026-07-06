@@ -30,6 +30,7 @@ from ..runner.custom_runtime import CustomRuntimeSpec
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
     append_json_schema_instruction,
+    append_thinking_instruction,
     build_executor_prompt,
 )
 from .base import ExecutorContext, JudgeContext, RuntimeAdapter, RuntimeInfo, finalize_success
@@ -168,8 +169,11 @@ class SpecAdapter(RuntimeAdapter):
             raise ValueError(
                 f"{self.agent_id} executor requires a docker section for --executor-backend docker"
             )
-        prompt_text = build_executor_prompt(
-            task_run, executor_skill_location=self.executor_skill_prompt_location()
+        prompt_text = append_thinking_instruction(
+            build_executor_prompt(
+                task_run, executor_skill_location=self.executor_skill_prompt_location()
+            ),
+            ctx.thinking_effort,
         )
         if ctx.executor_backend == "docker":
             result = await run_custom_process_in_docker(

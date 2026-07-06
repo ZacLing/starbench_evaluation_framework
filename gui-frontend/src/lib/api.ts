@@ -255,7 +255,8 @@ export interface LaunchPayload {
   executor_backend: string
   docker_image: string
   auth_mode: string
-  claude_thinking_effort: string
+  thinking_effort: string
+  web_search: string
   evaluator_agent: string
   evaluator_model: string
   judge_mode: string
@@ -332,6 +333,10 @@ export interface SharedConfig {
   repeat: number | string | null
   max_evaluator_parallel?: number | string | null
   claude_max_turns?: number | string | null
+  /* Run-level web-search override: "task" follows each task package's
+     allow_web_search; "allow"/"deny" force it where the runner enforces web
+     access (Claude Code's tool allowlist, Codex's --search). */
+  web_search_mode?: string
   extra_args?: string
   /* Shared executor skills injected into every agent under test. Groups are
      kept separate from individual ids so the two never overlap (the runner

@@ -119,6 +119,13 @@ class RuntimeInfo:
     default_executor_backend: str = "local"
     provider_filter: ProviderFilter = field(default_factory=ProviderFilter)
     injection: InjectionChannel = field(default_factory=InjectionChannel)
+    # How --thinking-effort reaches this runtime: "native_budget" (a real
+    # thinking-token budget via env, e.g. Claude's MAX_THINKING_TOKENS),
+    # "native_config" (a real reasoning-effort switch on the CLI, e.g. Codex's
+    # model_reasoning_effort), or "prompt" (an instruction appended to the
+    # prompt — a request, not a guarantee). Surfaced in the GUI so nobody
+    # mistakes a prompt-level request for a native switch.
+    thinking_channel: str = "prompt"
 
     @property
     def docker_capable(self) -> bool:
@@ -144,11 +151,16 @@ class ExecutorContext:
     executor_backend: str
     auth_mode: str
     model: str | None
-    claude_thinking_effort: str
+    thinking_effort: str
     claude_max_turns: int | None
     opencode_provider: str | None
     opencode_base_url: str | None
     opencode_api_key_env: str | None
+    # Run-level web-search override: "task" defers to task.allow_web_search,
+    # "allow"/"deny" force it for runtimes that enforce web access (Claude's
+    # tool allowlist, Codex's --search). Runtimes without an enforcement hook
+    # ignore it — their own tooling decides.
+    web_search_mode: str = "task"
 
 
 @dataclass(frozen=True)
@@ -163,10 +175,19 @@ class JudgeContext:
     bins: Dict[str, str]
     auth_mode: str
     model: str | None
-    claude_thinking_effort: str
+    thinking_effort: str
     opencode_provider: str | None
     opencode_base_url: str | None
     opencode_api_key_env: str | None
+
+
+def effective_web_search(mode: str, task_allow: bool) -> bool:
+    """Resolve the run-level web-search override against the task's own flag."""
+    if mode == "allow":
+        return True
+    if mode == "deny":
+        return False
+    return task_allow
 
 
 def finalize_success(

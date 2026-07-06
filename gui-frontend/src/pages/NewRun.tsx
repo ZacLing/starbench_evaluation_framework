@@ -154,6 +154,16 @@ export default function NewRun() {
     (runtime: string): ProviderFilter | undefined => filterByRuntime[runtime],
     [filterByRuntime],
   )
+  /* How --thinking-effort reaches each runtime (native switch vs prompt),
+     straight from the adapter registry via /api/agents. */
+  const thinkingChannelFor = useCallback(
+    (runtime: string): string =>
+      runtime.startsWith("custom:")
+        ? (customByRuntime[runtime]?.thinking_channel ?? "prompt")
+        : (agentsQuery.data?.builtin.find((agent) => agent.id === runtime)?.thinking_channel ??
+          "prompt"),
+    [agentsQuery.data, customByRuntime],
+  )
 
   const [step, setStep] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -364,6 +374,7 @@ export default function NewRun() {
           customByRuntime={customByRuntime}
           dockerCapable={dockerCapable}
           filterFor={filterFor}
+          thinkingChannelFor={thinkingChannelFor}
           contenders={contenders}
           backend={String(shared.executor_backend ?? "local")}
           onAdd={addContender}
@@ -659,6 +670,7 @@ function StepContenders({
   customByRuntime,
   dockerCapable,
   filterFor,
+  thinkingChannelFor,
   contenders,
   backend,
   onAdd,
@@ -670,6 +682,7 @@ function StepContenders({
   customByRuntime: Record<string, CustomRuntime>
   dockerCapable: (runtime: string) => boolean
   filterFor: (runtime: string) => ProviderFilter | undefined
+  thinkingChannelFor: (runtime: string) => string
   contenders: ContenderDraft[]
   backend: string
   onAdd: (runtime: string) => void
@@ -762,6 +775,7 @@ function StepContenders({
               custom={customByRuntime[draft.runtime]}
               dockerCapable={dockerCapable(draft.runtime)}
               providerFilter={filterFor(draft.runtime)}
+              thinkingChannel={thinkingChannelFor(draft.runtime)}
               backend={backend}
               onUpdate={(patch) => onUpdate(draft.key, patch)}
               onRemove={() => onRemove(draft.key)}
@@ -784,6 +798,7 @@ function ContenderCard({
   custom,
   dockerCapable,
   providerFilter,
+  thinkingChannel,
   backend,
   onUpdate,
   onRemove,
@@ -794,6 +809,7 @@ function ContenderCard({
   custom?: CustomRuntime
   dockerCapable: boolean
   providerFilter?: ProviderFilter
+  thinkingChannel: string
   backend: string
   onUpdate: (patch: Partial<ContenderDraft>) => void
   onRemove: () => void
@@ -873,31 +889,45 @@ function ContenderCard({
             Routed through {provider.name}; the endpoint must support the OpenAI Responses API.
           </p>
         )}
-        {draft.runtime === "claude" && (
-          <div className="flex items-center gap-2">
-            <Label className="text-xs text-muted-foreground">Thinking effort</Label>
-            <RadioGroup
-              value={draft.thinking_effort}
-              onValueChange={(value) => onUpdate({ thinking_effort: value })}
-              className="flex flex-wrap gap-1.5"
-            >
-              {["none", "low", "medium", "high"].map((effort) => (
-                <label
-                  key={effort}
-                  className={cn(
-                    "flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
-                    draft.thinking_effort === effort
-                      ? "border-primary bg-accent/60"
-                      : "hover:border-primary/40",
-                  )}
-                >
-                  <RadioGroupItem value={effort} className="size-3" />
-                  {effort}
-                </label>
-              ))}
-            </RadioGroup>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Label className="text-xs text-muted-foreground">Thinking effort</Label>
+          <RadioGroup
+            value={draft.thinking_effort}
+            onValueChange={(value) => onUpdate({ thinking_effort: value })}
+            className="flex flex-wrap gap-1.5"
+          >
+            {["none", "low", "medium", "high"].map((effort) => (
+              <label
+                key={effort}
+                className={cn(
+                  "flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
+                  draft.thinking_effort === effort
+                    ? "border-primary bg-accent/60"
+                    : "hover:border-primary/40",
+                )}
+              >
+                <RadioGroupItem value={effort} className="size-3" />
+                {effort}
+              </label>
+            ))}
+          </RadioGroup>
+          <span
+            className="text-[11px] text-muted-foreground"
+            title={
+              thinkingChannel === "native_budget"
+                ? "Applied as a real thinking-token budget (MAX_THINKING_TOKENS)."
+                : thinkingChannel === "native_config"
+                  ? "Applied through the CLI's own reasoning-effort setting (model_reasoning_effort)."
+                  : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."
+            }
+          >
+            {thinkingChannel === "native_budget"
+              ? "native thinking budget"
+              : thinkingChannel === "native_config"
+                ? "native reasoning setting"
+                : "prompt-level request"}
+          </span>
+        </div>
       </CardContent>
     </Card>
   )
@@ -1182,7 +1212,7 @@ function StepShared({
       <Card>
         <CardContent className="grid gap-4">
           <span className="text-sm font-semibold">Environment & determinism — shared</span>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div className="grid gap-1.5">
               <Label>Where executors run</Label>
               <Select
@@ -1197,6 +1227,28 @@ function StepShared({
                   <SelectItem value="docker">Docker sandbox</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Web search</Label>
+              <Select
+                value={String(shared.web_search_mode ?? "task")}
+                onValueChange={(value) => setSharedField("web_search_mode", value)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="task">Task default</SelectItem>
+                  <SelectItem value="allow">Allow for all</SelectItem>
+                  <SelectItem value="deny">Deny for all</SelectItem>
+                </SelectContent>
+              </Select>
+              {String(shared.web_search_mode ?? "task") !== "task" && (
+                <p className="text-xs text-warn-ink">
+                  Enforced for Claude Code and Codex; other runtimes' own tooling
+                  decides web access.
+                </p>
+              )}
             </div>
             <div className="grid gap-1.5">
               <Label>Seed</Label>

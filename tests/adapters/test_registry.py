@@ -17,7 +17,13 @@ from starbench.gui.experiments import JUDGE_ENV_SENSITIVE
 from starbench.gui.library import AGENT_ENV_KEYS
 
 
-CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+CLAUDE_DOCKER_ENV_WHITELIST = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    # --thinking-effort rides this env var into the container (native budget).
+    "MAX_THINKING_TOKENS",
+]
 DOCKER_ENV_WHITELIST_BY_ID = {
     "codex": ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"],
     "claude": CLAUDE_DOCKER_ENV_WHITELIST,

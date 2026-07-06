@@ -21,6 +21,7 @@ JUDGE_MODES = ("both", "single", "parallel")
 AUTH_MODES = ("env", "global", "copy-auth")
 BACKENDS = ("local", "docker")
 THINKING_EFFORTS = ("none", "low", "medium", "high")
+WEB_SEARCH_MODES = ("task", "allow", "deny")
 INSTRUCTION_MODES = ("none", "traverse", "select", "ablation")
 RIGOR_MODES = ("none", "select")
 
@@ -155,11 +156,18 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
                 value = _require_choice(value, AUTH_MODES, flag)
             argv += [flag, value]
 
-    thinking = str(payload.get("claude_thinking_effort") or "").strip()
+    thinking = str(payload.get("thinking_effort") or "").strip()
     if thinking and thinking != "none":
         argv += [
-            "--claude-thinking-effort",
-            _require_choice(thinking, THINKING_EFFORTS, "Claude thinking effort"),
+            "--thinking-effort",
+            _require_choice(thinking, THINKING_EFFORTS, "thinking effort"),
+        ]
+
+    web_search = str(payload.get("web_search") or "").strip()
+    if web_search and web_search != "task":
+        argv += [
+            "--web-search",
+            _require_choice(web_search, WEB_SEARCH_MODES, "web search mode"),
         ]
 
     for key, flag, minimum in (

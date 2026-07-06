@@ -31,7 +31,8 @@ from ..execution.parsers import (
 from ..execution.process import run_codex_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
-    append_claude_thinking_instruction,
+    THINKING_BUDGET_TOKENS,
+    append_thinking_instruction,
     build_executor_prompt,
     claude_executor_allowed_tools,
 )
@@ -42,10 +43,17 @@ from .base import (
     ProviderFilter,
     RuntimeAdapter,
     RuntimeInfo,
+    effective_web_search,
     finalize_success,
 )
 
-CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+CLAUDE_DOCKER_ENV_WHITELIST = [
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    # Native thinking budget (--thinking-effort) must reach the container.
+    "MAX_THINKING_TOKENS",
+]
 
 CLAUDE_JUDGE_ALLOWED_TOOLS = "Read,Glob,Grep,Bash,LS"
 
@@ -194,6 +202,8 @@ class ClaudeAdapter(RuntimeAdapter):
             api_key_var="ANTHROPIC_AUTH_TOKEN",
             default_api_key_env="ANTHROPIC_AUTH_TOKEN",
         ),
+        # A real thinking-token budget via MAX_THINKING_TOKENS, not a prompt request.
+        thinking_channel="native_budget",
     )
 
     def executor_skill_prompt_location(self) -> str:
@@ -212,10 +222,15 @@ class ClaudeAdapter(RuntimeAdapter):
         task = task_run.task
         logs = paths["logs"]
         claude_bin = ctx.bins["claude"]
-        claude_prompt = append_claude_thinking_instruction(
-            build_executor_prompt(task_run, executor_skill_location=self.executor_skill_prompt_location()),
-            ctx.claude_thinking_effort,
+        claude_prompt = build_executor_prompt(
+            task_run, executor_skill_location=self.executor_skill_prompt_location()
         )
+        allow_web = effective_web_search(ctx.web_search_mode, task.allow_web_search)
+        # Thinking effort rides Claude Code's native budget switch, not the prompt.
+        thinking_budget = THINKING_BUDGET_TOKENS[ctx.thinking_effort]
+        base_env = dict(ctx.base_env)
+        if thinking_budget is not None:
+            base_env["MAX_THINKING_TOKENS"] = str(thinking_budget)
         if ctx.executor_backend == "docker":
             result = await run_claude_process_in_docker(
                 claude_bin=claude_bin,
@@ -227,9 +242,9 @@ class ClaudeAdapter(RuntimeAdapter):
                 stderr_path=logs / "stderr.log",
                 timeout_seconds=task.timeout_seconds,
                 model=ctx.model,
-                allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
+                allowed_tools=claude_executor_allowed_tools(allow_web),
                 max_turns=ctx.claude_max_turns,
-                base_env=ctx.base_env,
+                base_env=base_env,
             )
         else:
             command = build_claude_print_command(
@@ -237,12 +252,12 @@ class ClaudeAdapter(RuntimeAdapter):
                 cwd=paths["workspace"],
                 model=ctx.model,
                 permission_mode="acceptEdits",
-                allowed_tools=claude_executor_allowed_tools(task.allow_web_search),
+                allowed_tools=claude_executor_allowed_tools(allow_web),
                 max_turns=ctx.claude_max_turns,
                 output_format="stream-json",
             )
             env = prepare_claude_env(
-                paths["codex_home"] / "claude_executor", ctx.auth_mode, base_env=ctx.base_env
+                paths["codex_home"] / "claude_executor", ctx.auth_mode, base_env=base_env
             )
             result = await run_codex_process(
                 command,
@@ -289,7 +304,7 @@ class ClaudeAdapter(RuntimeAdapter):
         result = await run_codex_process(
             command,
             cwd=judge_workspace,
-            prompt=append_claude_thinking_instruction(base_prompt, ctx.claude_thinking_effort),
+            prompt=append_thinking_instruction(base_prompt, ctx.thinking_effort),
             env=env,
             stdout_path=events_path,
             stderr_path=stderr_path,

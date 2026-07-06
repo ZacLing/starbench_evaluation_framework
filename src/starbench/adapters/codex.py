@@ -27,7 +27,7 @@ from typing import Dict, List
 from ..execution.docker import build_docker_agent_command
 from ..execution.process import run_codex_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
-from ..runner.prompts import append_claude_thinking_instruction, build_executor_prompt
+from ..runner.prompts import append_thinking_instruction, build_executor_prompt
 from .base import (
     ExecutorContext,
     InjectionChannel,
@@ -35,6 +35,7 @@ from .base import (
     ProviderFilter,
     RuntimeAdapter,
     RuntimeInfo,
+    effective_web_search,
 )
 
 CODEX_DOCKER_ENV_WHITELIST = ["CODEX_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"]
@@ -88,6 +89,7 @@ def build_codex_exec_command(
     model: str | None = None,
     allow_web_search: bool = False,
     include_trace_config: bool = True,
+    reasoning_effort: str | None = None,
 ) -> List[str]:
     command = split_command(codex_bin)
     if allow_web_search:
@@ -95,6 +97,10 @@ def build_codex_exec_command(
     command.append("exec")
     if model:
         command.extend(["-m", model])
+    # Codex's native reasoning switch ("low"/"medium"/"high"); "none" means
+    # leave the model's default alone rather than forcing a floor.
+    if reasoning_effort and reasoning_effort != "none":
+        command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
     command.extend(
         [
             "--cd",
@@ -172,6 +178,7 @@ async def run_codex_process_in_docker(
     include_trace_config: bool = True,
     output_schema: Path | None = None,
     base_env: Dict[str, str] | None = None,
+    reasoning_effort: str | None = None,
 ) -> ProcessResult:
     runner_dir = workspace / ".runner"
     runner_dir.mkdir(parents=True, exist_ok=True)
@@ -191,6 +198,7 @@ async def run_codex_process_in_docker(
         model=model,
         allow_web_search=allow_web_search,
         include_trace_config=include_trace_config,
+        reasoning_effort=reasoning_effort,
     )
     container_name = f"starbench-{uuid.uuid4().hex[:12]}"
     command = build_docker_codex_command(
@@ -244,6 +252,8 @@ class CodexAdapter(RuntimeAdapter):
         # gateway); it does not take xai like opencode does.
         provider_filter=ProviderFilter(kinds=("openai", "openai-compatible")),
         injection=InjectionChannel(kind="codex_config", default_api_key_env="OPENAI_API_KEY"),
+        # Codex's own model_reasoning_effort config: a real switch, not a prompt request.
+        thinking_channel="native_config",
     )
 
     def executor_skill_prompt_location(self) -> str:
@@ -266,6 +276,7 @@ class CodexAdapter(RuntimeAdapter):
         task = task_run.task
         logs = paths["logs"]
         codex_bin = ctx.bins["codex"]
+        allow_web = effective_web_search(ctx.web_search_mode, task.allow_web_search)
         if ctx.executor_backend == "local":
             command = build_codex_exec_command(
                 codex_bin,
@@ -273,8 +284,9 @@ class CodexAdapter(RuntimeAdapter):
                 final_path=logs / "final.md",
                 sandbox="workspace-write",
                 model=ctx.model,
-                allow_web_search=task.allow_web_search,
+                allow_web_search=allow_web,
                 include_trace_config=True,
+                reasoning_effort=ctx.thinking_effort,
             )
             env = prepare_auth_home(paths["codex_home"], ctx.auth_mode, base_env=ctx.base_env)
             return await run_codex_process(
@@ -301,9 +313,10 @@ class CodexAdapter(RuntimeAdapter):
                 timeout_seconds=task.timeout_seconds,
                 sandbox="danger-full-access",
                 model=ctx.model,
-                allow_web_search=task.allow_web_search,
+                allow_web_search=allow_web,
                 include_trace_config=True,
                 base_env=ctx.base_env,
+                reasoning_effort=ctx.thinking_effort,
             )
         raise ValueError(f"Unknown executor backend: {ctx.executor_backend}")
 
@@ -334,7 +347,7 @@ class CodexAdapter(RuntimeAdapter):
         return await run_codex_process(
             command,
             cwd=judge_workspace,
-            prompt=append_claude_thinking_instruction(base_prompt, "none"),
+            prompt=append_thinking_instruction(base_prompt, "none"),
             env=env,
             stdout_path=events_path,
             stderr_path=stderr_path,

@@ -21,12 +21,19 @@ from pathlib import Path
 
 from .models import Rubric, TaskRunSpec, TaskSpec
 
-CLAUDE_THINKING_EFFORT_INSTRUCTIONS = {
+THINKING_EFFORT_INSTRUCTIONS = {
     "none": "",
     "low": "Before responding, think carefully about the task and check for obvious gaps.",
     "medium": "Before responding, think through the task carefully, including constraints, edge cases, and verification steps.",
     "high": "Before responding, think deeply about the task. Build a complete plan, inspect relevant evidence, consider failure modes and alternatives, and self-check the final deliverable before finishing.",
 }
+# Back-compat name; prefer THINKING_EFFORT_INSTRUCTIONS.
+CLAUDE_THINKING_EFFORT_INSTRUCTIONS = THINKING_EFFORT_INSTRUCTIONS
+
+# Native thinking budget per effort level for runtimes controlled through a
+# token-budget env var (Claude Code's MAX_THINKING_TOKENS; 31999 is its own
+# default budget when thinking is on).
+THINKING_BUDGET_TOKENS = {"none": None, "low": 4096, "medium": 16384, "high": 31999}
 CLAUDE_EXECUTOR_BASE_TOOLS = "Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS"
 CLAUDE_EXECUTOR_WEB_TOOLS = "WebSearch,WebFetch"
 # Judges must be read-only across runtimes; OpenCode's built-in plan agent
@@ -100,11 +107,18 @@ Task prompt from ./inputs/prompt.md:
 """
 
 
-def append_claude_thinking_instruction(prompt: str, effort: str) -> str:
-    instruction = CLAUDE_THINKING_EFFORT_INSTRUCTIONS[effort]
+def append_thinking_instruction(prompt: str, effort: str) -> str:
+    """Prompt-level thinking request: the fallback for runtimes without a
+    native reasoning switch (Claude injects MAX_THINKING_TOKENS, Codex sets
+    model_reasoning_effort; every other executor gets this instruction)."""
+    instruction = THINKING_EFFORT_INSTRUCTIONS[effort]
     if not instruction:
         return prompt
-    return f"{prompt.rstrip()}\n\nClaude thinking effort instruction:\n{instruction}\n"
+    return f"{prompt.rstrip()}\n\nThinking effort instruction:\n{instruction}\n"
+
+
+# Back-compat name; prefer append_thinking_instruction.
+append_claude_thinking_instruction = append_thinking_instruction
 
 
 def append_json_schema_instruction(prompt: str, schema_path: Path) -> str:

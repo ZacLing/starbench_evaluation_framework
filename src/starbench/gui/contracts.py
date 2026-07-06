@@ -31,6 +31,11 @@ ProviderKind = Literal["anthropic", "openai", "google", "xai", "openai-compatibl
 RuntimeProtocol = Literal["openai", "anthropic", "gemini", "xai", "none"]
 AuthKind = Literal["api_key", "cli_login"]
 ModelsSource = Literal["api", "catalog"]
+# How --thinking-effort reaches a runtime: a real token budget (env), a real
+# reasoning-effort switch (CLI config), or a prompt-level instruction.
+ThinkingChannel = Literal["native_budget", "native_config", "prompt"]
+# Run-level web-search override; "task" follows each task package's flag.
+WebSearchMode = Literal["task", "allow", "deny"]
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +66,7 @@ class BuiltinRuntime(TypedDict):
     builtin: Literal[True]
     cli: RuntimeCli
     provider_filter: ProviderFilter
+    thinking_channel: ThinkingChannel
 
 
 class _CustomRuntimeBase(TypedDict):
@@ -91,6 +97,7 @@ class CustomRuntime(_CustomRuntimeBase, total=False):
     docker_image: Optional[str]
     docker_env_passthrough: List[str]
     docker_capable: bool
+    thinking_channel: ThinkingChannel
     cli: RuntimeCli
 
 
@@ -255,6 +262,8 @@ GENERATED_TYPES = [
     "RuntimeProtocol",
     "AuthKind",
     "ModelsSource",
+    "ThinkingChannel",
+    "WebSearchMode",
     "RuntimeCli",
     "ProviderFilter",
     "BuiltinRuntime",

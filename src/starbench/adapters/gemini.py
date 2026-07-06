@@ -23,7 +23,11 @@ from ..execution.docker import build_docker_agent_command, kill_container_on_tim
 from ..execution.parsers import normalize_headless_events, write_headless_final_output
 from ..execution.process import run_codex_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
-from ..runner.prompts import append_json_schema_instruction, build_executor_prompt
+from ..runner.prompts import (
+    append_json_schema_instruction,
+    append_thinking_instruction,
+    build_executor_prompt,
+)
 from .base import (
     ExecutorContext,
     InjectionChannel,
@@ -169,8 +173,11 @@ class GeminiAdapter(RuntimeAdapter):
         task = task_run.task
         logs = paths["logs"]
         gemini_bin = ctx.bins["gemini"]
-        gemini_prompt = build_executor_prompt(
-            task_run, executor_skill_location=self.executor_skill_prompt_location()
+        gemini_prompt = append_thinking_instruction(
+            build_executor_prompt(
+                task_run, executor_skill_location=self.executor_skill_prompt_location()
+            ),
+            ctx.thinking_effort,
         )
         if ctx.executor_backend == "docker":
             result = await run_gemini_process_in_docker(

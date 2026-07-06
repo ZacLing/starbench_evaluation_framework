@@ -600,7 +600,8 @@ def plan_experiment(
                 DEFAULT_DOCKER_IMAGES.get(agent, "") if effective_backend == "docker" else ""
             ),
             "auth_mode": str(contender.get("auth_mode") or "env"),
-            "claude_thinking_effort": str(contender.get("thinking_effort") or "none"),
+            "thinking_effort": str(contender.get("thinking_effort") or "none"),
+            "web_search": str(shared.get("web_search_mode") or "task"),
             "claude_max_turns": shared.get("claude_max_turns"),
             "evaluator_agent": str(shared.get("evaluator_agent") or "codex"),
             "evaluator_model": str(shared.get("evaluator_model") or "").strip(),
@@ -641,6 +642,16 @@ def plan_experiment(
         # no longer reroutes the judge — what used to be a hard rejection is now
         # an advisory warning surfaced in the plan.
         warnings: List[str] = []
+        # The web-search override is only enforceable where the runner controls
+        # web access (Claude's tool allowlist, Codex's --search flag). Say so
+        # instead of letting the override look global.
+        web_search_mode = str(shared.get("web_search_mode") or "task")
+        if web_search_mode != "task" and agent not in ("claude", "codex"):
+            warnings.append(
+                f"Contender {label}: the web-search override ({web_search_mode}) is not "
+                f"enforceable for {agent} — its own tooling decides web access. Only "
+                "Claude Code and Codex enforce it."
+            )
         for key in executor_env_spec:
             if key in judge_sensitive and judge_env.get(key) != executor_env_spec[key]:
                 warnings.append(

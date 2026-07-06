@@ -543,6 +543,47 @@ class ExperimentInstructionTest(unittest.TestCase):
         for item in plan["plans"]:
             self.assertIn(item["executor_auth_mode"], ("env", "global", "copy-auth"))
 
+    def test_web_search_override_flag_and_unenforceable_warning(self) -> None:
+        payload = self.payload(
+            ["task_a"],
+            shared_extra={"web_search_mode": "deny"},
+            contenders=[
+                {"label": "GPT", "agent": "codex", "model": "gpt-5.5", "auth_mode": "global"},
+                {"label": "Gemini", "agent": "gemini", "model": "gemini-3-pro", "auth_mode": "global"},
+            ],
+        )
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        by_agent = {item["agent"]: item for item in plan["plans"]}
+        # Every contender's argv carries the override; only runtimes without an
+        # enforcement hook get the honesty warning.
+        for item in plan["plans"]:
+            joined = " ".join(item["argv"])
+            self.assertIn("--web-search deny", joined)
+        self.assertFalse(
+            [w for w in by_agent["codex"]["warnings"] if "web-search" in w]
+        )
+        gemini_warnings = [w for w in by_agent["gemini"]["warnings"] if "web-search" in w]
+        self.assertEqual(len(gemini_warnings), 1)
+        self.assertIn("not enforceable", gemini_warnings[0])
+
+    def test_thinking_effort_forwarded_as_generic_flag(self) -> None:
+        payload = self.payload(
+            ["task_a"],
+            contenders=[
+                {
+                    "label": "GPT",
+                    "agent": "codex",
+                    "model": "gpt-5.5",
+                    "auth_mode": "global",
+                    "thinking_effort": "high",
+                }
+            ],
+        )
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        joined = " ".join(plan["plans"][0]["argv"])
+        self.assertIn("--thinking-effort high", joined)
+        self.assertNotIn("--claude-thinking-effort", joined)
+
     def test_plan_never_exposes_reasoning(self) -> None:
         """PRIVACY RED LINE: no private reasoning trace reaches the plan payload."""
         payload = self.payload(

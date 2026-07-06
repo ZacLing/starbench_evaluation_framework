@@ -30,6 +30,7 @@ from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
     OPENCODE_JUDGE_AGENT,
     append_json_schema_instruction,
+    append_thinking_instruction,
     build_executor_prompt,
     opencode_model_name,
 )
@@ -258,8 +259,11 @@ class OpenCodeAdapter(RuntimeAdapter):
         logs = paths["logs"]
         opencode_bin = ctx.bins["opencode"]
         model_name = opencode_model_name(ctx.model, ctx.opencode_provider)
-        opencode_prompt = build_executor_prompt(
-            task_run, executor_skill_location=self.executor_skill_prompt_location()
+        opencode_prompt = append_thinking_instruction(
+            build_executor_prompt(
+                task_run, executor_skill_location=self.executor_skill_prompt_location()
+            ),
+            ctx.thinking_effort,
         )
         if ctx.executor_backend == "docker":
             result = await run_opencode_process_in_docker(

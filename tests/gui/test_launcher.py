@@ -88,6 +88,20 @@ class LauncherTest(unittest.TestCase):
         argv = build_run_argv(self.payload(claude_max_turns=""), runs_dir=self.runs_dir)
         self.assertNotIn("--claude-max-turns", argv)
 
+    def test_thinking_effort_passes_generic_flag_and_none_is_omitted(self) -> None:
+        argv = build_run_argv(self.payload(thinking_effort="high"), runs_dir=self.runs_dir)
+        joined = " ".join(argv)
+        self.assertIn("--thinking-effort high", joined)
+        self.assertNotIn("--claude-thinking-effort", joined)
+        argv = build_run_argv(self.payload(thinking_effort="none"), runs_dir=self.runs_dir)
+        self.assertNotIn("--thinking-effort", argv)
+
+    def test_web_search_override_passes_flag_and_task_default_is_omitted(self) -> None:
+        argv = build_run_argv(self.payload(web_search="deny"), runs_dir=self.runs_dir)
+        self.assertIn("--web-search deny", " ".join(argv))
+        argv = build_run_argv(self.payload(web_search="task"), runs_dir=self.runs_dir)
+        self.assertNotIn("--web-search", argv)
+
     def test_extra_args_are_split(self) -> None:
         argv = build_run_argv(
             self.payload(extra_args="--instruction-mode ablation --repeat 2"),
