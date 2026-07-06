@@ -14,6 +14,13 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -86,6 +93,7 @@ export default function Providers() {
   const [editing, setEditing] = useState<Draft | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [refreshing, setRefreshing] = useState<string | null>(null)
+  const [modelsFor, setModelsFor] = useState<AiProvider | null>(null)
 
   if (providersQuery.isPending) return <Skeleton className="h-96" />
   if (providersQuery.isError) return <ErrorNote message={(providersQuery.error as Error).message} />
@@ -199,6 +207,7 @@ export default function Providers() {
                     runtimes={runtimesFor(provider)}
                     refreshing={refreshing === provider.id}
                     onRefresh={() => refreshModels(provider)}
+                    onShowModels={() => setModelsFor(provider)}
                     onEdit={() => {
                       setIsNew(false)
                       setEditing(bare(provider))
@@ -209,6 +218,8 @@ export default function Providers() {
             </section>
           ),
       )}
+
+      <ModelListDialog provider={modelsFor} onClose={() => setModelsFor(null)} />
 
       <ProviderEditor
         key={editing?.id ?? "__closed"}
@@ -247,17 +258,20 @@ function ProviderCard({
   runtimes,
   refreshing,
   onRefresh,
+  onShowModels,
   onEdit,
 }: {
   provider: AiProvider
   runtimes: RuntimeRef[]
   refreshing: boolean
   onRefresh: () => void
+  onShowModels: () => void
   onEdit: () => void
 }) {
   const modelCount = provider.models.length
+  const fromCatalog = provider.models_source === "catalog"
   const fetchedHint = provider.models_fetched_at
-    ? `${provider.models_source === "catalog" ? "public catalog" : "provider API"} · ${fmtTime(provider.models_fetched_at)}`
+    ? `${fromCatalog ? "public catalog" : "provider API"} · ${fmtTime(provider.models_fetched_at)}`
     : "not fetched yet"
   return (
     <Card className="py-4">
@@ -295,8 +309,25 @@ function ProviderCard({
         <div className="flex items-center gap-2">
           {modelCount ? (
             <>
-              <span className="text-xs text-muted-foreground" title={fetchedHint}>
+              <button
+                type="button"
+                className="text-xs text-foreground underline decoration-muted-foreground/50 underline-offset-2 hover:decoration-foreground"
+                title={`Browse the model list (${fetchedHint})`}
+                onClick={onShowModels}
+              >
                 {modelCount} model{modelCount === 1 ? "" : "s"}
+              </button>
+              {/* Where the list came from is a trust fact, not a tooltip: a
+                  public-catalog list proves nothing about this key or endpoint. */}
+              <span
+                className={cn("text-[11px]", fromCatalog ? "text-warn-ink" : "text-muted-foreground")}
+                title={
+                  fromCatalog
+                    ? "Names from the public Vercel AI Gateway catalog. This list does not verify your key or endpoint."
+                    : "Listed by the provider's own models API using your key."
+                }
+              >
+                {fromCatalog ? "public catalog — key not verified" : "from your API"}
               </span>
               <Button
                 variant="ghost"
@@ -338,6 +369,69 @@ function ProviderCard({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+/* The model catalog is first-class content, not a statistic: click the count
+   to browse and filter the actual list, with its provenance stated up top. */
+function ModelListDialog({
+  provider,
+  onClose,
+}: {
+  provider: AiProvider | null
+  onClose: () => void
+}) {
+  const [filter, setFilter] = useState("")
+  const models = provider?.models ?? []
+  const needle = filter.trim().toLowerCase()
+  const visible = needle ? models.filter((model) => model.toLowerCase().includes(needle)) : models
+  const fromCatalog = provider?.models_source === "catalog"
+  return (
+    <Dialog
+      open={Boolean(provider)}
+      onOpenChange={(open) => {
+        if (!open) {
+          setFilter("")
+          onClose()
+        }
+      }}
+    >
+      <DialogContent className="max-h-[80vh] sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {provider && <ProviderIcon provider={provider} size={18} />}
+            {provider?.name} models
+          </DialogTitle>
+          <DialogDescription className={fromCatalog ? "text-warn-ink" : undefined}>
+            {fromCatalog
+              ? "Names from the public Vercel AI Gateway catalog — this list does not verify your key or endpoint."
+              : `Listed by the provider's models API${provider?.models_fetched_at ? ` · ${fmtTime(provider.models_fetched_at)}` : ""}.`}
+          </DialogDescription>
+        </DialogHeader>
+        {models.length > 8 && (
+          <Input
+            placeholder={`Filter ${models.length} models…`}
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        )}
+        <div className="max-h-[50vh] overflow-y-auto rounded-md border">
+          {visible.length ? (
+            <ul className="divide-y">
+              {visible.map((model) => (
+                <li key={model} className="px-3 py-1.5 font-mono text-xs">
+                  {model}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+              No model matches “{filter}”.
+            </p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
