@@ -158,6 +158,30 @@ B1（小，独立）→ B2（Skills，独立）→ B3（Instructions）→ B4（
 B3/B4 完成后更新 `docs/gui.md` 与 `docs/recipes.md`（"给任务加专家步骤/rigor"
 菜谱）。
 
+## 7.5 追加批次：就绪体系与共享配置布局（B5/B6，2026-07-06 拍板）
+
+### B5 — 三层就绪体系（合法性校验可视化）
+
+| 层 | 校验 | 呈现 |
+|---|---|---|
+| ① 任务包合法 | task.json/rubrics 可解析、rubric ≥1 | `list_task_packages` 不再静默跳过坏包——返回带 `error`/`warning` 的条目；向导步骤 1 与任务库页渲染为红色不可选卡（附一句原因）/琥珀警告卡 |
+| ② 组合合法 | traverse/ablation × 无步骤任务（runner 整体拒绝，已查实） | 从琥珀警告**升级为计划期硬拦截**（ExperimentError 人话）；明知必死不放行 |
+| ③ 环境就绪 | CLI 在 PATH、凭证在环境、Docker 镜像已构建 | **Review 步恢复预检清单**（/api/preflight 后端健在，React 重建时丢失）：按参赛者+评审逐行 ✓/⚠/✗；**硬失败禁用 Launch** 并给补救命令；plan 项补 `executor_auth_mode` 供预检传参 |
+
+原则：每层在发生的步骤就地报告，Review 汇总；**Launch 亮 = 三层全绿**是按钮的语义承诺。
+
+### B6 — Shared config 布局重构 + 任务事实可见性
+
+- **任务上下文条**：步骤 2–4 顶部常驻紧凑摘要（N tasks · web ×k · ⏱ 最大超时 ·
+  专家步骤/rigor 计数），悬停注明"由任务包定义"——回答"web search 开关在哪"
+  的正解（它是任务属性，不是运行开关）。
+- **步骤 1 任务卡补徽章**：web/超时/步骤/rigor，与任务库页共用组件。
+- **两级结构**：Judge 与 Environment 保持展开（必配）；Prompt assistance 与
+  Executor skills 收进 "Research add-ons" 折叠摘要行（名称+当前状态+就绪点，
+  默认全关时整区仅三行；profile 带有效值时自动展开）。
+- **web search 的 run 级覆盖**（禁网对照实验）需要 runner 新旗标，**本轮不做**，
+  列为后续批次候选。
+
 ## 8. 不做什么
 
 - 不做 Skills 的 GUI CRUD（v1 只读；创建走文件系统 + 文档指引）。
