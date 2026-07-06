@@ -6,6 +6,9 @@ The main command is:
 starbench-run [options]
 ```
 
+For stable run-output files written by this command, see
+[Artifact Contracts](artifact_contracts.md).
+
 ## Core Options
 
 - `--tasks-dir PATH`: directory containing task packages. Default: `tasks`.

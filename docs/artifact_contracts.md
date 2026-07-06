@@ -267,6 +267,7 @@ Implemented in this branch:
 - Fake-runtime runner output validation against public run artifact schemas.
 - Shared runner/GUI validation via `starbench.contracts`.
 - `schema_version: 1` emitted on stable public run artifacts.
+- Contract review checklist linked from `docs/contributing.md`.
 
 Planned next steps:
 

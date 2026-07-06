@@ -2,6 +2,9 @@
 
 A Starbench task package is one directory with `task.json`, `prompt.md`, `rubrics.json`, and optional input materials. By default, put user task packages under the project-level `tasks/` directory.
 
+For the protocol-level contract, schema, and compatibility policy, see
+[Artifact Contracts](artifact_contracts.md).
+
 ```text
 tasks/
   my_task/
