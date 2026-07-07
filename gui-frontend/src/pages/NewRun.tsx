@@ -739,9 +739,6 @@ function StepContenders({
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
             {options.map((option) => {
-              const compatible = compatibleProviders(filterFor(option.id), providers, option.id)
-              const modelCount = compatible.reduce((sum, item) => sum + item.models.length, 0)
-              const ownLogin = option.protocol === "none"
               return (
                 <button
                   key={option.id}
@@ -753,13 +750,6 @@ function StepContenders({
                   <span className="text-sm font-medium">{option.label}</span>
                   <span className="max-w-full truncate text-[11px] leading-tight text-muted-foreground">
                     {option.note}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    {ownLogin
-                      ? "own login / config"
-                      : compatible.length
-                        ? `${modelCount} models from ${compatible.length} provider${compatible.length > 1 ? "s" : ""}`
-                        : "no provider configured"}
                   </span>
                   {option.localOnly && (
                     <span
