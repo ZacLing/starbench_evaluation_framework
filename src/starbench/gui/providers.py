@@ -8,9 +8,9 @@ stores API keys, only the name of the environment variable that holds one;
 
 The model catalog is a derived fact, not a hand-maintained asset: it is
 refreshed from the provider's own models API (`GET /v1/models` and friends).
-Providers authenticated via a local CLI login, or whose key is absent, fall
-back to the public Vercel AI Gateway catalog filtered by vendor, and the
-snapshot is labeled accordingly.
+Providers authenticated via a local CLI login use that CLI's local model cache
+when it is available. Missing keys fall back to the public Vercel AI Gateway
+catalog filtered by vendor, and the snapshot is labeled accordingly.
 
 Provider kinds describe model/API protocol. Agent runtimes decide whether they
 can consume a provider through their provider filters and injection channels.
@@ -227,6 +227,41 @@ def _normalize_catalog_models(provider: Dict[str, Any]) -> List[str]:
     return filtered or models
 
 
+def _codex_home() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+
+
+def _codex_models_from_cache() -> Tuple[List[str], Optional[str]]:
+    path = _codex_home() / "models_cache.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], None
+    rows = payload.get("models") if isinstance(payload, dict) else None
+    models: List[str] = []
+    for row in rows or []:
+        if isinstance(row, str):
+            model = row.strip()
+        elif isinstance(row, dict):
+            model = str(row.get("slug") or row.get("id") or row.get("model") or "").strip()
+        else:
+            model = ""
+        if model:
+            models.append(model)
+    return list(dict.fromkeys(models)), str(payload.get("fetched_at") or "") or None
+
+
+def _cli_model_snapshot(provider: Dict[str, Any]) -> Optional[Tuple[List[str], Optional[str]]]:
+    if provider.get("auth") != "cli_login":
+        return None
+    agent = KIND_TO_CLI_AGENT.get(str(provider.get("kind") or ""))
+    if agent == "codex":
+        models, fetched_at = _codex_models_from_cache()
+        if models:
+            return models, fetched_at
+    return None
+
+
 def _cli_login_status(agent: str) -> Dict[str, Any]:
     cached = _CLI_STATUS_CACHE.get(agent)
     now = time.monotonic()
@@ -285,13 +320,13 @@ def _cli_login_status(agent: str) -> Dict[str, Any]:
         return dict(status)
     output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
     if result.returncode == 0:
-        message = _summarize_cli_status(agent, output)
+        status_kind, message = _interpret_cli_status(agent, output)
         status = {
             "agent": agent,
             "label": label,
             "cli_present": True,
             "cli_path": path,
-            "status": "ok",
+            "status": status_kind,
             "message": message,
         }
         _CLI_STATUS_CACHE[agent] = (now, status)
@@ -317,32 +352,46 @@ def _first_status_line(output: str) -> str:
 
 
 def _summarize_cli_status(agent: str, output: str) -> str:
+    return _interpret_cli_status(agent, output)[1]
+
+
+def _interpret_cli_status(agent: str, output: str) -> Tuple[str, str]:
     if agent == "claude":
         try:
             payload = json.loads(output)
         except ValueError:
-            return _first_status_line(output) or "Claude Code reports a logged-in session."
+            return "ok", _first_status_line(output) or "Claude Code reports a logged-in session."
         if payload.get("loggedIn") is True:
             source = payload.get("apiKeySource")
             method = payload.get("authMethod")
+            if method == "api_key" or source:
+                origin = source or method or "API key"
+                return "api_key", f"Claude Code is using {origin}, not a local CLI login."
             if source:
-                return f"Logged in via {source}."
+                return "ok", f"Logged in via {source}."
             if method:
-                return f"Logged in via {method}."
-            return "Claude Code reports a logged-in session."
-        return "Claude Code reports no active login."
+                return "ok", f"Logged in via {method}."
+            return "ok", "Claude Code reports a logged-in session."
+        return "warn", "Claude Code reports no active login."
     if agent == "codex":
         for line in output.splitlines():
             line = line.strip()
             if line.lower().startswith("logged in"):
-                return line[:160]
-        return _first_status_line(output) or "Codex reports a logged-in session."
-    return _first_status_line(output) or "CLI reports a logged-in session."
+                return "ok", line[:160]
+        return "ok", _first_status_line(output) or "Codex reports a logged-in session."
+    return "ok", _first_status_line(output) or "CLI reports a logged-in session."
 
 
 def _decorate(provider: Dict[str, Any], *, include_cli_status: bool = False) -> Dict[str, Any]:
     api_key_env = str(provider.get("api_key_env") or "")
     agent = KIND_TO_CLI_AGENT.get(str(provider.get("kind")), "opencode")
+    models = _normalize_catalog_models(provider)
+    models_fetched_at = provider.get("models_fetched_at")
+    models_source = provider.get("models_source")
+    cli_snapshot = _cli_model_snapshot(provider)
+    if cli_snapshot:
+        models, models_fetched_at = cli_snapshot
+        models_source = "cli_cache"
     decorated = {
         "auth": "api_key",
         "anthropic_base_url": "",
@@ -350,7 +399,9 @@ def _decorate(provider: Dict[str, Any], *, include_cli_status: bool = False) -> 
         "models_fetched_at": None,
         "models_source": None,
         **provider,
-        "models": _normalize_catalog_models(provider),
+        "models": models,
+        "models_fetched_at": models_fetched_at,
+        "models_source": models_source,
         "agent": agent,
         "key_present": bool(api_key_env and os.environ.get(api_key_env)),
     }
@@ -545,12 +596,18 @@ def refresh_provider_models(runs_dir: Path, provider_id: str) -> Dict[str, Any]:
     errors: List[str] = []
     models: Optional[List[str]] = None
     source = None
+    fetched_at: Optional[str] = None
     if use_api:
         try:
             models = _models_from_api(target, api_key)
             source = "api"
         except ProviderError as error:
             errors.append(str(error))
+    if models is None:
+        cli_snapshot = _cli_model_snapshot(target)
+        if cli_snapshot:
+            models, fetched_at = cli_snapshot
+            source = "cli_cache"
     if models is None:
         try:
             models = _models_from_catalog(target)
@@ -561,7 +618,7 @@ def refresh_provider_models(runs_dir: Path, provider_id: str) -> Dict[str, Any]:
         raise ProviderError(" / ".join(errors) or "Could not refresh models.")
 
     target["models"] = models
-    target["models_fetched_at"] = datetime.now(timezone.utc).isoformat()
+    target["models_fetched_at"] = fetched_at or datetime.now(timezone.utc).isoformat()
     target["models_source"] = source
     stripped = [
         {

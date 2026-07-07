@@ -8,9 +8,9 @@ export type RuntimeProtocol = "openai" | "anthropic" | "gemini" | "xai" | "none"
 
 export type AuthKind = "api_key" | "cli_login"
 
-export type ModelsSource = "api" | "catalog"
+export type ModelsSource = "api" | "catalog" | "cli_cache"
 
-export type CliAuthStatusKind = "ok" | "warn" | "fail" | "unknown"
+export type CliAuthStatusKind = "ok" | "api_key" | "warn" | "fail" | "unknown"
 
 export type ThinkingChannel = "native_config" | "prompt"
 
@@ -83,7 +83,7 @@ export interface CliAuthStatus {
   label: string
   cli_present: boolean
   cli_path: string | null
-  status: "ok" | "warn" | "fail" | "unknown"
+  status: "ok" | "api_key" | "warn" | "fail" | "unknown"
   message: string
 }
 
@@ -96,7 +96,7 @@ export interface AiProvider {
   api_key_env: string
   models: string[]
   models_fetched_at: string | null
-  models_source: "api" | "catalog" | null
+  models_source: "api" | "catalog" | "cli_cache" | null
   agent: string
   key_present: boolean
   anthropic_base_url?: string | null

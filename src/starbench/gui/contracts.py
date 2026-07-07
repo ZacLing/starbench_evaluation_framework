@@ -30,8 +30,8 @@ from typing import Dict, List, Literal, Optional, TypedDict
 ProviderKind = Literal["anthropic", "openai", "google", "xai", "openai-compatible"]
 RuntimeProtocol = Literal["openai", "anthropic", "gemini", "xai", "none"]
 AuthKind = Literal["api_key", "cli_login"]
-ModelsSource = Literal["api", "catalog"]
-CliAuthStatusKind = Literal["ok", "warn", "fail", "unknown"]
+ModelsSource = Literal["api", "catalog", "cli_cache"]
+CliAuthStatusKind = Literal["ok", "api_key", "warn", "fail", "unknown"]
 # How --thinking-effort reaches a runtime: a real reasoning switch on the CLI
 # itself, or a prompt-level instruction.
 ThinkingChannel = Literal["native_config", "prompt"]

@@ -1,6 +1,8 @@
 """AI provider presets, model refresh and judge/gateway conflict detection."""
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -265,6 +267,50 @@ class ProviderTest(unittest.TestCase):
         loaded = providers.load_providers(self.runs_dir)
         self.assertEqual(loaded["providers"][0]["models"], ["deepseek/deepseek-r1"])
 
+    def test_codex_cli_models_use_local_cache(self) -> None:
+        codex_home = self.tmp / "codex_home"
+        codex_home.mkdir()
+        (codex_home / "models_cache.json").write_text(
+            json.dumps(
+                {
+                    "fetched_at": "2026-07-07T03:00:00Z",
+                    "models": [
+                        {"slug": "gpt-5.5", "display_name": "GPT-5.5"},
+                        {"slug": "gpt-5.3-codex-spark", "display_name": "GPT-5.3-Codex-Spark"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        old_home = os.environ.get("CODEX_HOME")
+        os.environ["CODEX_HOME"] = str(codex_home)
+        try:
+            providers.save_providers(
+                self.runs_dir,
+                {
+                    "providers": [
+                        {
+                            "id": "openai-cli",
+                            "name": "OpenAI (CLI login)",
+                            "kind": "openai",
+                            "auth": "cli_login",
+                            "models": ["gpt-3.5-turbo", "gpt-4o", "gpt-5.5"],
+                            "models_source": "catalog",
+                        }
+                    ]
+                },
+            )
+            loaded = providers.load_providers(self.runs_dir)
+        finally:
+            if old_home is None:
+                del os.environ["CODEX_HOME"]
+            else:
+                os.environ["CODEX_HOME"] = old_home
+        provider = loaded["providers"][0]
+        self.assertEqual(provider["models"], ["gpt-5.5", "gpt-5.3-codex-spark"])
+        self.assertEqual(provider["models_source"], "cli_cache")
+        self.assertEqual(provider["models_fetched_at"], "2026-07-07T03:00:00Z")
+
     def test_cli_login_status_uses_runtime_status_command(self) -> None:
         original_which = providers.shutil.which
         original_run = providers.subprocess.run
@@ -302,6 +348,19 @@ class ProviderTest(unittest.TestCase):
             providers._summarize_cli_status("codex", output),
             "Logged in using ChatGPT",
         )
+
+    def test_claude_api_key_status_is_not_cli_login(self) -> None:
+        output = json.dumps(
+            {
+                "loggedIn": True,
+                "authMethod": "api_key",
+                "apiProvider": "firstParty",
+                "apiKeySource": "ANTHROPIC_API_KEY",
+            }
+        )
+        status, message = providers._interpret_cli_status("claude", output)
+        self.assertEqual(status, "api_key")
+        self.assertIn("not a local CLI login", message)
 
     def test_judge_gateway_conflict_detected(self) -> None:
         tasks_dir = self.tmp / "tasks"

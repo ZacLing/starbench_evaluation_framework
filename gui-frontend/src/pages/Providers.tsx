@@ -129,6 +129,7 @@ export default function Providers() {
   const customRuntimes = (agentsQuery.data?.custom ?? []).filter(
     (agent): agent is CustomRuntime => !agent.error,
   )
+  const builtinRuntimeCount = agentsQuery.data?.builtin.length ?? 0
 
   /* Which agents can run models from this provider — the decoupling matrix.
      Filters come from /api/agents (single source). CLI-login providers are
@@ -266,6 +267,7 @@ export default function Providers() {
                     provider={provider}
                     runtimes={runtimesFor(provider)}
                     totalRuntimeCount={runtimeRefs.length}
+                    builtinRuntimeCount={builtinRuntimeCount}
                     refreshing={refreshing === provider.id}
                     onRefresh={() => refreshModels(provider)}
                     onShowModels={() => setModelsFor(provider)}
@@ -318,6 +320,7 @@ function ProviderCard({
   provider,
   runtimes,
   totalRuntimeCount,
+  builtinRuntimeCount,
   refreshing,
   onRefresh,
   onShowModels,
@@ -326,6 +329,7 @@ function ProviderCard({
   provider: AiProvider
   runtimes: RuntimeRef[]
   totalRuntimeCount: number
+  builtinRuntimeCount: number
   refreshing: boolean
   onRefresh: () => void
   onShowModels: () => void
@@ -333,8 +337,9 @@ function ProviderCard({
 }) {
   const modelCount = provider.models.length
   const fromCatalog = provider.models_source === "catalog"
+  const fromCliCache = provider.models_source === "cli_cache"
   const fetchedHint = provider.models_fetched_at
-    ? `${fromCatalog ? "public catalog" : "provider API"} · ${fmtTime(provider.models_fetched_at)}`
+    ? `${fromCatalog ? "public catalog" : fromCliCache ? "local CLI cache" : "provider API"} · ${fmtTime(provider.models_fetched_at)}`
     : "not fetched yet"
   return (
     <Card className="py-4">
@@ -346,7 +351,12 @@ function ProviderCard({
         </div>
         <p className="text-xs text-muted-foreground">{providerDescription(provider)}</p>
         <CapabilityLine provider={provider} />
-        <CoverageLine runtimes={runtimes} totalRuntimeCount={totalRuntimeCount} />
+        <CoverageLine
+          provider={provider}
+          runtimes={runtimes}
+          totalRuntimeCount={totalRuntimeCount}
+          builtinRuntimeCount={builtinRuntimeCount}
+        />
         <div className="flex items-center gap-2">
           {modelCount ? (
             <>
@@ -365,10 +375,12 @@ function ProviderCard({
                 title={
                   fromCatalog
                     ? "Names from the public Vercel AI Gateway catalog. This list does not verify your key or endpoint."
+                    : fromCliCache
+                      ? "Names from the local CLI model cache for this account."
                     : "Listed by the provider's own models API using your key."
                 }
               >
-                {fromCatalog ? "public catalog — key not verified" : "from your API"}
+                {fromCatalog ? "public catalog — key not verified" : fromCliCache ? "from CLI cache" : "from your API"}
               </span>
               <Button
                 variant="ghost"
@@ -443,6 +455,16 @@ function ProviderAuthBadge({ provider }: { provider: AiProvider }) {
       </Badge>
     )
   }
+  if (status.status === "api_key") {
+    return (
+      <Badge
+        className="gap-1 border-transparent bg-warn-soft text-warn-ink"
+        title={status.message}
+      >
+        <KeyRound className="size-3" /> env key only
+      </Badge>
+    )
+  }
   const text = status.cli_present ? "login unverified" : "CLI missing"
   return (
     <Badge
@@ -468,20 +490,30 @@ function CapabilityLine({ provider }: { provider: AiProvider }) {
 }
 
 function CoverageLine({
+  provider,
   runtimes,
   totalRuntimeCount,
+  builtinRuntimeCount,
 }: {
+  provider: AiProvider
   runtimes: RuntimeRef[]
   totalRuntimeCount: number
+  builtinRuntimeCount: number
 }) {
-  const allAgents = totalRuntimeCount > 0 && runtimes.length === totalRuntimeCount
+  const coreRuntimeMatches = runtimes.filter((runtime) => !runtime.id.startsWith("custom:")).length
+  const coversEveryRuntime =
+    (totalRuntimeCount > 0 && runtimes.length === totalRuntimeCount) ||
+    (builtinRuntimeCount > 0 && coreRuntimeMatches >= builtinRuntimeCount)
+  const unifiedRuntimeSet = provider.auth !== "cli_login" && runtimes.length > 1
   return (
     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
       <span>Runs in</span>
-      {allAgents ? (
+      {unifiedRuntimeSet ? (
         <span className="inline-flex items-center gap-1 text-foreground">
           <AllAgentsIcon size={16} />
-          all configured agents
+          {coversEveryRuntime
+            ? "all agent runtimes"
+            : `${runtimes.length} agent runtimes`}
         </span>
       ) : runtimes.length ? (
         <>
@@ -517,6 +549,7 @@ function ModelListDialog({
   const needle = filter.trim().toLowerCase()
   const visible = needle ? models.filter((model) => model.toLowerCase().includes(needle)) : models
   const fromCatalog = provider?.models_source === "catalog"
+  const fromCliCache = provider?.models_source === "cli_cache"
   return (
     <Dialog
       open={Boolean(provider)}
@@ -536,6 +569,8 @@ function ModelListDialog({
           <DialogDescription className={fromCatalog ? "text-warn-ink" : undefined}>
             {fromCatalog
               ? "Names from the public Vercel AI Gateway catalog — this list does not verify your key or endpoint."
+              : fromCliCache
+                ? `Names from the local CLI model cache${provider?.models_fetched_at ? ` · ${fmtTime(provider.models_fetched_at)}` : ""}.`
               : `Listed by the provider's models API${provider?.models_fetched_at ? ` · ${fmtTime(provider.models_fetched_at)}` : ""}.`}
           </DialogDescription>
         </DialogHeader>
