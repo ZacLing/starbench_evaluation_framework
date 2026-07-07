@@ -201,6 +201,7 @@ async def run_executor(
     *,
     adapter: RuntimeAdapter,
     ctx: ExecutorContext,
+    runtime_provenance: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     logs = paths["logs"]
     result = await adapter.run_executor(task_run, paths, ctx=ctx)
@@ -215,5 +216,7 @@ async def run_executor(
         "usage": trace_summary.get("usage"),
         "artifact_file_count": artifact_manifest["file_count"],
     }
+    if runtime_provenance is not None:
+        status["executor_runtime_provenance"] = runtime_provenance
     json_dump(logs / "status.json", status)
     return status

@@ -310,6 +310,13 @@ class ClosedLoopTests(unittest.TestCase):
             self.assertTrue((task_root / "logs" / "events.jsonl").exists())
             self.assertTrue((task_root / "logs" / "status.json").exists())
             self.assertTrue((task_root / "judges" / "single_aggregate.json").exists())
+            run_config = json.loads((runs_dir / "test_run" / "run_config.json").read_text(encoding="utf-8"))
+            provenance = run_config["runtime_provenance"]
+            self.assertEqual(provenance["schema"], 1)
+            self.assertEqual(provenance["executor"]["agent"], "codex")
+            self.assertEqual(provenance["executor"]["backend"], "local")
+            status = json.loads((task_root / "logs" / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["executor_runtime_provenance"]["agent"], "codex")
             aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
             self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
 

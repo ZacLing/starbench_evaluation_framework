@@ -62,44 +62,48 @@ Grok Build、OpenCode 以及自定义 runtime 都会随时间更新；同一个�
 
 ```json
 {
-  "runtime_provenance_schema": 1,
-  "captured_at": "2026-07-07T12:34:56.000000+00:00",
-  "starbench": {
-    "version": "0.1.0",
-    "git_commit": "abc1234",
-    "git_dirty": false
-  },
-  "executor_runtime": {
-    "role": "executor",
-    "agent": "claude",
-    "label": "Claude Code",
-    "model": "claude-opus-4-20250514",
-    "backend": "local",
-    "docker_image": null,
-    "docker_image_id": null,
-    "docker_repo_digests": [],
-    "cli_bin": "claude",
-    "cli_path": "/opt/homebrew/bin/claude",
-    "cli_version": "2.1.177",
-    "cli_version_output": "2.1.177",
-    "cli_version_error": null,
-    "custom_runtime_spec": null
-  },
-  "evaluator_runtime": {
-    "role": "evaluator",
-    "agent": "codex",
-    "label": "Codex",
-    "model": "gpt-5",
-    "backend": "local",
-    "docker_image": null,
-    "docker_image_id": null,
-    "docker_repo_digests": [],
-    "cli_bin": "codex",
-    "cli_path": "/opt/homebrew/bin/codex",
-    "cli_version": "0.142.5",
-    "cli_version_output": "codex 0.142.5",
-    "cli_version_error": null,
-    "custom_runtime_spec": null
+  "runtime_provenance": {
+    "schema": 1,
+    "captured_at": "2026-07-07T12:34:56.000000+00:00",
+    "starbench": {
+      "version": "0.1.0",
+      "git_commit": "abc1234",
+      "git_dirty": false
+    },
+    "executor": {
+      "role": "executor",
+      "agent": "claude",
+      "label": "Claude Code",
+      "model": "claude-opus-4-20250514",
+      "backend": "local",
+      "docker_image": null,
+      "docker_image_id": null,
+      "docker_repo_digests": [],
+      "cli_command": "claude",
+      "cli_bin": "claude",
+      "cli_path": "/opt/homebrew/bin/claude",
+      "cli_version": "2.1.177",
+      "cli_version_output": "2.1.177",
+      "cli_version_error": null,
+      "custom_runtime_spec": null
+    },
+    "evaluator": {
+      "role": "evaluator",
+      "agent": "codex",
+      "label": "Codex",
+      "model": "gpt-5",
+      "backend": "local",
+      "docker_image": null,
+      "docker_image_id": null,
+      "docker_repo_digests": [],
+      "cli_command": "codex",
+      "cli_bin": "codex",
+      "cli_path": "/opt/homebrew/bin/codex",
+      "cli_version": "0.142.5",
+      "cli_version_output": "codex 0.142.5",
+      "cli_version_error": null,
+      "custom_runtime_spec": null
+    }
   }
 }
 ```
@@ -134,10 +138,12 @@ Custom runtime 的 `custom_runtime_spec` 建议结构：
 
 ```json
 {
-  "runtime_provenance_schema": 1,
-  "starbench": { "...": "..." },
-  "executor_runtime": { "...": "..." },
-  "evaluator_runtime": { "...": "..." }
+  "runtime_provenance": {
+    "schema": 1,
+    "starbench": { "...": "..." },
+    "executor": { "...": "..." },
+    "evaluator": { "...": "..." }
+  }
 }
 ```
 
@@ -149,7 +155,7 @@ Custom runtime 的 `custom_runtime_spec` 建议结构：
 
 ```json
 {
-  "executor_runtime": { "...": "..." }
+  "executor_runtime_provenance": { "...": "..." }
 }
 ```
 

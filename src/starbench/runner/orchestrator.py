@@ -37,6 +37,7 @@ from .executor import json_dump, materialize_task, run_executor
 from .judge import rubric_launch_order, run_parallel_judges, run_single_judge
 from ..skills.registry import expand_skill_groups, load_registry_skills
 from .progress import make_benchmark_progress
+from .runtime_provenance import capture_run_provenance
 from .summary import build_instruction_ablation_summary, format_instruction_ablation_markdown
 from .task_loader import build_task_runs, discover_tasks, duplicate_tasks
 
@@ -222,6 +223,26 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         opencode_base_url=args.opencode_base_url,
         opencode_api_key_env=args.opencode_api_key_env,
     )
+    runtime_provenance = capture_run_provenance(
+        executor_agent=args.executor_agent,
+        executor_adapter=executor_adapter,
+        executor_model=args.executor_model,
+        executor_backend=args.executor_backend,
+        executor_bins=runtime_bins,
+        executor_base_env=executor_base_env,
+        executor_docker_bin=args.docker_bin,
+        executor_docker_image=args.docker_image if args.executor_backend == "docker" else None,
+        executor_custom_spec=args.executor_runtime_spec,
+        evaluator_agent=args.evaluator_agent,
+        evaluator_adapter=evaluator_adapter,
+        evaluator_model=args.evaluator_model,
+        evaluator_bins=runtime_bins,
+        evaluator_base_env=judge_base_env,
+        evaluator_custom_spec=args.evaluator_runtime_spec,
+        cwd=Path.cwd(),
+    )
+    run_config["runtime_provenance"] = runtime_provenance
+    json_dump(run_root / "run_config.json", run_config)
 
     records = []
     for task_run, run_task_id in zip(ordered_task_runs, run_task_ids):
@@ -271,6 +292,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         record["paths"],
                         adapter=executor_adapter,
                         ctx=executor_ctx,
+                        runtime_provenance=runtime_provenance["executor"],
                     )
                 except Exception as exc:
                     # One crashing task must not abort the whole run.
@@ -290,6 +312,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         "docker_image": args.docker_image if args.executor_backend == "docker" else None,
                         "usage": None,
                         "artifact_file_count": 0,
+                        "executor_runtime_provenance": runtime_provenance["executor"],
                     }
                     json_dump(logs / "status.json", status)
                 progress.executor_finished(

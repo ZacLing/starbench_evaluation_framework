@@ -371,9 +371,8 @@ def task_run_detail(runs_dir: Path, run_id: str, task_run_id: str) -> Dict[str, 
 
     events_path = logs / "events.jsonl"
     try:
-        raw_event_count = sum(
-            1 for line in events_path.open(encoding="utf-8") if line.strip()
-        )
+        with events_path.open(encoding="utf-8") as events_file:
+            raw_event_count = sum(1 for line in events_file if line.strip())
     except OSError:
         raw_event_count = 0
 
