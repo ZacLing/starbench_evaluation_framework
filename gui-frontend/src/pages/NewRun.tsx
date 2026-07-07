@@ -219,7 +219,7 @@ export default function NewRun() {
 
   const addContender = (runtime: string) => {
     contenderCounter += 1
-    const compatible = compatibleProviders(filterFor(runtime), providers)
+    const compatible = compatibleProviders(filterFor(runtime), providers, runtime)
     const provider = compatible.find((item) => item.models.length) ?? compatible[0]
     setContenders((current) => [
       ...current,
@@ -739,7 +739,7 @@ function StepContenders({
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
             {options.map((option) => {
-              const compatible = compatibleProviders(filterFor(option.id), providers)
+              const compatible = compatibleProviders(filterFor(option.id), providers, option.id)
               const modelCount = compatible.reduce((sum, item) => sum + item.models.length, 0)
               const ownLogin = option.protocol === "none"
               return (
@@ -838,7 +838,8 @@ function ContenderCard({
   const provider = providers.find((item) => item.id === draft.provider_id)
   const dockerDowngraded = backend === "docker" && !dockerCapable
   const ownLogin = custom ? (custom.protocol ?? "none") === "none" : false
-  const hasCompatibleProvider = compatibleProviders(providerFilter, providers).length > 0
+  const hasCompatibleProvider =
+    compatibleProviders(providerFilter, providers, draft.runtime).length > 0
   return (
     <Card className="py-4">
       <CardContent className="grid gap-3 px-4">
@@ -887,6 +888,7 @@ function ContenderCard({
           ) : hasCompatibleProvider ? (
             <ProviderModelPicker
               providerFilter={providerFilter}
+              runtimeId={draft.runtime}
               providerId={draft.provider_id}
               model={draft.model}
               onChange={({ provider: next, model }) =>
@@ -1128,6 +1130,7 @@ function StepShared({
                 <Label>Judge model (from a provider)</Label>
                 <ProviderModelPicker
                   providerFilter={filterFor(judgeRuntime)}
+                  runtimeId={judgeRuntime}
                   filter={
                     judgeRuntime === "codex"
                       ? (provider) => provider.kind === "openai"

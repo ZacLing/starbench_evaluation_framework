@@ -239,6 +239,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json(experiments.load_profiles(state.runs_dir))
         elif segments == ["providers"]:
             self._send_json(providers.load_providers(state.runs_dir))
+        elif segments == ["providers", "cli-status"]:
+            self._send_json(providers.load_provider_cli_statuses(state.runs_dir))
         elif segments == ["experiments"]:
             self._send_json({"experiments": experiments.list_experiments(state.runs_dir, active)})
         elif len(segments) == 2 and segments[0] == "experiments":

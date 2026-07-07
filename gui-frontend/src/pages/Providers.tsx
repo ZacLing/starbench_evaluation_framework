@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
+  AlertTriangle,
   CheckCircle2,
   DownloadCloud,
   KeyRound,
@@ -42,12 +43,18 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   AGENT_LABELS,
   AgentIcon,
+  AllAgentsIcon,
   compatibleProviders,
   ProviderIcon,
-  runtimeFilters,
 } from "@/components/brand"
 import { ErrorNote } from "@/pages/Dashboard"
-import { api, type AiProvider, type CustomRuntime, type ProviderKind } from "@/lib/api"
+import {
+  api,
+  type AiProvider,
+  type CustomRuntime,
+  type ProviderFilter,
+  type ProviderKind,
+} from "@/lib/api"
 import { fmtTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
@@ -70,6 +77,9 @@ function isVendorApi(provider: AiProvider): boolean {
 }
 
 function providerDescription(provider: AiProvider): string {
+  if (provider.auth === "cli_login") {
+    return `Local ${AGENT_LABELS[provider.agent] ?? provider.agent} account`
+  }
   if (provider.kind !== "openai-compatible") {
     return `Official ${KIND_LABELS[provider.kind].replace(" API", "")} API`
   }
@@ -82,13 +92,21 @@ interface RuntimeRef {
   id: string
   icon?: string
   label: string
+  filter?: ProviderFilter
 }
 
-type Draft = Omit<AiProvider, "agent" | "key_present">
+type Draft = Omit<AiProvider, "agent" | "key_present" | "cli_status">
 
 export default function Providers() {
   const queryClient = useQueryClient()
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
+  const cliStatusQuery = useQuery({
+    queryKey: ["provider-cli-status"],
+    queryFn: api.providerCliStatus,
+    enabled: Boolean(
+      providersQuery.data?.providers.some((provider) => provider.auth === "cli_login"),
+    ),
+  })
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
   const [editing, setEditing] = useState<Draft | null>(null)
   const [isNew, setIsNew] = useState(false)
@@ -97,30 +115,55 @@ export default function Providers() {
 
   if (providersQuery.isPending) return <Skeleton className="h-96" />
   if (providersQuery.isError) return <ErrorNote message={(providersQuery.error as Error).message} />
-  const payload = providersQuery.data
+  const payload = {
+    ...providersQuery.data,
+    providers: providersQuery.data.providers.map((provider) =>
+      provider.auth === "cli_login"
+        ? {
+            ...provider,
+            cli_status: cliStatusQuery.data?.statuses[provider.id],
+          }
+        : provider,
+    ),
+  }
   const customRuntimes = (agentsQuery.data?.custom ?? []).filter(
     (agent): agent is CustomRuntime => !agent.error,
   )
 
-  /* Which agents can run models from this provider — the decoupling matrix,
-     drawn on the resource side. Filters come from /api/agents (single source). */
-  const filterMap = runtimeFilters(agentsQuery.data)
-  const runtimesFor = (provider: AiProvider): RuntimeRef[] => [
-    ...Object.keys(AGENT_LABELS)
-      .filter((runtime) => compatibleProviders(filterMap[runtime], [provider]).length > 0)
-      .map((runtime) => ({ id: runtime, label: AGENT_LABELS[runtime] })),
+  /* Which agents can run models from this provider — the decoupling matrix.
+     Filters come from /api/agents (single source). CLI-login providers are
+     intentionally runtime-specific; API-key providers fan out by protocol. */
+  const runtimeRefs: RuntimeRef[] = [
+    ...(agentsQuery.data?.builtin ?? []).map((runtime) => ({
+      id: runtime.id,
+      label: runtime.label,
+      filter: runtime.provider_filter,
+    })),
     ...customRuntimes
-      .filter((agent) => compatibleProviders(agent.provider_filter, [provider]).length > 0)
-      .map((agent) => ({ id: agent.id, icon: agent.icon, label: agent.label ?? agent.spec_id })),
+      .filter((agent) => agent.provider_filter)
+      .map((agent) => ({
+        id: agent.id,
+        icon: agent.icon,
+        label: agent.label ?? agent.spec_id,
+        filter: agent.provider_filter,
+      })),
   ]
+  const runtimesFor = (provider: AiProvider): RuntimeRef[] =>
+    runtimeRefs.filter(
+      (runtime) =>
+        compatibleProviders(runtime.filter, [provider], runtime.id).length > 0,
+    )
 
-  const vendors = payload.providers.filter(isVendorApi)
-  const gateways = payload.providers.filter((provider) => !isVendorApi(provider))
+  const endpointProviders = payload.providers.filter((provider) => provider.auth !== "cli_login")
+  const localCliAccounts = payload.providers.filter((provider) => provider.auth === "cli_login")
+  const vendors = endpointProviders.filter(isVendorApi)
+  const gateways = endpointProviders.filter((provider) => !isVendorApi(provider))
 
   const persist = async (next: Draft[], message: string) => {
     try {
       await api.saveProviders({ providers: next })
       queryClient.invalidateQueries({ queryKey: ["providers"] })
+      queryClient.invalidateQueries({ queryKey: ["provider-cli-status"] })
       toast.success(message)
       return true
     } catch (error) {
@@ -148,6 +191,7 @@ export default function Providers() {
     try {
       await api.refreshProviderModels(provider.id)
       queryClient.invalidateQueries({ queryKey: ["providers"] })
+      queryClient.invalidateQueries({ queryKey: ["provider-cli-status"] })
       toast.success(`Model catalog for ${provider.name} refreshed.`)
     } catch (error) {
       toast.error((error as Error).message)
@@ -162,8 +206,8 @@ export default function Providers() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">AI providers</h1>
           <p className="text-sm text-muted-foreground">
-            Where models come from. Every agent runs models from any provider that speaks
-            its protocol.
+            Where models come from. API-key providers fan out by protocol; local CLI
+            accounts stay bound to that CLI.
           </p>
         </div>
         <Button
@@ -191,20 +235,37 @@ export default function Providers() {
 
       {(
         [
-          ["Model vendors", vendors],
-          ["Gateways", gateways],
+          [
+            "Model vendors",
+            vendors,
+            "API-key providers and single-vendor endpoints. Agents can use them when their protocol channel matches.",
+          ],
+          [
+            "Local CLI accounts",
+            localCliAccounts,
+            "Login state belongs to one local CLI. These providers do not imply every agent is logged in.",
+          ],
+          [
+            "Gateways",
+            gateways,
+            "Aggregators and routers that expose many vendors behind one endpoint.",
+          ],
         ] as const
       ).map(
-        ([title, group]) =>
+        ([title, group, description]) =>
           group.length > 0 && (
             <section key={title} className="grid gap-3">
-              <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
+              <div className="grid gap-0.5">
+                <h2 className="text-sm font-semibold text-muted-foreground">{title}</h2>
+                <p className="text-xs text-muted-foreground">{description}</p>
+              </div>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {group.map((provider) => (
                   <ProviderCard
                     key={provider.id}
                     provider={provider}
                     runtimes={runtimesFor(provider)}
+                    totalRuntimeCount={runtimeRefs.length}
                     refreshing={refreshing === provider.id}
                     onRefresh={() => refreshModels(provider)}
                     onShowModels={() => setModelsFor(provider)}
@@ -256,6 +317,7 @@ export default function Providers() {
 function ProviderCard({
   provider,
   runtimes,
+  totalRuntimeCount,
   refreshing,
   onRefresh,
   onShowModels,
@@ -263,6 +325,7 @@ function ProviderCard({
 }: {
   provider: AiProvider
   runtimes: RuntimeRef[]
+  totalRuntimeCount: number
   refreshing: boolean
   onRefresh: () => void
   onShowModels: () => void
@@ -279,33 +342,11 @@ function ProviderCard({
         <div className="flex items-center gap-2.5">
           <ProviderIcon provider={provider} size={22} />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold">{provider.name}</span>
-          {provider.auth === "cli_login" ? (
-            <Badge className="gap-1 border-transparent bg-accent text-accent-foreground">
-              <MonitorCheck className="size-3" /> CLI login
-            </Badge>
-          ) : provider.key_present ? (
-            <Badge className="gap-1 border-transparent bg-pass-soft text-pass-ink">
-              <KeyRound className="size-3" /> key set
-            </Badge>
-          ) : (
-            <Badge className="gap-1 border-transparent bg-warn-soft text-warn-ink">
-              <KeyRound className="size-3" /> key missing
-            </Badge>
-          )}
+          <ProviderAuthBadge provider={provider} />
         </div>
         <p className="text-xs text-muted-foreground">{providerDescription(provider)}</p>
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span>For</span>
-          {runtimes.length ? (
-            runtimes.map((runtime) => (
-              <span key={runtime.id} title={runtime.label} className="inline-flex">
-                <AgentIcon agent={runtime.id} icon={runtime.icon} size={16} />
-              </span>
-            ))
-          ) : (
-            <span className="text-warn-ink">no compatible agent</span>
-          )}
-        </div>
+        <CapabilityLine provider={provider} />
+        <CoverageLine runtimes={runtimes} totalRuntimeCount={totalRuntimeCount} />
         <div className="flex items-center gap-2">
           {modelCount ? (
             <>
@@ -369,6 +410,96 @@ function ProviderCard({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function ProviderAuthBadge({ provider }: { provider: AiProvider }) {
+  if (provider.auth !== "cli_login") {
+    return provider.key_present ? (
+      <Badge className="gap-1 border-transparent bg-pass-soft text-pass-ink">
+        <KeyRound className="size-3" /> key set
+      </Badge>
+    ) : (
+      <Badge className="gap-1 border-transparent bg-warn-soft text-warn-ink">
+        <KeyRound className="size-3" /> key missing
+      </Badge>
+    )
+  }
+  const status = provider.cli_status
+  if (!status) {
+    return (
+      <Badge className="gap-1 border-transparent bg-warn-soft text-warn-ink">
+        <MonitorCheck className="size-3" /> checking login
+      </Badge>
+    )
+  }
+  if (status.status === "ok") {
+    return (
+      <Badge
+        className="gap-1 border-transparent bg-pass-soft text-pass-ink"
+        title={status.message}
+      >
+        <CheckCircle2 className="size-3" /> logged in
+      </Badge>
+    )
+  }
+  const text = status.cli_present ? "login unverified" : "CLI missing"
+  return (
+    <Badge
+      className="gap-1 border-transparent bg-warn-soft text-warn-ink"
+      title={status.message}
+    >
+      <AlertTriangle className="size-3" /> {text}
+    </Badge>
+  )
+}
+
+function CapabilityLine({ provider }: { provider: AiProvider }) {
+  const parts = [KIND_LABELS[provider.kind]]
+  if (provider.anthropic_base_url) parts.push("Anthropic endpoint")
+  if (provider.gemini_base_url) parts.push("Gemini endpoint")
+  if (provider.auth === "cli_login") parts.push("local login")
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <span>Capability</span>
+      <span className="text-foreground">{parts.join(" · ")}</span>
+    </div>
+  )
+}
+
+function CoverageLine({
+  runtimes,
+  totalRuntimeCount,
+}: {
+  runtimes: RuntimeRef[]
+  totalRuntimeCount: number
+}) {
+  const allAgents = totalRuntimeCount > 0 && runtimes.length === totalRuntimeCount
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <span>Runs in</span>
+      {allAgents ? (
+        <span className="inline-flex items-center gap-1 text-foreground">
+          <AllAgentsIcon size={16} />
+          all configured agents
+        </span>
+      ) : runtimes.length ? (
+        <>
+          <span className="inline-flex items-center gap-1">
+            {runtimes.map((runtime) => (
+              <span key={runtime.id} title={runtime.label} className="inline-flex">
+                <AgentIcon agent={runtime.id} icon={runtime.icon} size={16} />
+              </span>
+            ))}
+          </span>
+          <span>
+            {runtimes.length} agent{runtimes.length === 1 ? "" : "s"}
+          </span>
+        </>
+      ) : (
+        <span className="text-warn-ink">no compatible agent</span>
+      )}
+    </div>
   )
 }
 

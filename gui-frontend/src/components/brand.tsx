@@ -18,7 +18,7 @@ import {
   Trae,
   Vercel,
 } from "@lobehub/icons"
-import { Plug, SquareTerminal } from "lucide-react"
+import { Network, Plug, SquareTerminal } from "lucide-react"
 import type { AgentsPayload, ProviderFilter } from "@/lib/api"
 
 /* Brand icons for model families and agent runtimes (lobe-icons, MIT). */
@@ -132,6 +132,8 @@ export function AgentIcon({
    per-runtime switch to keep in sync with the backend. */
 interface CompatProvider {
   kind: string
+  auth?: string
+  agent?: string
   anthropic_base_url?: string | null
   gemini_base_url?: string | null
 }
@@ -139,7 +141,11 @@ interface CompatProvider {
 export function providerMatchesFilter(
   filter: ProviderFilter,
   provider: CompatProvider,
+  runtimeId?: string,
 ): boolean {
+  if (provider.auth === "cli_login") {
+    return Boolean(runtimeId && provider.agent === runtimeId)
+  }
   if (filter.kinds.includes(provider.kind)) return true
   if (filter.accepts_anthropic_endpoint && Boolean(provider.anthropic_base_url)) return true
   if (filter.accepts_gemini_endpoint && Boolean(provider.gemini_base_url)) return true
@@ -149,9 +155,10 @@ export function providerMatchesFilter(
 export function compatibleProviders<T extends CompatProvider>(
   filter: ProviderFilter | undefined,
   providers: T[],
+  runtimeId?: string,
 ): T[] {
   if (!filter) return []
-  return providers.filter((provider) => providerMatchesFilter(filter, provider))
+  return providers.filter((provider) => providerMatchesFilter(filter, provider, runtimeId))
 }
 
 /* Map every runtime id (built-in and custom) to its provider filter, so call
@@ -196,4 +203,8 @@ export function ProviderIcon({
     default:
       return <OpenCode size={size} />
   }
+}
+
+export function AllAgentsIcon({ size = 20 }: { size?: number }) {
+  return <Network size={size} className="text-primary" />
 }

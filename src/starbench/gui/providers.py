@@ -12,17 +12,22 @@ Providers authenticated via a local CLI login, or whose key is absent, fall
 back to the public Vercel AI Gateway catalog filtered by vendor, and the
 snapshot is labeled accordingly.
 
-Provider kinds map to agent runtimes: anthropic -> claude, openai -> codex,
-google -> gemini, xai -> grok, openai-compatible -> opencode.
+Provider kinds describe model/API protocol. Agent runtimes decide whether they
+can consume a provider through their provider filters and injection channels.
+Only `cli_login` providers are runtime-specific: a local CLI login belongs to
+that CLI, not to every runtime that happens to speak the same wire protocol.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import contracts
 from .data import SAFE_ID, _read_json
@@ -30,13 +35,40 @@ from .data import SAFE_ID, _read_json
 PROVIDER_KINDS = ("anthropic", "openai", "google", "xai", "openai-compatible")
 PROVIDER_AUTHS = ("api_key", "cli_login")
 
-KIND_TO_AGENT = {
+KIND_TO_CLI_AGENT = {
     "anthropic": "claude",
     "openai": "codex",
     "google": "gemini",
     "xai": "grok",
     "openai-compatible": "opencode",
 }
+
+AGENT_LABELS = {
+    "claude": "Claude Code",
+    "codex": "Codex",
+    "gemini": "Gemini CLI",
+    "grok": "Grok Build",
+    "opencode": "OpenCode",
+}
+
+AGENT_BINS = {
+    "claude": "claude",
+    "codex": "codex",
+    "gemini": "gemini",
+    "grok": "grok",
+    "opencode": "opencode",
+}
+
+CLI_STATUS_COMMANDS = {
+    "claude": ("claude", "auth", "status"),
+    "codex": ("codex", "login", "status"),
+}
+CLI_STATUS_CACHE_SECONDS = 60.0
+# `codex login status` is fast in the sandboxed shell but can take about five
+# seconds from the unsandboxed GUI service process. Keep this off the Providers
+# first paint, but allow enough time to avoid a false "unverified" badge.
+CLI_STATUS_TIMEOUT_SECONDS = 6.0
+_CLI_STATUS_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
 DEFAULT_BASE_URLS = {
     "anthropic": "https://api.anthropic.com",
@@ -50,6 +82,21 @@ KIND_TO_CATALOG_CREATOR = {
     "openai": "openai",
     "google": "google",
     "xai": "xai",
+}
+
+# Vendor APIs can speak OpenAI wire format without being aggregator gateways.
+# When they fall back to a public catalog, filter the gateway catalog to the
+# vendor's namespace instead of showing the entire multi-vendor gateway list.
+OPENAI_COMPAT_CATALOG_CREATORS = {
+    "deepseek": ("deepseek",),
+    "doubao": ("bytedance", "doubao"),
+    "kimi": ("moonshot", "moonshotai", "kimi"),
+    "moonshot": ("moonshot", "moonshotai"),
+    "qwen": ("alibaba", "qwen"),
+    "zhipu": ("zai", "zhipu"),
+    "glm": ("zai", "zhipu"),
+    "minimax": ("minimax",),
+    "mistral": ("mistral",),
 }
 
 BUILTIN_PROVIDERS: List[Dict[str, Any]] = [
@@ -147,36 +194,205 @@ def providers_path(runs_dir: Path) -> Path:
     return runs_dir / "providers.json"
 
 
-def _decorate(provider: Dict[str, Any]) -> Dict[str, Any]:
+def _catalog_creators(provider: Dict[str, Any]) -> Optional[Tuple[str, ...]]:
+    kind = str(provider.get("kind") or "")
+    creator = KIND_TO_CATALOG_CREATOR.get(kind)
+    if creator:
+        return (creator,)
+    if kind != "openai-compatible":
+        return None
+    identity = f"{provider.get('id') or ''} {provider.get('name') or ''}".lower()
+    creators: List[str] = []
+    for hint, aliases in OPENAI_COMPAT_CATALOG_CREATORS.items():
+        if hint in identity:
+            creators.extend(aliases)
+    if not creators:
+        return None
+    return tuple(dict.fromkeys(creators))
+
+
+def _catalog_models_for_creators(models: Sequence[str], creators: Sequence[str]) -> List[str]:
+    prefixes = tuple(f"{creator}/" for creator in creators)
+    return sorted({model for model in models if model.startswith(prefixes)})
+
+
+def _normalize_catalog_models(provider: Dict[str, Any]) -> List[str]:
+    models = [str(model) for model in provider.get("models") or [] if str(model).strip()]
+    if provider.get("models_source") != "catalog":
+        return models
+    creators = _catalog_creators(provider)
+    if not creators:
+        return models
+    filtered = _catalog_models_for_creators(models, creators)
+    return filtered or models
+
+
+def _cli_login_status(agent: str) -> Dict[str, Any]:
+    cached = _CLI_STATUS_CACHE.get(agent)
+    now = time.monotonic()
+    if cached and now - cached[0] < CLI_STATUS_CACHE_SECONDS:
+        return dict(cached[1])
+    label = AGENT_LABELS.get(agent, agent)
+    command = CLI_STATUS_COMMANDS.get(agent)
+    bin_name = (command or (AGENT_BINS.get(agent, agent),))[0]
+    path = shutil.which(bin_name)
+    if not path:
+        status = {
+            "agent": agent,
+            "label": label,
+            "cli_present": False,
+            "cli_path": None,
+            "status": "fail",
+            "message": f"{label} CLI not found on PATH.",
+        }
+        _CLI_STATUS_CACHE[agent] = (now, status)
+        return dict(status)
+    if not command:
+        status = {
+            "agent": agent,
+            "label": label,
+            "cli_present": True,
+            "cli_path": path,
+            "status": "unknown",
+            "message": f"{label} login status cannot be checked by this console.",
+        }
+        _CLI_STATUS_CACHE[agent] = (now, status)
+        return dict(status)
+    env = os.environ.copy()
+    env.setdefault("CODEX_CI", "1")
+    env.setdefault("NO_COLOR", "1")
+    env.setdefault("TERM", "dumb")
+    try:
+        result = subprocess.run(
+            list(command),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=CLI_STATUS_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        status = {
+            "agent": agent,
+            "label": label,
+            "cli_present": True,
+            "cli_path": path,
+            "status": "warn",
+            "message": f"Could not check {label} login: {error}.",
+        }
+        _CLI_STATUS_CACHE[agent] = (now, status)
+        return dict(status)
+    output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
+    if result.returncode == 0:
+        message = _summarize_cli_status(agent, output)
+        status = {
+            "agent": agent,
+            "label": label,
+            "cli_present": True,
+            "cli_path": path,
+            "status": "ok",
+            "message": message,
+        }
+        _CLI_STATUS_CACHE[agent] = (now, status)
+        return dict(status)
+    status = {
+        "agent": agent,
+        "label": label,
+        "cli_present": True,
+        "cli_path": path,
+        "status": "warn",
+        "message": _first_status_line(output) or f"{label} login status is not confirmed.",
+    }
+    _CLI_STATUS_CACHE[agent] = (now, status)
+    return dict(status)
+
+
+def _first_status_line(output: str) -> str:
+    for line in output.splitlines():
+        line = line.strip()
+        if line:
+            return line[:160]
+    return ""
+
+
+def _summarize_cli_status(agent: str, output: str) -> str:
+    if agent == "claude":
+        try:
+            payload = json.loads(output)
+        except ValueError:
+            return _first_status_line(output) or "Claude Code reports a logged-in session."
+        if payload.get("loggedIn") is True:
+            source = payload.get("apiKeySource")
+            method = payload.get("authMethod")
+            if source:
+                return f"Logged in via {source}."
+            if method:
+                return f"Logged in via {method}."
+            return "Claude Code reports a logged-in session."
+        return "Claude Code reports no active login."
+    if agent == "codex":
+        for line in output.splitlines():
+            line = line.strip()
+            if line.lower().startswith("logged in"):
+                return line[:160]
+        return _first_status_line(output) or "Codex reports a logged-in session."
+    return _first_status_line(output) or "CLI reports a logged-in session."
+
+
+def _decorate(provider: Dict[str, Any], *, include_cli_status: bool = False) -> Dict[str, Any]:
     api_key_env = str(provider.get("api_key_env") or "")
-    return {
+    agent = KIND_TO_CLI_AGENT.get(str(provider.get("kind")), "opencode")
+    decorated = {
         "auth": "api_key",
         "anthropic_base_url": "",
         "gemini_base_url": "",
         "models_fetched_at": None,
         "models_source": None,
         **provider,
-        "agent": KIND_TO_AGENT.get(str(provider.get("kind")), "opencode"),
+        "models": _normalize_catalog_models(provider),
+        "agent": agent,
         "key_present": bool(api_key_env and os.environ.get(api_key_env)),
     }
+    if include_cli_status and decorated["auth"] == "cli_login":
+        decorated["cli_status"] = _cli_login_status(agent)
+    return decorated
 
 
-def load_providers(runs_dir: Path) -> "contracts.ProvidersPayload":
+def load_providers(
+    runs_dir: Path, *, include_cli_status: bool = False
+) -> "contracts.ProvidersPayload":
     # Response shape defined once in contracts.ProvidersPayload (see gen-types).
     payload = _read_json(providers_path(runs_dir))
     if not isinstance(payload, dict) or not isinstance(payload.get("providers"), list):
         return {
-            "providers": [_decorate(provider) for provider in BUILTIN_PROVIDERS],
+            "providers": [
+                _decorate(provider, include_cli_status=include_cli_status)
+                for provider in BUILTIN_PROVIDERS
+            ],
             "persisted": False,
         }
     return {
         "providers": [
-            _decorate(provider)
+            _decorate(provider, include_cli_status=include_cli_status)
             for provider in payload["providers"]
             if isinstance(provider, dict)
         ],
         "persisted": True,
     }
+
+
+def load_provider_cli_statuses(runs_dir: Path) -> "contracts.ProviderCliStatusPayload":
+    payload = load_providers(runs_dir)
+    statuses = {}
+    for provider in payload["providers"]:
+        if provider.get("auth") != "cli_login":
+            continue
+        provider_id = str(provider.get("id") or "")
+        agent = str(provider.get("agent") or "")
+        if provider_id and agent:
+            statuses[provider_id] = _cli_login_status(agent)
+    return {"statuses": statuses}
 
 
 def save_providers(runs_dir: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -300,17 +516,15 @@ def _models_from_api(provider: Dict[str, Any], api_key: str) -> List[str]:
 
 
 def _models_from_catalog(provider: Dict[str, Any]) -> List[str]:
-    creator = KIND_TO_CATALOG_CREATOR.get(str(provider.get("kind") or ""))
+    creators = _catalog_creators(provider)
     catalog = fetch_vercel_catalog()
-    if creator is None:
+    if creators is None:
         return catalog
-    models = [
-        model.split("/", 1)[1]
-        for model in catalog
-        if model.startswith(f"{creator}/")
-    ]
+    models = _catalog_models_for_creators(catalog, creators)
     if not models:
-        raise ProviderError(f"No catalog models found for vendor {creator}.")
+        raise ProviderError(f"No catalog models found for vendor {', '.join(creators)}.")
+    if str(provider.get("kind") or "") != "openai-compatible":
+        models = [model.split("/", 1)[1] for model in models]
     return models
 
 
@@ -350,7 +564,11 @@ def refresh_provider_models(runs_dir: Path, provider_id: str) -> Dict[str, Any]:
     target["models_fetched_at"] = datetime.now(timezone.utc).isoformat()
     target["models_source"] = source
     stripped = [
-        {key: value for key, value in provider.items() if key not in ("agent", "key_present")}
+        {
+            key: value
+            for key, value in provider.items()
+            if key not in ("agent", "key_present", "cli_status")
+        }
         for provider in providers
     ]
     return save_providers(runs_dir, {"providers": stripped})

@@ -19,6 +19,7 @@ export function ProviderModelPicker({
   model,
   onChange,
   providerFilter,
+  runtimeId,
   filter,
 }: {
   providerId?: string
@@ -26,12 +27,14 @@ export function ProviderModelPicker({
   onChange: (value: { provider: AiProvider; model: string }) => void
   /** The runtime's provider filter (from /api/agents); undefined = show none. */
   providerFilter?: ProviderFilter
+  /** Runtime id, used so CLI-login providers only appear for their owning CLI. */
+  runtimeId?: string
   /** Extra narrowing on top of protocol compatibility. */
   filter?: (provider: AiProvider) => boolean
 }) {
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const all = providersQuery.data?.providers ?? []
-  const compatible = compatibleProviders(providerFilter, all)
+  const compatible = compatibleProviders(providerFilter, all, runtimeId)
   const providers = filter ? compatible.filter(filter) : compatible
   const provider = providers.find((item) => item.id === providerId)
 

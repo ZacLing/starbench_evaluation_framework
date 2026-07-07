@@ -10,6 +10,8 @@ export type AuthKind = "api_key" | "cli_login"
 
 export type ModelsSource = "api" | "catalog"
 
+export type CliAuthStatusKind = "ok" | "warn" | "fail" | "unknown"
+
 export type ThinkingChannel = "native_config" | "prompt"
 
 export type WebSearchMode = "task" | "allow" | "deny"
@@ -76,6 +78,15 @@ export interface AgentsPayload {
   custom: CustomRuntime[]
 }
 
+export interface CliAuthStatus {
+  agent: string
+  label: string
+  cli_present: boolean
+  cli_path: string | null
+  status: "ok" | "warn" | "fail" | "unknown"
+  message: string
+}
+
 export interface AiProvider {
   id: string
   name: string
@@ -90,11 +101,16 @@ export interface AiProvider {
   key_present: boolean
   anthropic_base_url?: string | null
   gemini_base_url?: string | null
+  cli_status?: CliAuthStatus
 }
 
 export interface ProvidersPayload {
   providers: AiProvider[]
   persisted?: boolean
+}
+
+export interface ProviderCliStatusPayload {
+  statuses: Record<string, CliAuthStatus>
 }
 
 export interface Skill {

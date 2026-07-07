@@ -40,6 +40,44 @@ class ProviderTest(unittest.TestCase):
             self.assertIn("agent", provider)
             self.assertIn("key_present", provider)
             self.assertIn(provider["auth"], ("api_key", "cli_login"))
+        self.assertNotIn("cli_status", by_id["anthropic-cli"])
+
+    def test_load_providers_does_not_probe_cli_status(self) -> None:
+        original_status = providers._cli_login_status
+
+        def fail_if_called(agent):
+            raise AssertionError(f"unexpected CLI status probe for {agent}")
+
+        providers._cli_login_status = fail_if_called
+        try:
+            loaded = providers.load_providers(self.runs_dir)
+        finally:
+            providers._cli_login_status = original_status
+        self.assertIn("anthropic-cli", {provider["id"] for provider in loaded["providers"]})
+
+    def test_load_provider_cli_statuses_probes_cli_login_providers(self) -> None:
+        original_status = providers._cli_login_status
+        calls = []
+
+        def fake_status(agent):
+            calls.append(agent)
+            return {
+                "agent": agent,
+                "label": agent,
+                "cli_present": True,
+                "cli_path": f"/bin/{agent}",
+                "status": "ok",
+                "message": "ok",
+            }
+
+        providers._cli_login_status = fake_status
+        try:
+            result = providers.load_provider_cli_statuses(self.runs_dir)
+        finally:
+            providers._cli_login_status = original_status
+        self.assertEqual(calls, ["claude", "codex"])
+        self.assertEqual(result["statuses"]["anthropic-cli"]["agent"], "claude")
+        self.assertEqual(result["statuses"]["openai-cli"]["agent"], "codex")
 
     def test_save_and_reload(self) -> None:
         saved = providers.save_providers(
@@ -167,6 +205,103 @@ class ProviderTest(unittest.TestCase):
         provider = result["providers"][0]
         self.assertEqual(provider["models"], ["claude-opus-4.8"])
         self.assertEqual(provider["models_source"], "catalog")
+
+    def test_openai_compatible_vendor_catalog_is_filtered(self) -> None:
+        def fake_fetch(url, headers=None):
+            self.assertIn("ai-gateway.vercel.sh", url)
+            return {
+                "data": [
+                    {"id": "deepseek/deepseek-r1"},
+                    {"id": "deepseek/deepseek-v3"},
+                    {"id": "openai/gpt-5.5"},
+                    {"id": "alibaba/qwen3-coder"},
+                ]
+            }
+
+        original = providers._fetch_json
+        providers._fetch_json = fake_fetch
+        try:
+            providers.save_providers(
+                self.runs_dir,
+                {
+                    "providers": [
+                        {
+                            "id": "deepseek",
+                            "name": "DeepSeek",
+                            "kind": "openai-compatible",
+                            "auth": "api_key",
+                            "models": [],
+                        }
+                    ]
+                },
+            )
+            result = providers.refresh_provider_models(self.runs_dir, "deepseek")
+        finally:
+            providers._fetch_json = original
+        provider = result["providers"][0]
+        self.assertEqual(provider["models"], ["deepseek/deepseek-r1", "deepseek/deepseek-v3"])
+        self.assertEqual(provider["models_source"], "catalog")
+
+    def test_load_filters_overbroad_persisted_vendor_catalog_snapshot(self) -> None:
+        providers.save_providers(
+            self.runs_dir,
+            {
+                "providers": [
+                    {
+                        "id": "deepseek",
+                        "name": "DeepSeek",
+                        "kind": "openai-compatible",
+                        "auth": "api_key",
+                        "models": [
+                            "alibaba/qwen3-coder",
+                            "deepseek/deepseek-r1",
+                            "openai/gpt-5.5",
+                        ],
+                        "models_source": "catalog",
+                    }
+                ]
+            },
+        )
+        loaded = providers.load_providers(self.runs_dir)
+        self.assertEqual(loaded["providers"][0]["models"], ["deepseek/deepseek-r1"])
+
+    def test_cli_login_status_uses_runtime_status_command(self) -> None:
+        original_which = providers.shutil.which
+        original_run = providers.subprocess.run
+
+        def fake_which(bin_name):
+            return f"/bin/{bin_name}"
+
+        def fake_run(command, **kwargs):
+            self.assertEqual(command, ["codex", "login", "status"])
+            self.assertEqual(kwargs["env"]["CODEX_CI"], "1")
+            self.assertEqual(kwargs["env"]["TERM"], "dumb")
+            return providers.subprocess.CompletedProcess(
+                command, 0, stdout="Logged in using ChatGPT\n", stderr=""
+            )
+
+        providers.shutil.which = fake_which
+        providers.subprocess.run = fake_run
+        providers._CLI_STATUS_CACHE.clear()
+        try:
+            status = providers._cli_login_status("codex")
+        finally:
+            providers.shutil.which = original_which
+            providers.subprocess.run = original_run
+            providers._CLI_STATUS_CACHE.clear()
+        self.assertEqual(status["status"], "ok")
+        self.assertTrue(status["cli_present"])
+        self.assertEqual(status["message"], "Logged in using ChatGPT")
+
+    def test_codex_status_summary_prefers_logged_in_line(self) -> None:
+        output = (
+            "WARNING: proceeding, even though we could not update PATH\n"
+            "Logged in using ChatGPT\n"
+        )
+        self.assertEqual(
+            providers._summarize_cli_status("codex", output),
+            "Logged in using ChatGPT",
+        )
 
     def test_judge_gateway_conflict_detected(self) -> None:
         tasks_dir = self.tmp / "tasks"

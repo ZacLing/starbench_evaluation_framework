@@ -31,6 +31,7 @@ ProviderKind = Literal["anthropic", "openai", "google", "xai", "openai-compatibl
 RuntimeProtocol = Literal["openai", "anthropic", "gemini", "xai", "none"]
 AuthKind = Literal["api_key", "cli_login"]
 ModelsSource = Literal["api", "catalog"]
+CliAuthStatusKind = Literal["ok", "warn", "fail", "unknown"]
 # How --thinking-effort reaches a runtime: a real reasoning switch on the CLI
 # itself, or a prompt-level instruction.
 ThinkingChannel = Literal["native_config", "prompt"]
@@ -128,9 +129,19 @@ class _AiProviderBase(TypedDict):
     key_present: bool
 
 
+class CliAuthStatus(TypedDict):
+    agent: str
+    label: str
+    cli_present: bool
+    cli_path: Optional[str]
+    status: CliAuthStatusKind
+    message: str
+
+
 class AiProvider(_AiProviderBase, total=False):
     anthropic_base_url: Optional[str]
     gemini_base_url: Optional[str]
+    cli_status: CliAuthStatus
 
 
 class _ProvidersPayloadBase(TypedDict):
@@ -139,6 +150,10 @@ class _ProvidersPayloadBase(TypedDict):
 
 class ProvidersPayload(_ProvidersPayloadBase, total=False):
     persisted: bool
+
+
+class ProviderCliStatusPayload(TypedDict):
+    statuses: Dict[str, CliAuthStatus]
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +280,7 @@ GENERATED_TYPES = [
     "RuntimeProtocol",
     "AuthKind",
     "ModelsSource",
+    "CliAuthStatusKind",
     "ThinkingChannel",
     "WebSearchMode",
     "RuntimeCli",
@@ -272,8 +288,10 @@ GENERATED_TYPES = [
     "BuiltinRuntime",
     "CustomRuntime",
     "AgentsPayload",
+    "CliAuthStatus",
     "AiProvider",
     "ProvidersPayload",
+    "ProviderCliStatusPayload",
     "Skill",
     "SkillsPayload",
     "HumanReferenceStepDetail",

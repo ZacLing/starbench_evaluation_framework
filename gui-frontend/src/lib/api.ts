@@ -14,6 +14,7 @@ import type {
   ExperimentPlanItem,
   HumanReferenceStepDetail,
   ModelsSource,
+  ProviderCliStatusPayload,
   ProviderFilter,
   ProviderKind,
   ProvidersPayload,
@@ -35,6 +36,7 @@ export type {
   ExperimentPlanItem,
   HumanReferenceStepDetail,
   ModelsSource,
+  ProviderCliStatusPayload,
   ProviderFilter,
   ProviderKind,
   ProvidersPayload,
@@ -519,7 +521,8 @@ export const api = {
       body: "{}",
     }),
   providers: () => request<ProvidersPayload>("/api/providers"),
-  saveProviders: (payload: { providers: Omit<AiProvider, "agent" | "key_present">[] }) =>
+  providerCliStatus: () => request<ProviderCliStatusPayload>("/api/providers/cli-status"),
+  saveProviders: (payload: { providers: Omit<AiProvider, "agent" | "key_present" | "cli_status">[] }) =>
     request<ProvidersPayload>("/api/providers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
