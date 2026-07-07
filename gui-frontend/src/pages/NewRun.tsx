@@ -54,6 +54,7 @@ import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/pages/Dashboard"
 import {
   api,
+  type AgentRuntimeStatus,
   type AiProvider,
   type Contender,
   type CustomRuntime,
@@ -118,6 +119,12 @@ export default function NewRun() {
   const profilesQuery = useQuery({ queryKey: ["profiles"], queryFn: api.profiles })
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
+  const agentStatusQuery = useQuery({
+    queryKey: ["agent-status"],
+    queryFn: api.agentStatus,
+    enabled: agentsQuery.isSuccess,
+    retry: false,
+  })
   const skillsQuery = useQuery({ queryKey: ["skills"], queryFn: api.skills })
   const libraries = useMemo(
     () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
@@ -125,6 +132,7 @@ export default function NewRun() {
   )
   const recentLibraryDir = libraries[libraries.length - 1]?.dir
   const providers = providersQuery.data?.providers ?? []
+  const agentStatuses = agentStatusQuery.data?.statuses ?? {}
   const customRuntimes = useMemo(
     () => (agentsQuery.data?.custom ?? []).filter((agent) => !agent.error),
     [agentsQuery.data],
@@ -386,6 +394,8 @@ export default function NewRun() {
           providers={providers}
           customRuntimes={customRuntimes}
           customByRuntime={customByRuntime}
+          agentStatuses={agentStatuses}
+          statusLoading={agentStatusQuery.isPending || agentStatusQuery.isFetching}
           dockerCapable={dockerCapable}
           filterFor={filterFor}
           thinkingChannelFor={thinkingChannelFor}
@@ -680,10 +690,62 @@ interface RuntimeOption {
   localOnly?: boolean
 }
 
+function AgentPickerStatusLine({
+  status,
+  cliMissing,
+  loading,
+}: {
+  status?: AgentRuntimeStatus
+  cliMissing?: boolean
+  loading: boolean
+}) {
+  if (loading && !status) {
+    return (
+      <span className="inline-flex items-center justify-center gap-1 text-[11px] text-muted-foreground">
+        <Loader2 className="size-3 animate-spin" /> checking version
+      </span>
+    )
+  }
+  if (status?.present === false || cliMissing) {
+    return <span className="text-[11px] text-warn-ink">CLI missing</span>
+  }
+  if (!status) {
+    return <span className="text-[11px] text-muted-foreground">version not checked</span>
+  }
+  const version = status.version ? `v${status.version}` : "version unknown"
+  const suffix =
+    status.update_available === true
+      ? "update available"
+      : status.update_available === false
+        ? "latest"
+        : status.latest_error
+          ? "latest unknown"
+          : "latest not checked"
+  return (
+    <span
+      className={cn(
+        "max-w-full truncate text-[11px]",
+        status.update_available ? "text-warn-ink" : "text-muted-foreground",
+      )}
+      title={[
+        status.version_output,
+        status.latest_version ? `latest v${status.latest_version}` : "",
+        status.latest_error,
+      ]
+        .filter(Boolean)
+        .join("\n")}
+    >
+      {version} · {suffix}
+    </span>
+  )
+}
+
 function StepContenders({
   providers,
   customRuntimes,
   customByRuntime,
+  agentStatuses,
+  statusLoading,
   dockerCapable,
   filterFor,
   thinkingChannelFor,
@@ -697,6 +759,8 @@ function StepContenders({
   providers: AiProvider[]
   customRuntimes: CustomRuntime[]
   customByRuntime: Record<string, CustomRuntime>
+  agentStatuses: Record<string, AgentRuntimeStatus>
+  statusLoading: boolean
   dockerCapable: (runtime: string) => boolean
   filterFor: (runtime: string) => ProviderFilter | undefined
   thinkingChannelFor: (runtime: string) => string
@@ -751,6 +815,11 @@ function StepContenders({
                   <span className="max-w-full truncate text-[11px] leading-tight text-muted-foreground">
                     {option.note}
                   </span>
+                  <AgentPickerStatusLine
+                    status={agentStatuses[option.id]}
+                    cliMissing={option.cliMissing}
+                    loading={statusLoading}
+                  />
                   {option.localOnly && (
                     <span
                       className="text-[11px] text-warn-ink"
@@ -758,9 +827,6 @@ function StepContenders({
                     >
                       local execution
                     </span>
-                  )}
-                  {option.cliMissing && (
-                    <span className="text-[11px] text-warn-ink">CLI missing</span>
                   )}
                   <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary">
                     <Plus className="size-3" /> Add
