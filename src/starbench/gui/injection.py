@@ -127,13 +127,20 @@ def builtin_settings(info: RuntimeInfo, provider: Dict[str, Any]) -> Settings:
         endpoint = _channel_endpoint(kind, provider)
         if endpoint:
             token_src = str(provider.get("api_key_env") or "") or channel.default_api_key_env
+            env = {
+                channel.base_url_var: {"value": endpoint},
+                channel.api_key_var: {"from_env": token_src},
+            }
+            if kind == "anthropic_env" and str(provider.get("kind") or "") != "anthropic":
+                # Claude Code gives ANTHROPIC_API_KEY special meaning for the
+                # official Anthropic API. Gateways such as OpenRouter document
+                # ANTHROPIC_AUTH_TOKEN plus an explicitly empty API-key var, so
+                # a user's ambient Anthropic key cannot override the gateway.
+                env["ANTHROPIC_API_KEY"] = {"value": ""}
             return {
                 "auth_mode": auth_mode,
                 "gateway": {},
-                "env": {
-                    channel.base_url_var: {"value": endpoint},
-                    channel.api_key_var: {"from_env": token_src},
-                },
+                "env": env,
             }
         return {"auth_mode": auth_mode, "gateway": {}}
 

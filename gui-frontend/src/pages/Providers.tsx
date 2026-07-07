@@ -427,13 +427,32 @@ function ProviderCard({
 
 function ProviderAuthBadge({ provider }: { provider: AiProvider }) {
   if (provider.auth !== "cli_login") {
-    return provider.key_present ? (
-      <Badge className="gap-1 border-transparent bg-pass-soft text-pass-ink">
-        <KeyRound className="size-3" /> key set
-      </Badge>
-    ) : (
-      <Badge className="gap-1 border-transparent bg-warn-soft text-warn-ink">
-        <KeyRound className="size-3" /> key missing
+    if (!provider.key_present) {
+      return (
+        <Badge
+          className="gap-1 border-transparent bg-warn-soft text-warn-ink"
+          title={`${provider.api_key_env || "API key env var"} is not set in this process.`}
+        >
+          <KeyRound className="size-3" /> key missing
+        </Badge>
+      )
+    }
+    if (provider.models_source === "api") {
+      return (
+        <Badge
+          className="gap-1 border-transparent bg-pass-soft text-pass-ink"
+          title={`Model list was fetched from ${provider.name}'s API using ${provider.api_key_env}.`}
+        >
+          <CheckCircle2 className="size-3" /> key verified
+        </Badge>
+      )
+    }
+    return (
+      <Badge
+        className="gap-1 border-transparent bg-warn-soft text-warn-ink"
+        title={`${provider.api_key_env} exists, but this provider has not been verified against its own models API.`}
+      >
+        <AlertTriangle className="size-3" /> env set
       </Badge>
     )
   }

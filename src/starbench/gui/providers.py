@@ -170,6 +170,7 @@ BUILTIN_PROVIDERS: List[Dict[str, Any]] = [
         "kind": "openai-compatible",
         "auth": "api_key",
         "base_url": "https://openrouter.ai/api/v1",
+        "anthropic_base_url": "https://openrouter.ai/api",
         "api_key_env": "OPENROUTER_API_KEY",
         "models": [],
     },
@@ -190,8 +191,27 @@ class ProviderError(ValueError):
     pass
 
 
+PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
+    # OpenRouter exposes both OpenAI-compatible and Anthropic-compatible
+    # surfaces. The Anthropic Agent SDK / Claude Code path uses /api, while
+    # OpenAI-compatible clients use /api/v1.
+    "openrouter": {"anthropic_base_url": "https://openrouter.ai/api"},
+}
+
+
 def providers_path(runs_dir: Path) -> Path:
     return runs_dir / "providers.json"
+
+
+def _with_provider_defaults(provider: Dict[str, Any]) -> Dict[str, Any]:
+    defaults = PROVIDER_DEFAULTS.get(str(provider.get("id") or ""))
+    if not defaults:
+        return provider
+    merged = dict(provider)
+    for key, value in defaults.items():
+        if not str(merged.get(key) or "").strip():
+            merged[key] = value
+    return merged
 
 
 def _catalog_creators(provider: Dict[str, Any]) -> Optional[Tuple[str, ...]]:
@@ -383,6 +403,7 @@ def _interpret_cli_status(agent: str, output: str) -> Tuple[str, str]:
 
 
 def _decorate(provider: Dict[str, Any], *, include_cli_status: bool = False) -> Dict[str, Any]:
+    provider = _with_provider_defaults(provider)
     api_key_env = str(provider.get("api_key_env") or "")
     agent = KIND_TO_CLI_AGENT.get(str(provider.get("kind")), "opencode")
     models = _normalize_catalog_models(provider)

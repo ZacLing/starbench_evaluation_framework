@@ -208,6 +208,39 @@ class ReferenceShapeEquivalenceTest(unittest.TestCase):
                 "env": {
                     "ANTHROPIC_BASE_URL": {"value": "https://api.deepseek.com/anthropic"},
                     "ANTHROPIC_AUTH_TOKEN": {"from_env": "DEEPSEEK_API_KEY"},
+                    "ANTHROPIC_API_KEY": {"value": ""},
+                },
+            },
+            ref_shared={
+                "evaluator_agent": "codex",
+                "evaluator_model": "gpt-5.5",
+                "evaluator_provider_id": "openai",
+            },
+            legacy_shared={
+                "evaluator_agent": "codex",
+                "evaluator_model": "gpt-5.5",
+                "evaluator_auth_mode": "env",
+            },
+        )
+
+    # -- claude through OpenRouter's Anthropic-compatible endpoint -------------
+    def test_claude_openrouter(self) -> None:
+        self._assert_equivalent(
+            ref_contender={
+                "label": "c",
+                "agent": "claude",
+                "provider_id": "openrouter",
+                "model": "anthropic/claude-sonnet-4.5",
+            },
+            legacy_contender={
+                "label": "c",
+                "agent": "claude",
+                "model": "anthropic/claude-sonnet-4.5",
+                "auth_mode": "env",
+                "env": {
+                    "ANTHROPIC_BASE_URL": {"value": "https://openrouter.ai/api"},
+                    "ANTHROPIC_AUTH_TOKEN": {"from_env": "OPENROUTER_API_KEY"},
+                    "ANTHROPIC_API_KEY": {"value": ""},
                 },
             },
             ref_shared={

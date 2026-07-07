@@ -38,6 +38,7 @@ class ProviderTest(unittest.TestCase):
         self.assertEqual(
             by_id["vercel-ai-gateway"]["anthropic_base_url"], "https://ai-gateway.vercel.sh"
         )
+        self.assertEqual(by_id["openrouter"]["anthropic_base_url"], "https://openrouter.ai/api")
         for provider in loaded["providers"]:
             self.assertIn("agent", provider)
             self.assertIn("key_present", provider)
@@ -80,6 +81,26 @@ class ProviderTest(unittest.TestCase):
         self.assertEqual(calls, ["claude", "codex"])
         self.assertEqual(result["statuses"]["anthropic-cli"]["agent"], "claude")
         self.assertEqual(result["statuses"]["openai-cli"]["agent"], "codex")
+
+    def test_persisted_openrouter_gets_anthropic_endpoint_default(self) -> None:
+        providers.save_providers(
+            self.runs_dir,
+            {
+                "providers": [
+                    {
+                        "id": "openrouter",
+                        "name": "OpenRouter",
+                        "kind": "openai-compatible",
+                        "auth": "api_key",
+                        "base_url": "https://openrouter.ai/api/v1",
+                        "api_key_env": "OPENROUTER_API_KEY",
+                        "models": [],
+                    }
+                ]
+            },
+        )
+        loaded = providers.load_providers(self.runs_dir)
+        self.assertEqual(loaded["providers"][0]["anthropic_base_url"], "https://openrouter.ai/api")
 
     def test_save_and_reload(self) -> None:
         saved = providers.save_providers(
