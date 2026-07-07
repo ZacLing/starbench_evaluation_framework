@@ -496,7 +496,7 @@ function VersionLine({
       </span>
     )
   }
-  const local = status.version ? `v${status.version}` : "version unknown"
+  const local = status.version ? `v${status.version}` : "version unavailable"
   const latest = status.latest_version ? `latest v${status.latest_version}` : null
   const update = status.update_available === true
   return (

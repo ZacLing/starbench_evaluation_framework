@@ -126,6 +126,10 @@ export default function NewRun() {
     enabled: agentsQuery.isSuccess,
     retry: false,
   })
+  const agentStatusData = agentStatusQuery.data
+  const agentStatusIsFetching = agentStatusQuery.isFetching
+  const refetchAgentStatus = agentStatusQuery.refetch
+  const agentStatusRetryCount = useRef(0)
   const skillsQuery = useQuery({ queryKey: ["skills"], queryFn: api.skills })
   const libraries = useMemo(
     () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
@@ -225,6 +229,24 @@ export default function NewRun() {
       setTasksDir(withTasks.dir)
     }
   }, [libraries, tasksDir])
+
+  useEffect(() => {
+    const statuses = agentStatusData?.statuses
+    if (!statuses || agentStatusIsFetching) return
+    const hasRetryableLatestError = Object.values(statuses).some(
+      (status) => status.present && Boolean(status.latest_error),
+    )
+    if (!hasRetryableLatestError) {
+      agentStatusRetryCount.current = 0
+      return
+    }
+    if (agentStatusRetryCount.current >= 2) return
+    const retryTimer = window.setTimeout(() => {
+      agentStatusRetryCount.current += 1
+      refetchAgentStatus()
+    }, 1500)
+    return () => window.clearTimeout(retryTimer)
+  }, [agentStatusData, agentStatusIsFetching, refetchAgentStatus])
 
   const setSharedField = useCallback(
     (key: keyof SharedConfig, value: unknown) =>
@@ -744,23 +766,28 @@ function AgentPickerStatusLine({
   if (!status) {
     return <span className="text-[11px] text-muted-foreground">version not checked</span>
   }
-  const version = status.version ? `v${status.version}` : "version unknown"
+  const version = status.version ? `v${status.version}` : "version unavailable"
   const suffix =
-    status.update_available === true
+    loading && status.latest_error
+      ? "checking update"
+      : status.update_available === true
       ? "update available"
       : status.update_available === false
         ? "latest"
         : status.latest_error
-          ? "latest unknown"
-          : "latest not checked"
+          ? "update check failed"
+          : status.latest_version
+            ? `latest v${status.latest_version}`
+            : "update not checked"
   return (
     <span
       className={cn(
         "max-w-full truncate text-[11px]",
-        status.update_available ? "text-warn-ink" : "text-muted-foreground",
+        status.update_available || status.latest_error ? "text-warn-ink" : "text-muted-foreground",
       )}
       title={[
         status.version_output,
+        status.version_error,
         status.latest_version ? `latest v${status.latest_version}` : "",
         status.latest_error,
       ]
