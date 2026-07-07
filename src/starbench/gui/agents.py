@@ -18,11 +18,15 @@ own loader so a spec the console accepts is a spec the CLI accepts.
 from __future__ import annotations
 
 import json
+import os
+import re
 import shlex
 import shutil
+import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from ..adapters import list_builtin, provider_filter_for_protocol
 from ..adapters.base import ProviderFilter, RuntimeInfo
@@ -33,6 +37,43 @@ from .data import SAFE_ID
 DEFAULT_RUNTIMES_DIR = Path(__file__).resolve().parents[3] / "runtimes"
 
 PROTOCOL_CHOICES = ("openai", "anthropic", "gemini", "none")
+
+CLI_VERSION_TIMEOUT_SECONDS = 3
+NPM_VIEW_TIMEOUT_SECONDS = 8
+INSTALL_TIMEOUT_SECONDS = 300
+
+
+def _npm_spec(package: str, docs_url: str = "") -> Dict[str, Any]:
+    return {
+        "manager": "npm",
+        "name": package,
+        "install_command": ["npm", "install", "-g", f"{package}@latest", "--no-fund", "--no-audit"],
+        "update_command": ["npm", "install", "-g", f"{package}@latest", "--no-fund", "--no-audit"],
+        "docs_url": docs_url,
+    }
+
+
+INSTALL_SPECS: Dict[str, Dict[str, Any]] = {
+    "claude": _npm_spec(
+        "@anthropic-ai/claude-code",
+        "https://docs.anthropic.com/en/docs/claude-code/setup",
+    ),
+    "codex": _npm_spec("@openai/codex", "https://developers.openai.com/codex/cli"),
+    "gemini": _npm_spec(
+        "@google/gemini-cli",
+        "https://github.com/google-gemini/gemini-cli",
+    ),
+    "grok": _npm_spec("@xai-official/grok", "https://www.npmjs.com/package/@xai-official/grok"),
+    "opencode": _npm_spec("opencode-ai", "https://opencode.ai/docs"),
+    "custom:qwen-code": _npm_spec(
+        "@qwen-code/qwen-code",
+        "https://qwenlm.github.io/qwen-code-docs/en/users/features/headless/",
+    ),
+    "custom:kimi-code": _npm_spec(
+        "@moonshot-ai/kimi-code",
+        "https://moonshotai.github.io/kimi-cli/en/customization/print-mode.html",
+    ),
+}
 
 
 def _provider_filter_dict(pf: ProviderFilter) -> Dict[str, Any]:
@@ -85,6 +126,180 @@ def _cli_probe(command: str) -> Dict[str, Any]:
         first = command.split()[0] if command.split() else ""
     path = shutil.which(first) if first else None
     return {"bin": first, "present": bool(path), "path": path}
+
+
+def _tail(text: str, limit: int = 2000) -> str:
+    text = text.strip()
+    return text[-limit:] if len(text) > limit else text
+
+
+def _run(command: Sequence[str], *, timeout: int) -> subprocess.CompletedProcess:
+    # Start from the host env so npm and user-installed CLIs can find their
+    # usual config, but keep terminal formatting deterministic.
+    env = os.environ.copy()
+    env.setdefault("NO_COLOR", "1")
+    env.setdefault("TERM", "dumb")
+    return subprocess.run(
+        list(command),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _extract_version(output: str) -> Optional[str]:
+    match = re.search(r"(?<![A-Za-z0-9])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", output)
+    if match:
+        return match.group(1)
+    match = re.search(r"(?<![A-Za-z0-9])v?(\d+\.\d+)(?![A-Za-z0-9])", output)
+    return match.group(1) if match else None
+
+
+def _version_key(version: str) -> tuple:
+    parts = [int(part) for part in re.findall(r"\d+", version.split("-", 1)[0])[:3]]
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _is_newer(latest: Optional[str], current: Optional[str]) -> Optional[bool]:
+    if not latest or not current:
+        return None
+    return _version_key(latest) > _version_key(current)
+
+
+def _local_version(cli: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    if not cli.get("present"):
+        return {"version": None, "version_output": None, "version_error": None}
+    command = [str(cli.get("path") or cli.get("bin")), "--version"]
+    try:
+        result = _run(command, timeout=CLI_VERSION_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "version": None,
+            "version_output": None,
+            "version_error": f"Could not read version: {error}",
+        }
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    version = _extract_version(output)
+    return {
+        "version": version,
+        "version_output": _tail(output, 500) or None,
+        "version_error": None if version else "Version output did not include a semver.",
+    }
+
+
+def _latest_npm_version(package: str) -> Dict[str, Optional[str]]:
+    checked_at = datetime.now(timezone.utc).isoformat()
+    if not shutil.which("npm"):
+        return {
+            "latest_version": None,
+            "latest_checked_at": checked_at,
+            "latest_error": "`npm` is not on PATH.",
+        }
+    try:
+        result = _run(["npm", "view", package, "version", "--silent"], timeout=NPM_VIEW_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {
+            "latest_version": None,
+            "latest_checked_at": checked_at,
+            "latest_error": f"Could not check npm registry: {error}",
+        }
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    if result.returncode != 0:
+        return {
+            "latest_version": None,
+            "latest_checked_at": checked_at,
+            "latest_error": _tail(output, 500) or f"npm exited with {result.returncode}.",
+        }
+    version = _extract_version(output)
+    return {
+        "latest_version": version,
+        "latest_checked_at": checked_at,
+        "latest_error": None if version else "npm did not return a semver.",
+    }
+
+
+def _runtime_targets(runtimes_dir: Path) -> List[Dict[str, str]]:
+    targets = [
+        {"id": agent["id"], "bin": agent["bin"]}
+        for agent in BUILTIN_AGENTS
+        if str(agent.get("bin") or "")
+    ]
+    if runtimes_dir.is_dir():
+        for path in sorted(runtimes_dir.glob("*.json")):
+            spec_id = path.stem
+            try:
+                spec = load_custom_runtime(runtimes_dir, spec_id)
+            except (ValueError, OSError):
+                continue
+            cli = _cli_probe(spec.command)
+            if cli["bin"]:
+                targets.append({"id": f"custom:{spec_id}", "bin": cli["bin"]})
+    return targets
+
+
+def agent_statuses(runtimes_dir: Path) -> "contracts.AgentStatusPayload":
+    statuses: Dict[str, Any] = {}
+    for target in _runtime_targets(runtimes_dir):
+        cli = _cli_probe(target["bin"])
+        version = _local_version(cli)
+        package = INSTALL_SPECS.get(target["id"])
+        latest = (
+            _latest_npm_version(package["name"])
+            if package and package.get("manager") == "npm"
+            else {"latest_version": None, "latest_checked_at": None, "latest_error": None}
+        )
+        statuses[target["id"]] = {
+            "id": target["id"],
+            "bin": cli["bin"],
+            "present": cli["present"],
+            "path": cli["path"],
+            **version,
+            "package": package,
+            **latest,
+            "update_available": _is_newer(latest.get("latest_version"), version.get("version")),
+            "installable": bool(package),
+        }
+    return {"statuses": statuses}
+
+
+def install_agent(agent_id: str) -> "contracts.AgentInstallResult":
+    package = INSTALL_SPECS.get(agent_id)
+    if not package:
+        raise AgentError(f"No built-in installer is available for {agent_id}.")
+    command = list(package["install_command"])
+    try:
+        result = _run(command, timeout=INSTALL_TIMEOUT_SECONDS)
+    except FileNotFoundError as error:
+        return {
+            "id": agent_id,
+            "command": command,
+            "status": "failed",
+            "exit_code": None,
+            "stdout_tail": "",
+            "stderr_tail": str(error),
+        }
+    except subprocess.TimeoutExpired as error:
+        return {
+            "id": agent_id,
+            "command": command,
+            "status": "failed",
+            "exit_code": None,
+            "stdout_tail": _tail(error.stdout or ""),
+            "stderr_tail": _tail(error.stderr or "Install timed out."),
+        }
+    return {
+        "id": agent_id,
+        "command": command,
+        "status": "installed" if result.returncode == 0 else "failed",
+        "exit_code": result.returncode,
+        "stdout_tail": _tail(result.stdout),
+        "stderr_tail": _tail(result.stderr),
+    }
 
 
 def _read_raw_spec(path: Path) -> Dict[str, Any]:
@@ -379,10 +594,13 @@ __all__ = [
     "BUILTIN_AGENTS",
     "BUILTIN_IDS",
     "DEFAULT_RUNTIMES_DIR",
+    "INSTALL_SPECS",
     "PROTOCOL_CHOICES",
+    "agent_statuses",
     "agent_templates",
     "delete_custom_agent",
     "get_custom_agent",
+    "install_agent",
     "list_agents",
     "save_custom_agent",
 ]

@@ -32,6 +32,8 @@ RuntimeProtocol = Literal["openai", "anthropic", "gemini", "xai", "none"]
 AuthKind = Literal["api_key", "cli_login"]
 ModelsSource = Literal["api", "catalog", "cli_cache"]
 CliAuthStatusKind = Literal["ok", "api_key", "warn", "fail", "unknown"]
+PackageManager = Literal["npm"]
+AgentInstallStatusKind = Literal["installed", "failed"]
 # How --thinking-effort reaches a runtime: a real reasoning switch on the CLI
 # itself, or a prompt-level instruction.
 ThinkingChannel = Literal["native_config", "prompt"]
@@ -47,6 +49,43 @@ class RuntimeCli(TypedDict):
     bin: str
     present: bool
     path: Optional[str]
+
+
+class AgentPackage(TypedDict):
+    manager: PackageManager
+    name: str
+    install_command: List[str]
+    update_command: List[str]
+    docs_url: str
+
+
+class AgentRuntimeStatus(TypedDict):
+    id: str
+    bin: str
+    present: bool
+    path: Optional[str]
+    version: Optional[str]
+    version_output: Optional[str]
+    version_error: Optional[str]
+    package: Optional[AgentPackage]
+    latest_version: Optional[str]
+    latest_checked_at: Optional[str]
+    latest_error: Optional[str]
+    update_available: Optional[bool]
+    installable: bool
+
+
+class AgentStatusPayload(TypedDict):
+    statuses: Dict[str, AgentRuntimeStatus]
+
+
+class AgentInstallResult(TypedDict):
+    id: str
+    command: List[str]
+    status: AgentInstallStatusKind
+    exit_code: Optional[int]
+    stdout_tail: str
+    stderr_tail: str
 
 
 class ProviderFilter(TypedDict):
@@ -281,9 +320,15 @@ GENERATED_TYPES = [
     "AuthKind",
     "ModelsSource",
     "CliAuthStatusKind",
+    "PackageManager",
+    "AgentInstallStatusKind",
     "ThinkingChannel",
     "WebSearchMode",
     "RuntimeCli",
+    "AgentPackage",
+    "AgentRuntimeStatus",
+    "AgentStatusPayload",
+    "AgentInstallResult",
     "ProviderFilter",
     "BuiltinRuntime",
     "CustomRuntime",

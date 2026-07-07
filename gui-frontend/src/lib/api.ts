@@ -5,6 +5,9 @@
    local use and re-export them so consumers keep importing from "@/lib/api". */
 import type {
   AgentsPayload,
+  AgentInstallResult,
+  AgentRuntimeStatus,
+  AgentStatusPayload,
   AiProvider,
   AuthKind,
   BuiltinRuntime,
@@ -27,6 +30,9 @@ import type {
 
 export type {
   AgentsPayload,
+  AgentInstallResult,
+  AgentRuntimeStatus,
+  AgentStatusPayload,
   AiProvider,
   AuthKind,
   BuiltinRuntime,
@@ -506,6 +512,7 @@ export const api = {
       `/api/preflight?${new URLSearchParams(params).toString()}`,
     ),
   agents: () => request<AgentsPayload>("/api/agents"),
+  agentStatus: () => request<AgentStatusPayload>("/api/agents/status"),
   agentTemplates: () => request<{ templates: AgentTemplate[] }>("/api/agents/templates"),
   skills: () => request<SkillsPayload>("/api/skills"),
   saveAgent: (payload: CustomRuntimePayload) =>
@@ -519,6 +526,12 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
+    }),
+  installAgent: (agentId: string) =>
+    request<AgentInstallResult>("/api/agents/install", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_id: agentId }),
     }),
   providers: () => request<ProvidersPayload>("/api/providers"),
   providerCliStatus: () => request<ProviderCliStatusPayload>("/api/providers/cli-status"),

@@ -5,11 +5,13 @@ import {
   AlertTriangle,
   CheckCircle2,
   Container,
+  DownloadCloud,
   ExternalLink,
   Info,
   Laptop,
   Pencil,
   Plus,
+  RefreshCw,
   Trash2,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
@@ -40,6 +42,7 @@ import { ErrorNote } from "@/pages/Dashboard"
 import {
   api,
   type AgentTemplate,
+  type AgentRuntimeStatus,
   type AiProvider,
   type BuiltinRuntime,
   type CustomRuntime,
@@ -64,6 +67,12 @@ const PARSER_NOTES: Record<string, string> = {
 export default function Agents() {
   const queryClient = useQueryClient()
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
+  const agentStatusQuery = useQuery({
+    queryKey: ["agent-status"],
+    queryFn: api.agentStatus,
+    enabled: agentsQuery.isSuccess,
+    retry: false,
+  })
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const templatesQuery = useQuery({
     queryKey: ["agent-templates"],
@@ -73,12 +82,32 @@ export default function Agents() {
   const [editing, setEditing] = useState<Draft | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [details, setDetails] = useState<BuiltinRuntime | null>(null)
+  const [installingId, setInstallingId] = useState<string | null>(null)
 
   if (agentsQuery.isPending) return <Skeleton className="h-96" />
   if (agentsQuery.isError) return <ErrorNote message={(agentsQuery.error as Error).message} />
   const payload = agentsQuery.data
   const providers = providersQuery.data?.providers ?? []
   const templates = templatesQuery.data?.templates ?? []
+  const statuses = agentStatusQuery.data?.statuses ?? {}
+
+  const installAgent = async (agentId: string, label: string) => {
+    setInstallingId(agentId)
+    try {
+      const result = await api.installAgent(agentId)
+      if (result.status === "installed") {
+        toast.success(`${label} installed.`)
+      } else {
+        toast.error(`${label} install failed${result.stderr_tail ? `: ${result.stderr_tail}` : "."}`)
+      }
+      queryClient.invalidateQueries({ queryKey: ["agents"] })
+      queryClient.invalidateQueries({ queryKey: ["agent-status"] })
+    } catch (error) {
+      toast.error((error as Error).message)
+    } finally {
+      setInstallingId(null)
+    }
+  }
 
   const removeAgent = async (agent: CustomRuntime) => {
     try {
@@ -101,7 +130,16 @@ export default function Agents() {
           </p>
         </div>
         <Button
-          className="ml-auto"
+          variant="outline"
+          className="ml-auto gap-1.5"
+          onClick={() => agentStatusQuery.refetch()}
+          disabled={agentStatusQuery.isFetching}
+        >
+          <RefreshCw className={cn("size-4", agentStatusQuery.isFetching && "animate-spin")} />
+          Check updates
+        </Button>
+        <Button
+          className="gap-1.5"
           onClick={() => {
             setIsNew(true)
             setEditing(emptyDraft())
@@ -122,6 +160,10 @@ export default function Agents() {
             providerCount={compatibleProviders(agent.provider_filter, providers, agent.id).length}
             dockerImage={agent.docker_image}
             cli={agent.cli}
+            status={statuses[agent.id]}
+            statusLoading={agentStatusQuery.isPending || agentStatusQuery.isFetching}
+            installing={installingId === agent.id}
+            onInstall={() => installAgent(agent.id, agent.label)}
             actionLabel={`About ${agent.label}`}
             actionIcon="details"
             onAction={() => setDetails(agent)}
@@ -152,6 +194,10 @@ export default function Agents() {
               providerCount={compatibleProviders(agent.provider_filter, providers, agent.id).length}
               dockerImage={agent.docker_image}
               cli={agent.cli}
+              status={statuses[agent.id]}
+              statusLoading={agentStatusQuery.isPending || agentStatusQuery.isFetching}
+              installing={installingId === agent.id}
+              onInstall={() => installAgent(agent.id, agent.label ?? agent.spec_id)}
               actionLabel={`Edit ${agent.label ?? agent.spec_id}`}
               actionIcon="edit"
               onAction={() => {
@@ -166,6 +212,13 @@ export default function Agents() {
       <BuiltinDetails
         agent={details}
         providers={providers}
+        status={details ? statuses[details.id] : undefined}
+        installing={details ? installingId === details.id : false}
+        onInstall={
+          details
+            ? () => installAgent(details.id, details.label)
+            : undefined
+        }
         onClose={() => setDetails(null)}
       />
 
@@ -216,6 +269,10 @@ function RuntimeCard({
   providerCount,
   dockerImage,
   cli,
+  status,
+  statusLoading,
+  installing,
+  onInstall,
   actionIcon,
   actionLabel,
   onAction,
@@ -228,18 +285,24 @@ function RuntimeCard({
   providerCount: number
   dockerImage?: string | null
   cli?: { bin: string; present: boolean; path: string | null }
+  status?: AgentRuntimeStatus
+  statusLoading?: boolean
+  installing?: boolean
+  onInstall?: () => void
   actionIcon: "edit" | "details"
   actionLabel: string
   onAction: () => void
 }) {
   const ownLogin = protocol === "none"
+  const showInstall = status?.installable && status.present === false
+  const showUpdate = status?.installable && status.update_available === true
   return (
     <Card className="py-4">
       <CardContent className="grid gap-2.5 px-4">
         <div className="flex items-center gap-2.5">
           <AgentIcon agent={agentId} icon={icon} size={22} />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold">{label}</span>
-          <CliBadge cli={cli} />
+          <CliBadge cli={status ?? cli} />
         </div>
         <div className="grid gap-1 text-xs text-muted-foreground">
           <span className="truncate" title={description}>
@@ -254,13 +317,33 @@ function RuntimeCard({
                   : "no provider configured"
               }`}
           </span>
+          <VersionLine status={status} loading={statusLoading} />
         </div>
         <div className="flex items-center gap-1.5">
           <IsolationBadge dockerImage={dockerImage} />
+          {(showInstall || showUpdate) && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="ml-auto h-7 gap-1.5 text-xs"
+              title={status?.package ? status.package.install_command.join(" ") : undefined}
+              disabled={installing}
+              onClick={onInstall}
+            >
+              {installing ? (
+                <RefreshCw className="size-3.5 animate-spin" />
+              ) : showUpdate ? (
+                <RefreshCw className="size-3.5" />
+              ) : (
+                <DownloadCloud className="size-3.5" />
+              )}
+              {showUpdate ? "Update" : "Install"}
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
-            className="ml-auto size-7"
+            className={cn("size-7", !(showInstall || showUpdate) && "ml-auto")}
             aria-label={actionLabel}
             title={actionLabel}
             onClick={onAction}
@@ -280,10 +363,16 @@ function RuntimeCard({
 function BuiltinDetails({
   agent,
   providers,
+  status,
+  installing,
+  onInstall,
   onClose,
 }: {
   agent: BuiltinRuntime | null
   providers: AiProvider[]
+  status?: AgentRuntimeStatus
+  installing?: boolean
+  onInstall?: () => void
   onClose: () => void
 }) {
   return (
@@ -318,11 +407,40 @@ function BuiltinDetails({
               </DetailRow>
               <DetailRow label="CLI">
                 <span className="font-mono text-xs">
-                  {agent.cli.present
-                    ? (agent.cli.path ?? agent.cli.bin)
-                    : `\`${agent.cli.bin}\` not found on PATH`}
+                  {(status ?? agent.cli).present
+                    ? ((status ?? agent.cli).path ?? (status ?? agent.cli).bin)
+                    : `\`${(status ?? agent.cli).bin}\` not found on PATH`}
                 </span>
               </DetailRow>
+              <DetailRow label="Version">
+                <VersionLine status={status} />
+              </DetailRow>
+              {status?.package && (
+                <DetailRow label="Install">
+                  <div className="grid gap-2">
+                    <code className="break-all rounded bg-muted px-1.5 py-1 font-mono text-xs">
+                      {status.package.install_command.join(" ")}
+                    </code>
+                    {(!status.present || status.update_available === true) && (
+                      <Button
+                        size="sm"
+                        className="w-fit gap-1.5"
+                        disabled={installing}
+                        onClick={onInstall}
+                      >
+                        {installing ? (
+                          <RefreshCw className="size-3.5 animate-spin" />
+                        ) : status.update_available === true ? (
+                          <RefreshCw className="size-3.5" />
+                        ) : (
+                          <DownloadCloud className="size-3.5" />
+                        )}
+                        {status.update_available === true ? "Update CLI" : "Install CLI"}
+                      </Button>
+                    )}
+                  </div>
+                </DetailRow>
+              )}
             </dl>
           </>
         )}
@@ -355,8 +473,71 @@ function IsolationBadge({ dockerImage }: { dockerImage?: string | null }) {
   )
 }
 
-function CliBadge({ cli }: { cli?: { bin: string; present: boolean; path: string | null } }) {
+function VersionLine({
+  status,
+  loading,
+}: {
+  status?: AgentRuntimeStatus
+  loading?: boolean
+}) {
+  if (loading && !status) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px]">
+        <RefreshCw className="size-3 animate-spin" /> checking versions
+      </span>
+    )
+  }
+  if (!status) return <span className="text-[11px]">version not checked</span>
+  if (!status.present) {
+    return (
+      <span className="text-[11px]">
+        not installed
+        {status.package ? ` · ${status.package.manager} package ${status.package.name}` : ""}
+      </span>
+    )
+  }
+  const local = status.version ? `v${status.version}` : "version unknown"
+  const latest = status.latest_version ? `latest v${status.latest_version}` : null
+  const update = status.update_available === true
+  return (
+    <span
+      className={cn(
+        "truncate text-[11px]",
+        update ? "text-warn-ink" : "text-muted-foreground",
+      )}
+      title={[
+        status.version_output,
+        status.version_error,
+        status.latest_error,
+        status.package?.update_command.join(" "),
+      ]
+        .filter(Boolean)
+        .join("\n")}
+    >
+      {local}
+      {latest ? ` · ${latest}` : ""}
+      {update ? " · update available" : ""}
+      {status.latest_error ? " · update check failed" : ""}
+    </span>
+  )
+}
+
+function CliBadge({
+  cli,
+}: {
+  cli?: { bin: string; present: boolean; path: string | null; update_available?: boolean | null }
+}) {
   if (!cli) return null
+  if (cli.present && cli.update_available === true) {
+    return (
+      <Badge
+        className="gap-1 border-transparent bg-warn-soft text-[11px] text-warn-ink"
+        title={cli.path ?? undefined}
+      >
+        <RefreshCw className="size-3" /> update
+      </Badge>
+    )
+  }
   return cli.present ? (
     <Badge
       className="gap-1 border-transparent bg-pass-soft text-[11px] text-pass-ink"

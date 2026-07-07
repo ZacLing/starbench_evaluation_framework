@@ -12,6 +12,10 @@ export type ModelsSource = "api" | "catalog" | "cli_cache"
 
 export type CliAuthStatusKind = "ok" | "api_key" | "warn" | "fail" | "unknown"
 
+export type PackageManager = "npm"
+
+export type AgentInstallStatusKind = "installed" | "failed"
+
 export type ThinkingChannel = "native_config" | "prompt"
 
 export type WebSearchMode = "task" | "allow" | "deny"
@@ -20,6 +24,43 @@ export interface RuntimeCli {
   bin: string
   present: boolean
   path: string | null
+}
+
+export interface AgentPackage {
+  manager: "npm"
+  name: string
+  install_command: string[]
+  update_command: string[]
+  docs_url: string
+}
+
+export interface AgentRuntimeStatus {
+  id: string
+  bin: string
+  present: boolean
+  path: string | null
+  version: string | null
+  version_output: string | null
+  version_error: string | null
+  package: AgentPackage | null
+  latest_version: string | null
+  latest_checked_at: string | null
+  latest_error: string | null
+  update_available: boolean | null
+  installable: boolean
+}
+
+export interface AgentStatusPayload {
+  statuses: Record<string, AgentRuntimeStatus>
+}
+
+export interface AgentInstallResult {
+  id: string
+  command: string[]
+  status: "installed" | "failed"
+  exit_code: number | null
+  stdout_tail: string
+  stderr_tail: string
 }
 
 export interface ProviderFilter {

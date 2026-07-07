@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -142,6 +143,58 @@ class AgentRegistryTest(unittest.TestCase):
         # the image; OPENAI_* env vars override its endpoint and key.
         self.assertEqual(by_id["kimi-code"]["docker"]["image"], "starbench-kimi:latest")
         self.assertEqual(by_id["kimi-code"]["protocol"], "openai")
+
+    def test_agent_status_reports_versions_and_updates(self) -> None:
+        original_which = agents.shutil.which
+        original_run = agents._run
+
+        def fake_which(name: str):
+            if name in {"codex", "npm"}:
+                return f"/bin/{name}"
+            return None
+
+        def fake_run(command, *, timeout):
+            if command[:2] == ["/bin/codex", "--version"]:
+                return subprocess.CompletedProcess(command, 0, "codex 0.141.0\n", "")
+            if command[:3] == ["npm", "view", "@openai/codex"]:
+                return subprocess.CompletedProcess(command, 0, "0.142.5\n", "")
+            return subprocess.CompletedProcess(command, 1, "", "not found")
+
+        agents.shutil.which = fake_which
+        agents._run = fake_run
+        try:
+            status = agents.agent_statuses(self.runtimes_dir)["statuses"]["codex"]
+        finally:
+            agents.shutil.which = original_which
+            agents._run = original_run
+
+        self.assertTrue(status["present"])
+        self.assertEqual(status["version"], "0.141.0")
+        self.assertEqual(status["latest_version"], "0.142.5")
+        self.assertTrue(status["update_available"])
+        self.assertEqual(status["package"]["name"], "@openai/codex")
+
+    def test_install_agent_uses_whitelisted_command(self) -> None:
+        original_run = agents._run
+        calls = []
+
+        def fake_run(command, *, timeout):
+            calls.append((list(command), timeout))
+            return subprocess.CompletedProcess(command, 0, "installed\n", "")
+
+        agents._run = fake_run
+        try:
+            result = agents.install_agent("custom:qwen-code")
+        finally:
+            agents._run = original_run
+
+        self.assertEqual(result["status"], "installed")
+        self.assertEqual(calls[0][0][:4], ["npm", "install", "-g", "@qwen-code/qwen-code@latest"])
+        self.assertEqual(calls[0][1], agents.INSTALL_TIMEOUT_SECONDS)
+
+    def test_install_agent_rejects_unknown_runtime(self) -> None:
+        with self.assertRaisesRegex(agents.AgentError, "No built-in installer"):
+            agents.install_agent("custom:unknown")
 
     def test_launcher_accepts_custom_agents(self) -> None:
         tasks_dir = self.tmp / "tasks"

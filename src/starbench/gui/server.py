@@ -159,6 +159,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 self._handle_save_providers()
             elif segments == ["api", "agents"]:
                 self._handle_save_agent()
+            elif segments == ["api", "agents", "install"]:
+                self._handle_install_agent()
             elif (
                 len(segments) == 4
                 and segments[:2] == ["api", "agents"]
@@ -229,6 +231,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json({"checks": self._preflight(first)})
         elif segments == ["agents"]:
             self._send_json(agents.list_agents(state.runtimes_dir))
+        elif segments == ["agents", "status"]:
+            self._send_json(agents.agent_statuses(state.runtimes_dir))
         elif segments == ["agents", "templates"]:
             self._send_json({"templates": agents.agent_templates()})
         elif segments == ["skills"]:
@@ -415,6 +419,15 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         self._send_json(
             agents.save_custom_agent(self.state.runtimes_dir, payload), HTTPStatus.CREATED
         )
+
+    def _handle_install_agent(self) -> None:
+        payload = self._read_body()
+        if payload is None:
+            raise AgentError("Request body must be a JSON object.")
+        agent_id = str(payload.get("agent_id") or "").strip()
+        if not agent_id:
+            raise AgentError("`agent_id` is required.")
+        self._send_json(agents.install_agent(agent_id))
 
     def _handle_register_tasks_dir(self) -> None:
         payload = self._read_body()
