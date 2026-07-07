@@ -9,6 +9,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  DownloadCloud,
   FolderSearch,
   Loader2,
   Plus,
@@ -137,6 +138,11 @@ export default function NewRun() {
     () => (agentsQuery.data?.custom ?? []).filter((agent) => !agent.error),
     [agentsQuery.data],
   )
+  const builtinCliPresent = useMemo(() => {
+    const map: Record<string, boolean> = {}
+    for (const agent of agentsQuery.data?.builtin ?? []) map[agent.id] = agent.cli.present
+    return map
+  }, [agentsQuery.data])
   const customByRuntime = useMemo(() => {
     const map: Record<string, CustomRuntime> = {}
     for (const agent of customRuntimes) map[agent.id] = agent
@@ -198,6 +204,7 @@ export default function NewRun() {
   const [perFields, setPerFields] = useState<string[]>(["model"])
   const [expName, setExpName] = useState(() => timestampName("exp"))
   const [preflightBlocked, setPreflightBlocked] = useState(false)
+  const [installingAgentId, setInstallingAgentId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!profilesQuery.data || profileId !== null) return
@@ -240,6 +247,27 @@ export default function NewRun() {
       },
     ])
   }
+
+  const installAgent = useCallback(
+    async (agentId: string, label: string) => {
+      setInstallingAgentId(agentId)
+      try {
+        const result = await api.installAgent(agentId)
+        if (result.status === "installed") {
+          toast.success(`${label} installed.`)
+        } else {
+          toast.error(`${label} install failed${result.stderr_tail ? `: ${result.stderr_tail}` : "."}`)
+        }
+        queryClient.invalidateQueries({ queryKey: ["agents"] })
+        queryClient.invalidateQueries({ queryKey: ["agent-status"] })
+      } catch (error) {
+        toast.error((error as Error).message)
+      } finally {
+        setInstallingAgentId(null)
+      }
+    },
+    [queryClient],
+  )
 
   const updateContender = (key: string, patch: Partial<ContenderDraft>) =>
     setContenders((current) =>
@@ -394,8 +422,10 @@ export default function NewRun() {
           providers={providers}
           customRuntimes={customRuntimes}
           customByRuntime={customByRuntime}
+          builtinCliPresent={builtinCliPresent}
           agentStatuses={agentStatuses}
           statusLoading={agentStatusQuery.isPending || agentStatusQuery.isFetching}
+          installingAgentId={installingAgentId}
           dockerCapable={dockerCapable}
           filterFor={filterFor}
           thinkingChannelFor={thinkingChannelFor}
@@ -403,6 +433,8 @@ export default function NewRun() {
           contenders={contenders}
           backend={String(shared.executor_backend ?? "local")}
           onAdd={addContender}
+          onInstall={installAgent}
+          onSetup={() => navigate("/agents")}
           onUpdate={updateContender}
           onRemove={(key) =>
             setContenders((current) => current.filter((item) => item.key !== key))
@@ -744,8 +776,10 @@ function StepContenders({
   providers,
   customRuntimes,
   customByRuntime,
+  builtinCliPresent,
   agentStatuses,
   statusLoading,
+  installingAgentId,
   dockerCapable,
   filterFor,
   thinkingChannelFor,
@@ -753,14 +787,18 @@ function StepContenders({
   contenders,
   backend,
   onAdd,
+  onInstall,
+  onSetup,
   onUpdate,
   onRemove,
 }: {
   providers: AiProvider[]
   customRuntimes: CustomRuntime[]
   customByRuntime: Record<string, CustomRuntime>
+  builtinCliPresent: Record<string, boolean>
   agentStatuses: Record<string, AgentRuntimeStatus>
   statusLoading: boolean
+  installingAgentId: string | null
   dockerCapable: (runtime: string) => boolean
   filterFor: (runtime: string) => ProviderFilter | undefined
   thinkingChannelFor: (runtime: string) => string
@@ -768,6 +806,8 @@ function StepContenders({
   contenders: ContenderDraft[]
   backend: string
   onAdd: (runtime: string) => void
+  onInstall: (runtime: string, label: string) => void
+  onSetup: (runtime: string) => void
   onUpdate: (key: string, patch: Partial<ContenderDraft>) => void
   onRemove: (key: string) => void
 }) {
@@ -776,6 +816,7 @@ function StepContenders({
       id: runtime,
       label: AGENT_LABELS[runtime],
       note: AGENT_NOTES[runtime],
+      cliMissing: builtinCliPresent[runtime] === false,
     })),
     ...customRuntimes.map((agent) => ({
       id: agent.id,
@@ -803,12 +844,62 @@ function StepContenders({
           </div>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
             {options.map((option) => {
+              const status = agentStatuses[option.id]
+              const missing = status?.present === false || option.cliMissing === true
+              const checkingMissingInstaller = missing && statusLoading && !status
+              const installable = missing && status?.installable === true
+              const installing = installingAgentId === option.id
+              const actionLabel = missing
+                ? checkingMissingInstaller
+                  ? "Checking"
+                  : installable
+                    ? "Install"
+                    : "Setup guide"
+                : "Add"
+              const actionIcon = installing ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : missing ? (
+                installable ? (
+                  <DownloadCloud className="size-3" />
+                ) : checkingMissingInstaller ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  <ArrowRight className="size-3" />
+                )
+              ) : (
+                <Plus className="size-3" />
+              )
+              const disabled = installing || checkingMissingInstaller
               return (
                 <button
                   key={option.id}
                   type="button"
-                  onClick={() => onAdd(option.id)}
-                  className="grid justify-items-center gap-1.5 rounded-md border p-3 text-center transition-colors hover:border-primary/50 hover:bg-accent/40"
+                  disabled={disabled}
+                  aria-label={`${actionLabel} ${option.label}`}
+                  title={
+                    missing
+                      ? installable && status?.package
+                        ? status.package.install_command.join(" ")
+                        : "Open Agents to configure this runtime."
+                      : `Add ${option.label}`
+                  }
+                  onClick={() => {
+                    if (missing) {
+                      if (installable) {
+                        onInstall(option.id, option.label)
+                      } else {
+                        onSetup(option.id)
+                      }
+                      return
+                    }
+                    onAdd(option.id)
+                  }}
+                  className={cn(
+                    "grid justify-items-center gap-1.5 rounded-md border p-3 text-center transition-colors disabled:cursor-progress",
+                    missing
+                      ? "border-warn-ink/25 bg-warn-soft/20 hover:border-warn-ink/40 hover:bg-warn-soft/30"
+                      : "hover:border-primary/50 hover:bg-accent/40",
+                  )}
                 >
                   <AgentIcon agent={option.id} icon={option.icon} size={26} />
                   <span className="text-sm font-medium">{option.label}</span>
@@ -829,7 +920,7 @@ function StepContenders({
                     </span>
                   )}
                   <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary">
-                    <Plus className="size-3" /> Add
+                    {actionIcon} {installing ? "Installing" : actionLabel}
                   </span>
                 </button>
               )
