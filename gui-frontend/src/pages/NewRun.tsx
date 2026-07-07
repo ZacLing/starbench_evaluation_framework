@@ -123,6 +123,7 @@ export default function NewRun() {
     () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
     [tasklib.data],
   )
+  const recentLibraryDir = libraries[libraries.length - 1]?.dir
   const providers = providersQuery.data?.providers ?? []
   const customRuntimes = useMemo(
     () => (agentsQuery.data?.custom ?? []).filter((agent) => !agent.error),
@@ -476,6 +477,7 @@ export default function NewRun() {
       <DirectoryPickerDialog
         open={pickerOpen}
         onOpenChange={setPickerOpen}
+        initialPath={recentLibraryDir}
         title="Choose a task folder"
         description="Pick a folder that contains task packages."
         onSelect={async (path) => {

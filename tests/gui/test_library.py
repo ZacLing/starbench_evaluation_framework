@@ -156,9 +156,11 @@ class LibraryBrowseAndDetailTest(unittest.TestCase):
         self.assertIn("tasks", names)
         self.assertEqual(names["tasks"]["task_count"], 1)
 
-    def test_browse_outside_allowed_roots_rejected(self) -> None:
-        with self.assertRaises(LibraryError):
-            library.browse_directories("/etc", cwd=self.tmp)
+    def test_browse_allows_directories_outside_home_and_cwd(self) -> None:
+        expected = Path("/etc").resolve()
+        listing = library.browse_directories("/etc", cwd=self.tmp)
+        self.assertEqual(listing["path"], str(expected))
+        self.assertEqual(listing["parent"], str(expected.parent))
 
     def test_task_detail_returns_prompt_and_rubrics(self) -> None:
         detail = library.task_package_detail(self.tasks_dir, "demo")

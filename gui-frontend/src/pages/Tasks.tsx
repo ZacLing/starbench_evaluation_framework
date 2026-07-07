@@ -34,6 +34,7 @@ export default function Tasks() {
 
   const libraries = tasklib.data.libraries.filter((library) => library.exists)
   const importTarget = libraries[0]?.dir
+  const recentLibraryDir = libraries[libraries.length - 1]?.dir
 
   return (
     <div className="grid gap-6">
@@ -131,6 +132,7 @@ export default function Tasks() {
       <DirectoryPickerDialog
         open={pickerOpen}
         onOpenChange={setPickerOpen}
+        initialPath={recentLibraryDir}
         title="Add a task folder"
         description="Pick a folder that contains task packages (each with its own task.json)."
         onSelect={async (path) => {

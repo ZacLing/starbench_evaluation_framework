@@ -36,28 +36,12 @@ class LibraryError(ValueError):
 # Directory browsing (server-side folder picker)
 # ---------------------------------------------------------------------------
 
-def _allowed_roots(cwd: Path) -> List[Path]:
-    return [Path.home().resolve(), cwd.resolve()]
-
-
-def _is_allowed(path: Path, cwd: Path) -> bool:
-    for root in _allowed_roots(cwd):
-        try:
-            path.relative_to(root)
-            return True
-        except ValueError:
-            continue
-    return False
-
-
 def browse_directories(raw_path: Optional[str], *, cwd: Path) -> Dict[str, Any]:
     path = Path(raw_path).expanduser() if raw_path else Path.home()
     try:
         path = path.resolve()
     except OSError:
         raise LibraryError(f"Cannot resolve path: {raw_path}")
-    if not _is_allowed(path, cwd):
-        raise LibraryError("Browsing is limited to your home directory and the working directory.")
     if not path.is_dir():
         raise LibraryError(f"Not a directory: {path}")
 
@@ -87,7 +71,7 @@ def browse_directories(raw_path: Optional[str], *, cwd: Path) -> Dict[str, Any]:
             }
         )
 
-    parent = path.parent if path != path.parent and _is_allowed(path.parent, cwd) else None
+    parent = path.parent if path != path.parent else None
     return {
         "path": str(path),
         "parent": str(parent) if parent else None,
