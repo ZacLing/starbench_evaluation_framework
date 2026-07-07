@@ -739,7 +739,7 @@ function AgentPickerStatusLine({
     )
   }
   if (status?.present === false || cliMissing) {
-    return <span className="text-[11px] text-warn-ink">CLI missing</span>
+    return <span className="text-[11px] text-muted-foreground">CLI missing</span>
   }
   if (!status) {
     return <span className="text-[11px] text-muted-foreground">version not checked</span>
@@ -845,44 +845,45 @@ function StepContenders({
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
             {options.map((option) => {
               const status = agentStatuses[option.id]
-              const missing = status?.present === false || option.cliMissing === true
-              const checkingMissingInstaller = missing && statusLoading && !status
+              const checking = statusLoading && !status
+              const missing = !checking && (status?.present === false || option.cliMissing === true)
               const installable = missing && status?.installable === true
               const installing = installingAgentId === option.id
-              const actionLabel = missing
-                ? checkingMissingInstaller
-                  ? "Checking"
-                  : installable
+              const actionLabel = checking
+                ? "Checking"
+                : missing
+                  ? installable
                     ? "Install"
                     : "Setup guide"
-                : "Add"
+                  : "Add"
               const actionIcon = installing ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : checking ? (
                 <Loader2 className="size-3 animate-spin" />
               ) : missing ? (
                 installable ? (
                   <DownloadCloud className="size-3" />
-                ) : checkingMissingInstaller ? (
-                  <Loader2 className="size-3 animate-spin" />
                 ) : (
                   <ArrowRight className="size-3" />
                 )
               ) : (
                 <Plus className="size-3" />
               )
-              const disabled = installing || checkingMissingInstaller
+              const disabled = installing || checking
+              const actionTitle = checking
+                ? "Checking the local CLI before this runtime can be added."
+                : missing
+                  ? installable && status?.package
+                    ? status.package.install_command.join(" ")
+                    : "Open Agents to configure this runtime."
+                  : `Add ${option.label}`
               return (
                 <button
                   key={option.id}
                   type="button"
                   disabled={disabled}
                   aria-label={`${actionLabel} ${option.label}`}
-                  title={
-                    missing
-                      ? installable && status?.package
-                        ? status.package.install_command.join(" ")
-                        : "Open Agents to configure this runtime."
-                      : `Add ${option.label}`
-                  }
+                  title={actionTitle}
                   onClick={() => {
                     if (missing) {
                       if (installable) {
@@ -895,10 +896,10 @@ function StepContenders({
                     onAdd(option.id)
                   }}
                   className={cn(
-                    "grid justify-items-center gap-1.5 rounded-md border p-3 text-center transition-colors disabled:cursor-progress",
+                    "group grid justify-items-center gap-1.5 rounded-md border p-3 text-center transition-[background-color,border-color,color,transform] disabled:cursor-wait disabled:hover:translate-y-0",
                     missing
-                      ? "border-warn-ink/25 bg-warn-soft/20 hover:border-warn-ink/40 hover:bg-warn-soft/30"
-                      : "hover:border-primary/50 hover:bg-accent/40",
+                      ? "border-border bg-muted/35 text-muted-foreground hover:-translate-y-0.5 hover:border-primary/35 hover:bg-muted/55 hover:text-foreground"
+                      : "hover:-translate-y-0.5 hover:border-primary/50 hover:bg-accent/40",
                   )}
                 >
                   <AgentIcon agent={option.id} icon={option.icon} size={26} />
@@ -919,7 +920,12 @@ function StepContenders({
                       local execution
                     </span>
                   )}
-                  <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary">
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-flex items-center gap-1 text-xs",
+                      missing ? "text-muted-foreground group-hover:text-primary" : "text-primary",
+                    )}
+                  >
                     {actionIcon} {installing ? "Installing" : actionLabel}
                   </span>
                 </button>
