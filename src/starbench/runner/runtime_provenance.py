@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from .. import __version__ as starbench_version
 from ..adapters.base import RuntimeAdapter
+from ..execution.probe import extract_version, run_probe, tail
 from ..execution.process import split_command
 from .custom_runtime import CustomRuntimeSpec
 
@@ -28,19 +28,6 @@ DOCKER_INSPECT_TIMEOUT_SECONDS = 3
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def _tail(text: str, limit: int = 2000) -> str:
-    text = text.strip()
-    return text[-limit:] if len(text) > limit else text
-
-
-def _extract_version(output: str) -> Optional[str]:
-    match = re.search(r"(?<![A-Za-z0-9])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", output)
-    if match:
-        return match.group(1)
-    match = re.search(r"(?<![A-Za-z0-9])v?(\d+\.\d+)(?![A-Za-z0-9])", output)
-    return match.group(1) if match else None
 
 
 def _command_parts(command: str) -> list[str]:
@@ -75,29 +62,23 @@ def _probe_local_cli(command: str, base_env: Dict[str, str]) -> Dict[str, Any]:
         result["cli_version_error"] = f"`{cli_bin}` not found on PATH."
         return result
 
-    env = dict(base_env)
-    env.setdefault("NO_COLOR", "1")
-    env.setdefault("TERM", "dumb")
+    # run_probe forces NO_COLOR/TERM on top of base_env: provenance must
+    # describe the runner's environment, but the version text itself has to
+    # stay free of ANSI escapes regardless of the terminal that launched us.
     try:
-        completed = subprocess.run(
-            [cli_path, "--version"],
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=VERSION_TIMEOUT_SECONDS,
+        completed = run_probe(
+            [cli_path, "--version"], timeout=VERSION_TIMEOUT_SECONDS, env=base_env
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         result["cli_version_error"] = f"Could not read version: {error}"
         return result
 
     output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
-    version = _extract_version(output)
+    version = extract_version(output)
     result["cli_version"] = version
-    result["cli_version_output"] = _tail(output, 500) or None
+    result["cli_version_output"] = tail(output, 500) or None
     if version is None:
-        detail = _tail(output, 500) or f"exit code {completed.returncode}"
+        detail = tail(output, 500) or f"exit code {completed.returncode}"
         result["cli_version_error"] = f"Version output did not include a semver: {detail}"
     return result
 
@@ -135,7 +116,7 @@ def _docker_image_provenance(
 
     output = "\n".join(part for part in (completed.stdout, completed.stderr) if part).strip()
     if completed.returncode != 0:
-        result["docker_image_error"] = _tail(output, 500) or f"docker image inspect exited with {completed.returncode}."
+        result["docker_image_error"] = tail(output, 500) or f"docker image inspect exited with {completed.returncode}."
         return result
     try:
         payload = json.loads(completed.stdout)

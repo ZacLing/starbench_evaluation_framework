@@ -24,11 +24,14 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..execution.probe import run_probe
 from . import contracts
 from .data import SAFE_ID, _read_json
 
@@ -191,6 +194,13 @@ class ProviderError(ValueError):
     pass
 
 
+# The server is a ThreadingHTTPServer: two requests can hit providers.json at
+# once. This lock serializes writers and read-modify-write sequences
+# (refresh_provider_models holds it across load -> mutate -> save, hence
+# re-entrant so save_providers can acquire it again on the same thread).
+_PROVIDERS_LOCK = threading.RLock()
+
+
 PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
     # OpenRouter exposes both OpenAI-compatible and Anthropic-compatible
     # surfaces. The Anthropic Agent SDK / Claude Code path uses /api, while
@@ -313,20 +323,13 @@ def _cli_login_status(agent: str) -> Dict[str, Any]:
         }
         _CLI_STATUS_CACHE[agent] = (now, status)
         return dict(status)
+    # CODEX_CI is provider-specific (keeps `codex login status` non-interactive);
+    # run_probe itself forces NO_COLOR/TERM so status text stays parseable even
+    # when the server inherited a real terminal's TERM.
     env = os.environ.copy()
-    env.setdefault("CODEX_CI", "1")
-    env.setdefault("NO_COLOR", "1")
-    env.setdefault("TERM", "dumb")
+    env["CODEX_CI"] = "1"
     try:
-        result = subprocess.run(
-            list(command),
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=CLI_STATUS_TIMEOUT_SECONDS,
-        )
+        result = run_probe(list(command), timeout=CLI_STATUS_TIMEOUT_SECONDS, env=env)
     except (OSError, subprocess.TimeoutExpired) as error:
         status = {
             "agent": agent,
@@ -516,9 +519,25 @@ def save_providers(runs_dir: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     runs_dir.mkdir(parents=True, exist_ok=True)
-    providers_path(runs_dir).write_text(
-        json.dumps({"providers": cleaned}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    body = json.dumps({"providers": cleaned}, indent=2, sort_keys=True) + "\n"
+    target = providers_path(runs_dir)
+    with _PROVIDERS_LOCK:
+        # Write-to-temp + os.replace: a crash mid-write can never leave a
+        # truncated providers.json behind, and concurrent readers see either
+        # the old file or the new one, never a partial.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(runs_dir), prefix=".providers-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(body)
+            os.replace(tmp_name, target)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
     return {"providers": [_decorate(provider) for provider in cleaned], "persisted": True}
 
 
@@ -606,6 +625,14 @@ def refresh_provider_models(runs_dir: Path, provider_id: str) -> Dict[str, Any]:
     Uses the provider's own models API when an API key is available; falls
     back to the public vendor catalog for CLI-login providers or missing keys.
     """
+    # Hold the providers lock across the whole load -> mutate -> save
+    # sequence so a concurrent save cannot be silently overwritten by this
+    # read-modify-write (lost update).
+    with _PROVIDERS_LOCK:
+        return _refresh_provider_models_locked(runs_dir, provider_id)
+
+
+def _refresh_provider_models_locked(runs_dir: Path, provider_id: str) -> Dict[str, Any]:
     current = load_providers(runs_dir)
     providers = [dict(provider) for provider in current["providers"]]
     target = next((p for p in providers if p.get("id") == provider_id), None)

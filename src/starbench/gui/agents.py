@@ -18,18 +18,19 @@ own loader so a spec the console accepts is a spec the CLI accepts.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from ..adapters import list_builtin, provider_filter_for_protocol
 from ..adapters.base import ProviderFilter, RuntimeInfo
+from ..execution.probe import extract_version, run_probe, tail
 from ..runner.custom_runtime import load_custom_runtime
 from . import contracts
 from .data import SAFE_ID
@@ -41,6 +42,10 @@ PROTOCOL_CHOICES = ("openai", "anthropic", "gemini", "none")
 CLI_VERSION_TIMEOUT_SECONDS = 3
 NPM_VIEW_TIMEOUT_SECONDS = 8
 INSTALL_TIMEOUT_SECONDS = 300
+
+# Two concurrent `npm install -g` runs write into the same global prefix;
+# serialize installs and reject the second click instead of queueing it.
+_INSTALL_LOCK = threading.Lock()
 
 
 def _npm_spec(package: str, docs_url: str = "") -> Dict[str, Any]:
@@ -128,41 +133,26 @@ def _cli_probe(command: str) -> Dict[str, Any]:
     return {"bin": first, "present": bool(path), "path": path}
 
 
-def _tail(text: str, limit: int = 2000) -> str:
-    text = text.strip()
-    return text[-limit:] if len(text) > limit else text
-
-
 def _run(command: Sequence[str], *, timeout: int) -> subprocess.CompletedProcess:
-    # Start from the host env so npm and user-installed CLIs can find their
-    # usual config, but keep terminal formatting deterministic.
-    env = os.environ.copy()
-    env.setdefault("NO_COLOR", "1")
-    env.setdefault("TERM", "dumb")
-    return subprocess.run(
-        list(command),
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout,
-    )
-
-
-def _extract_version(output: str) -> Optional[str]:
-    match = re.search(r"(?<![A-Za-z0-9])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)", output)
-    if match:
-        return match.group(1)
-    match = re.search(r"(?<![A-Za-z0-9])v?(\d+\.\d+)(?![A-Za-z0-9])", output)
-    return match.group(1) if match else None
+    # Thin seam over the shared probe helper (tests monkeypatch this).
+    # Env sanitisation (forced NO_COLOR/TERM) lives in execution.probe.
+    return run_probe(command, timeout=timeout)
 
 
 def _version_key(version: str) -> tuple:
-    parts = [int(part) for part in re.findall(r"\d+", version.split("-", 1)[0])[:3]]
+    """Approximate-semver sort key: (numbers, is_final_release, prerelease).
+
+    A final release outranks any pre-release with the same numbers, so
+    `1.0.0-rc1` installed with `1.0.0` published reports an update. Two
+    pre-release strings compare lexically — an approximation of semver's
+    identifier-by-identifier rules, good enough for update hints.
+    """
+    base, sep, prerelease = version.partition("-")
+    parts = [int(part) for part in re.findall(r"\d+", base)[:3]]
     while len(parts) < 3:
         parts.append(0)
-    return tuple(parts)
+    is_final = not sep
+    return (tuple(parts), is_final, "" if is_final else prerelease)
 
 
 def _is_newer(latest: Optional[str], current: Optional[str]) -> Optional[bool]:
@@ -184,10 +174,10 @@ def _local_version(cli: Dict[str, Any]) -> Dict[str, Optional[str]]:
             "version_error": f"Could not read version: {error}",
         }
     output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
-    version = _extract_version(output)
+    version = extract_version(output)
     return {
         "version": version,
-        "version_output": _tail(output, 500) or None,
+        "version_output": tail(output, 500) or None,
         "version_error": None if version else "Version output did not include a semver.",
     }
 
@@ -213,9 +203,9 @@ def _latest_npm_version(package: str) -> Dict[str, Optional[str]]:
         return {
             "latest_version": None,
             "latest_checked_at": checked_at,
-            "latest_error": _tail(output, 500) or f"npm exited with {result.returncode}.",
+            "latest_error": tail(output, 500) or f"npm exited with {result.returncode}.",
         }
-    version = _extract_version(output)
+    version = extract_version(output)
     return {
         "latest_version": version,
         "latest_checked_at": checked_at,
@@ -271,6 +261,17 @@ def install_agent(agent_id: str) -> "contracts.AgentInstallResult":
     package = INSTALL_SPECS.get(agent_id)
     if not package:
         raise AgentError(f"No built-in installer is available for {agent_id}.")
+    if not _INSTALL_LOCK.acquire(blocking=False):
+        raise AgentError("An install is already running; wait for it to finish.")
+    try:
+        return _install_agent_locked(agent_id, package)
+    finally:
+        _INSTALL_LOCK.release()
+
+
+def _install_agent_locked(
+    agent_id: str, package: Dict[str, Any]
+) -> "contracts.AgentInstallResult":
     command = list(package["install_command"])
     try:
         result = _run(command, timeout=INSTALL_TIMEOUT_SECONDS)
@@ -289,16 +290,16 @@ def install_agent(agent_id: str) -> "contracts.AgentInstallResult":
             "command": command,
             "status": "failed",
             "exit_code": None,
-            "stdout_tail": _tail(error.stdout or ""),
-            "stderr_tail": _tail(error.stderr or "Install timed out."),
+            "stdout_tail": tail(error.stdout or ""),
+            "stderr_tail": tail(error.stderr or "Install timed out."),
         }
     return {
         "id": agent_id,
         "command": command,
         "status": "installed" if result.returncode == 0 else "failed",
         "exit_code": result.returncode,
-        "stdout_tail": _tail(result.stdout),
-        "stderr_tail": _tail(result.stderr),
+        "stdout_tail": tail(result.stdout),
+        "stderr_tail": tail(result.stderr),
     }
 
 

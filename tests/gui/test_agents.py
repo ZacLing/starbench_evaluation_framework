@@ -174,6 +174,25 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertTrue(status["update_available"])
         self.assertEqual(status["package"]["name"], "@openai/codex")
 
+    def test_version_key_orders_prereleases_below_releases(self) -> None:
+        self.assertTrue(agents._is_newer("1.0.0", "1.0.0-rc1"))
+        self.assertFalse(agents._is_newer("1.0.0-rc1", "1.0.0"))
+        self.assertTrue(agents._is_newer("1.0.0-rc2", "1.0.0-rc1"))
+        self.assertFalse(agents._is_newer("1.0.0-rc1", "1.0.0-rc2"))
+        self.assertFalse(agents._is_newer("1.0.0", "1.0.0"))
+        self.assertTrue(agents._is_newer("1.0.1-rc1", "1.0.0"))
+        self.assertIsNone(agents._is_newer(None, "1.0.0"))
+        self.assertIsNone(agents._is_newer("1.0.0", None))
+
+    def test_install_agent_rejects_concurrent_install(self) -> None:
+        acquired = agents._INSTALL_LOCK.acquire(blocking=False)
+        self.assertTrue(acquired)
+        try:
+            with self.assertRaisesRegex(agents.AgentError, "already running"):
+                agents.install_agent("codex")
+        finally:
+            agents._INSTALL_LOCK.release()
+
     def test_install_agent_uses_whitelisted_command(self) -> None:
         original_run = agents._run
         calls = []

@@ -127,6 +127,45 @@ class ProviderTest(unittest.TestCase):
             reloaded["providers"][0]["anthropic_base_url"], "https://yunwu.ai/anthropic"
         )
 
+    def test_save_providers_writes_atomically_and_leaves_no_temp_files(self) -> None:
+        payload = {
+            "providers": [
+                {
+                    "id": "yunwu",
+                    "name": "Yunwu",
+                    "kind": "openai-compatible",
+                    "base_url": "https://yunwu.ai/v1",
+                    "api_key_env": "YUNWU_KEY",
+                    "models": ["doubao-seed-2-0-pro-260215"],
+                }
+            ]
+        }
+        replace_calls = []
+        original_replace = providers.os.replace
+
+        def tracking_replace(src, dst):
+            replace_calls.append((str(src), str(dst)))
+            return original_replace(src, dst)
+
+        providers.os.replace = tracking_replace
+        try:
+            providers.save_providers(self.runs_dir, payload)
+            # Saving twice exercises the replace-over-existing-file path.
+            providers.save_providers(self.runs_dir, payload)
+        finally:
+            providers.os.replace = original_replace
+
+        target = providers.providers_path(self.runs_dir)
+        data = json.loads(target.read_text(encoding="utf-8"))
+        self.assertEqual(data["providers"][0]["id"], "yunwu")
+        # Both writes went through the atomic temp-file + os.replace path.
+        self.assertEqual(len(replace_calls), 2)
+        for _, dst in replace_calls:
+            self.assertEqual(dst, str(target))
+        # No temp files left behind in the runs dir.
+        leftovers = [path.name for path in self.runs_dir.iterdir() if path != target]
+        self.assertEqual(leftovers, [])
+
     def test_save_validation(self) -> None:
         with self.assertRaises(ProviderError):
             providers.save_providers(
