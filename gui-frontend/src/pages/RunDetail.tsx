@@ -1,7 +1,20 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+  Tooltip as ChartTooltip,
+} from "recharts"
 import {
   CheckCircle2,
   ChevronDown,
@@ -49,6 +62,7 @@ import {
   type RunLivePayload,
   type RunLiveState,
   type RunLiveTask,
+  type TaskRow,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { fmtDelta, fmtDuration, fmtRate, fmtTime, percent, spanBetween } from "@/lib/format"
@@ -250,9 +264,216 @@ export default function RunDetail() {
         </Table>
       </Card>
 
+      <ConvergenceCharts run={run} />
+
       {run.ablation?.groups?.length ? <AblationCard groups={run.ablation.groups} /> : null}
 
       {run.config && <ConfigCard config={run.config} />}
+    </div>
+  )
+}
+
+/* ---------- convergence + uplift small charts ----------
+   Rendered only when their data exists on disk: repeats derive from the task
+   rows (k-th occurrence of a (task, variant) pair = repeat k), uplift comes
+   straight from instruction_ablation_summary.json. Colors reuse the console's
+   chart/status tokens (same jobs they already do in Dashboard and the
+   ablation table: one hue for magnitude, pass/fail only for polarity). */
+
+interface RepeatPoint {
+  repeat: number
+  rate: number | null
+  passed: number
+  judged: number
+}
+
+function buildRepeatSeries(tasks: TaskRow[]): RepeatPoint[] | null {
+  const occurrence = new Map<string, number>()
+  const buckets = new Map<number, { judged: number; passed: number }>()
+  let maxRepeat = 1
+  for (const task of tasks) {
+    const key = `${task.task_id ?? task.run_task_id}::${task.instruction_variant ?? ""}`
+    const repeat = (occurrence.get(key) ?? 0) + 1
+    occurrence.set(key, repeat)
+    maxRepeat = Math.max(maxRepeat, repeat)
+    const cell = task.judges.single
+    if (!cell || cell.overall_pass === null || cell.overall_pass === undefined) continue
+    const bucket = buckets.get(repeat) ?? { judged: 0, passed: 0 }
+    bucket.judged += 1
+    if (cell.overall_pass) bucket.passed += 1
+    buckets.set(repeat, bucket)
+  }
+  if (maxRepeat < 2) return null
+  return Array.from({ length: maxRepeat }, (_, index) => {
+    const bucket = buckets.get(index + 1)
+    return {
+      repeat: index + 1,
+      rate: bucket && bucket.judged ? (bucket.passed / bucket.judged) * 100 : null,
+      passed: bucket?.passed ?? 0,
+      judged: bucket?.judged ?? 0,
+    }
+  })
+}
+
+interface UpliftRow {
+  label: string
+  delta: number
+  rate: number | null
+  baseline: number | null
+}
+
+function buildUpliftRows(run: RunDetailData): UpliftRow[] {
+  const groups = run.ablation?.groups ?? []
+  const judgeModes = new Set(groups.map((group) => group.judge_mode))
+  const baselines = new Map(
+    groups
+      .filter((group) => group.instruction_variant === "baseline")
+      .map((group) => [`${group.task_id}::${group.judge_mode}`, group.overall_pass_rate]),
+  )
+  return groups
+    .filter(
+      (group) =>
+        group.instruction_variant !== "baseline" &&
+        group.delta_vs_baseline?.overall_pass_rate_delta !== null &&
+        group.delta_vs_baseline?.overall_pass_rate_delta !== undefined,
+    )
+    .map((group) => ({
+      label:
+        `${group.task_id} · ${group.instruction_variant}` +
+        (judgeModes.size > 1 ? ` · ${group.judge_mode}` : ""),
+      delta: (group.delta_vs_baseline!.overall_pass_rate_delta as number) * 100,
+      rate: group.overall_pass_rate,
+      baseline: baselines.get(`${group.task_id}::${group.judge_mode}`) ?? null,
+    }))
+}
+
+const CHART_TOOLTIP_STYLE = {
+  borderRadius: 8,
+  border: "1px solid var(--border)",
+  fontSize: 12,
+} as const
+
+function ConvergenceCharts({ run }: { run: RunDetailData }) {
+  const repeatSeries = useMemo(() => buildRepeatSeries(run.tasks), [run.tasks])
+  const upliftRows = useMemo(() => buildUpliftRows(run), [run])
+  if (!repeatSeries && !upliftRows.length) return null
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {repeatSeries && (
+        <Card className="min-w-0">
+          <CardHeader>
+            <CardTitle>Repeat pass rate</CardTitle>
+            <CardDescription>
+              Single-judge pass rate at each repeat of the same (task, variant)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={repeatSeries} margin={{ top: 8, right: 12, bottom: 0, left: -18 }}>
+                <CartesianGrid vertical={false} stroke="var(--border)" />
+                <XAxis
+                  dataKey="repeat"
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  tickFormatter={(value: number) => `#${value}`}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  tickFormatter={(value: number) => `${value}%`}
+                />
+                <ChartTooltip
+                  contentStyle={CHART_TOOLTIP_STYLE}
+                  formatter={(value, _name, item) => {
+                    const point = item?.payload as RepeatPoint | undefined
+                    const detail = point ? ` (${point.passed}/${point.judged} tasks)` : ""
+                    return [
+                      typeof value === "number" ? `${value.toFixed(0)}%${detail}` : "not judged",
+                      "pass rate",
+                    ]
+                  }}
+                  labelFormatter={(value) => `Repeat #${value}`}
+                />
+                <Line
+                  dataKey="rate"
+                  stroke="var(--chart-1)"
+                  strokeWidth={2}
+                  dot={{ r: 4, fill: "var(--chart-1)", strokeWidth: 0 }}
+                  connectNulls={false}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+      {upliftRows.length > 0 && (
+        <Card className="min-w-0">
+          <CardHeader>
+            <CardTitle>Instruction uplift</CardTitle>
+            <CardDescription>
+              Overall pass-rate delta vs baseline, in percentage points ·{" "}
+              <span className="text-pass-ink">green</span> = uplift,{" "}
+              <span className="text-fail-ink">red</span> = regression
+            </CardDescription>
+          </CardHeader>
+          <CardContent style={{ height: Math.max(120, 40 + upliftRows.length * 36) }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                layout="vertical"
+                data={upliftRows}
+                margin={{ top: 4, right: 16, bottom: 0, left: 8 }}
+              >
+                <CartesianGrid horizontal={false} stroke="var(--border)" />
+                <XAxis
+                  type="number"
+                  domain={[-100, 100]}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  tickFormatter={(value: number) => `${value > 0 ? "+" : ""}${value}pp`}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="label"
+                  width={170}
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                  tickFormatter={(value: string) =>
+                    value.length > 24 ? `…${value.slice(-23)}` : value
+                  }
+                />
+                <ReferenceLine x={0} stroke="var(--muted-foreground)" />
+                <ChartTooltip
+                  cursor={{ fill: "var(--muted)" }}
+                  contentStyle={CHART_TOOLTIP_STYLE}
+                  formatter={(value, _name, item) => {
+                    const row = item?.payload as UpliftRow | undefined
+                    const context =
+                      row && row.rate !== null && row.baseline !== null
+                        ? ` (${fmtRate(row.baseline)} → ${fmtRate(row.rate)})`
+                        : ""
+                    const delta = typeof value === "number" ? value : Number(value ?? 0)
+                    return [`${delta > 0 ? "+" : ""}${delta.toFixed(1)}pp${context}`, "Δ overall pass"]
+                  }}
+                />
+                <Bar dataKey="delta" maxBarSize={20} radius={4} isAnimationActive={false}>
+                  {upliftRows.map((row) => (
+                    <Cell
+                      key={row.label}
+                      fill={row.delta > 0 ? "var(--pass)" : row.delta < 0 ? "var(--fail)" : "var(--muted-foreground)"}
+                    />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

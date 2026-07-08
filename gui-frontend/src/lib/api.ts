@@ -9,6 +9,7 @@ import type {
   AgentRuntimeStatus,
   AgentStatusPayload,
   AiProvider,
+  ArtifactPayload,
   AuthKind,
   BuiltinRuntime,
   Contender,
@@ -17,6 +18,8 @@ import type {
   ExperimentPlanItem,
   HumanReferenceStepDetail,
   ModelsSource,
+  OutputsListing,
+  OutputsListingEntry,
   ProviderCliStatusPayload,
   ProviderFilter,
   ProviderKind,
@@ -32,6 +35,10 @@ import type {
   RuntimeProtocol,
   Skill,
   SkillsPayload,
+  TaskTracePayload,
+  TraceEntry,
+  TraceEntryType,
+  VariantSibling,
 } from "./api-types"
 
 export type {
@@ -40,6 +47,7 @@ export type {
   AgentRuntimeStatus,
   AgentStatusPayload,
   AiProvider,
+  ArtifactPayload,
   AuthKind,
   BuiltinRuntime,
   Contender,
@@ -48,6 +56,8 @@ export type {
   ExperimentPlanItem,
   HumanReferenceStepDetail,
   ModelsSource,
+  OutputsListing,
+  OutputsListingEntry,
   ProviderCliStatusPayload,
   ProviderFilter,
   ProviderKind,
@@ -63,6 +73,10 @@ export type {
   RuntimeProtocol,
   Skill,
   SkillsPayload,
+  TaskTracePayload,
+  TraceEntry,
+  TraceEntryType,
+  VariantSibling,
 }
 
 export interface ExecutorStats {
@@ -207,6 +221,12 @@ export interface TaskRunDetail {
   rubric_questions: Record<string, string>
   trace_summary: TraceSummary | null
   artifact_manifest: ArtifactManifest | null
+  /* Honest fallback when artifact_manifest.json is missing: a direct listing
+     of workspace/outputs/ (no hashes, taken now rather than at run end). */
+  outputs_listing: OutputsListing | null
+  /* Task runs in the same run sharing this base task (ablation variants and
+     repeats) — drives the Deliverables variant switcher. */
+  variant_group: VariantSibling[]
   final_message: string | null
   stderr_tail: string | null
   raw_event_count: number
@@ -492,6 +512,18 @@ export const api = {
       `/api/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(
         taskRunId,
       )}/events?offset=${offset}&limit=${limit}`,
+    ),
+  trace: (runId: string, taskRunId: string, offset: number, limit = 200) =>
+    request<TaskTracePayload>(
+      `/api/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(
+        taskRunId,
+      )}/trace?offset=${offset}&limit=${limit}`,
+    ),
+  artifact: (runId: string, taskRunId: string, path: string) =>
+    request<ArtifactPayload>(
+      `/api/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(
+        taskRunId,
+      )}/artifact?path=${encodeURIComponent(path)}`,
     ),
   tasklib: () => request<{ libraries: TaskLibrary[] }>("/api/tasklib"),
   launches: () => request<{ launches: Launch[] }>("/api/launches"),

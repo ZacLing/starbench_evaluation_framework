@@ -217,6 +217,28 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json(
                 data.raw_events(state.runs_dir, segments[1], segments[3], offset, limit)
             )
+        elif (
+            len(segments) == 5
+            and segments[0] == "runs"
+            and segments[2] == "tasks"
+            and segments[4] == "trace"
+        ):
+            offset = self._query_int(query, "offset", 0)
+            limit = self._query_int(query, "limit", data.TRACE_DEFAULT_LIMIT)
+            self._send_json(
+                data.task_trace(state.runs_dir, segments[1], segments[3], offset, limit)
+            )
+        elif (
+            len(segments) == 5
+            and segments[0] == "runs"
+            and segments[2] == "tasks"
+            and segments[4] == "artifact"
+        ):
+            self._send_json(
+                data.read_artifact(
+                    state.runs_dir, segments[1], segments[3], query.get("path", [""])[0]
+                )
+            )
         elif segments == ["tasklib"]:
             self._send_json({"libraries": self._libraries()})
         elif segments == ["tasklib", "task"]:

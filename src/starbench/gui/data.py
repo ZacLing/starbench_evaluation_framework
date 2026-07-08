@@ -27,6 +27,16 @@ LIVE_EVENT_TAIL_LIMIT = 20
 LIVE_TAIL_MAX_BYTES = 256_000
 LIVE_SUMMARY_MAX_CHARS = 200
 
+# Trace replay: normalized timeline entries built from logs/events.jsonl.
+TRACE_DEFAULT_LIMIT = 200
+TRACE_MAX_LIMIT = 1000
+TRACE_BODY_MAX_CHARS = 20_000
+TRACE_TITLE_MAX_CHARS = 160
+
+# Deliverable reader: a single file under workspace/outputs/.
+ARTIFACT_MAX_BYTES = 1_000_000
+ARTIFACT_BINARY_SNIFF_BYTES = 8_192
+
 
 class NotFound(Exception):
     pass
@@ -349,6 +359,95 @@ def run_detail(runs_dir: Path, run_id: str, active_run_ids: Optional[set] = None
     return detail
 
 
+def _task_identity(task_root: Path) -> Tuple[Optional[str], Optional[str], bool]:
+    """(base task id, instruction variant, evaluated) for one task-run directory.
+
+    ``task_summary.json`` is authoritative once the judge has run; before that
+    the executor-side ``manifest.json`` carries the same identity fields. Both
+    missing yields ``(None, None, False)`` — never a guess parsed out of the
+    directory name (variant labels may themselves contain ``__``).
+    """
+    summary = _read_json(task_root / "task_summary.json")
+    evaluated = isinstance(summary, dict)
+    task_id: Optional[str] = None
+    variant: Optional[str] = None
+    if evaluated:
+        task_id = summary.get("task_id")
+        variant = summary.get("instruction_variant")
+    if task_id is None or variant is None:
+        manifest = _read_json(task_root / "manifest.json")
+        if isinstance(manifest, dict):
+            if task_id is None:
+                task_id = manifest.get("task_id") or manifest.get("id")
+            if variant is None:
+                variant = manifest.get("instruction_variant")
+    return task_id, variant, evaluated
+
+
+def _variant_group(
+    run_root: Path, config: Dict[str, Any], base_task_id: Optional[str]
+) -> List[Dict[str, Any]]:
+    """All task runs in this run that share one base task (ablation variants
+    and repeats), in run order. Identity comes from each sibling's recorded
+    ``task_summary.json``/``manifest.json``, never from parsing directory names.
+    An unknown base task id yields an empty list — no siblings can be derived.
+    """
+    if not base_task_id:
+        return []
+    rows: List[Dict[str, Any]] = []
+    for name in _task_dirs(run_root, config):
+        sibling_task_id, sibling_variant, evaluated = _task_identity(run_root / name)
+        if sibling_task_id != base_task_id:
+            continue
+        rows.append(
+            {
+                "run_task_id": name,
+                "instruction_variant": sibling_variant,
+                "evaluated": evaluated,
+            }
+        )
+    return rows
+
+
+# Fallback listing is capped so a stray vendored env cannot balloon the payload.
+OUTPUTS_LISTING_MAX_ENTRIES = 500
+
+
+def _outputs_listing(task_root: Path) -> Optional[Dict[str, Any]]:
+    """Direct listing of ``workspace/outputs/`` for runs missing the manifest.
+
+    One honesty level below ``artifact_manifest.json`` (no hashes, taken now
+    rather than at run end) but never a lie: it shows what is actually on disk.
+    """
+    outputs = task_root / "workspace" / "outputs"
+    if not outputs.is_dir():
+        return None
+    entries: List[Dict[str, Any]] = []
+    truncated = False
+    try:
+        for path in sorted(outputs.rglob("*")):
+            if len(entries) >= OUTPUTS_LISTING_MAX_ENTRIES:
+                truncated = True
+                break
+            relative = path.relative_to(outputs).as_posix()
+            if path.is_dir():
+                entries.append({"path": relative, "kind": "directory"})
+            elif path.is_file():
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    size = None
+                entries.append({"path": relative, "kind": "file", "size_bytes": size})
+    except OSError:
+        return None
+    return {
+        "outputs_dir": str(outputs),
+        "file_count": sum(1 for item in entries if item["kind"] == "file"),
+        "entries": entries,
+        "truncated": truncated,
+    }
+
+
 def task_run_detail(runs_dir: Path, run_id: str, task_run_id: str) -> Dict[str, Any]:
     task_root = resolve_task_run_dir(runs_dir, run_id, task_run_id)
     logs = task_root / "logs"
@@ -390,18 +489,27 @@ def task_run_detail(runs_dir: Path, run_id: str, task_run_id: str) -> Dict[str, 
             if isinstance(rubric, dict) and rubric.get("id"):
                 rubric_questions[str(rubric["id"])] = str(rubric.get("question", ""))
 
+    task_id, instruction_variant, _ = _task_identity(task_root)
+    run_config = _read_json(task_root.parent / "run_config.json")
+    config = run_config if isinstance(run_config, dict) else {}
+    artifact_manifest = _read_json(logs / "artifact_manifest.json")
+
     return {
         "run_id": run_id,
         "run_task_id": task_run_id,
-        "task_id": summary.get("task_id"),
-        "instruction_variant": summary.get("instruction_variant"),
+        "task_id": task_id,
+        "instruction_variant": instruction_variant,
         "instruction_steps": summary.get("instruction_steps"),
         "executor": summary.get("executor") or _read_json(logs / "status.json"),
         "executor_timing": summary.get("executor_timing"),
         "judges": judges,
         "rubric_questions": rubric_questions,
         "trace_summary": _read_json(logs / "trace_summary.json"),
-        "artifact_manifest": _read_json(logs / "artifact_manifest.json"),
+        "artifact_manifest": artifact_manifest,
+        # Honest fallback for the Deliverables tree when the manifest is
+        # missing: list what is actually in workspace/outputs/ right now.
+        "outputs_listing": None if artifact_manifest is not None else _outputs_listing(task_root),
+        "variant_group": _variant_group(task_root.parent, config, task_id),
         "final_message": _read_text(logs / "final.md"),
         "stderr_tail": _tail_text(logs / "stderr.log"),
         "raw_event_count": raw_event_count,
@@ -421,6 +529,355 @@ def raw_events(
         "offset": offset,
         "total": total,
         "next_offset": offset + len(rows) if offset + len(rows) < total else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Trace replay (/api/runs/<id>/tasks/<tid>/trace)
+# ---------------------------------------------------------------------------
+
+# Claude tools that the compat layer treats as file changes; mirrored here for
+# the raw stream-json events that precede compat normalization.
+_CLAUDE_FILE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+# Compat/lifecycle event types that are session plumbing, not agent work.
+_LIFECYCLE_EVENT_TYPES = {
+    "thread.started",
+    "turn.started",
+    "turn.completed",
+    "turn.failed",
+    "session.created",
+    "system",
+    "result",
+}
+
+
+def _trace_title(text: Any) -> str:
+    collapsed = " ".join(str(text).split())
+    if len(collapsed) > TRACE_TITLE_MAX_CHARS:
+        return collapsed[: TRACE_TITLE_MAX_CHARS - 1] + "…"
+    return collapsed
+
+
+def _trace_entry(
+    entry_type: str, title: str, body: str, seconds_offset: Optional[float] = None
+) -> Dict[str, Any]:
+    truncated = len(body) > TRACE_BODY_MAX_CHARS
+    if truncated:
+        body = body[:TRACE_BODY_MAX_CHARS]
+    return {
+        "type": entry_type,
+        "title": title,
+        "body": body,
+        "seconds_offset": seconds_offset,
+        "truncated": truncated,
+    }
+
+
+def _compat_item_entry(event_type: str, item: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize one compat-shape event (Codex native or adapter-appended)."""
+    item_type = str(item.get("type", "unknown"))
+    if event_type != "item.completed":
+        # item.started / item.updated are progress plumbing; the completed
+        # event carries the full payload and becomes the real card.
+        excerpt = item.get("command") or item.get("text") or ""
+        title = f"{event_type} · {item_type}"
+        if excerpt:
+            title += f": {_trace_title(excerpt)}"
+        return _trace_entry("lifecycle", _trace_title(title), _raw_json_body(event))
+    if item_type == "command_execution":
+        command = str(item.get("command") or "")
+        bits = []
+        if item.get("exit_code") is not None:
+            bits.append(f"exit {item['exit_code']}")
+        if item.get("status"):
+            bits.append(str(item["status"]))
+        header = " · ".join(bits)
+        output = item.get("aggregated_output")
+        body = f"$ {command}"
+        if header:
+            body += f"\n[{header}]"
+        if isinstance(output, str) and output:
+            body += f"\n\n{output}"
+        return _trace_entry("command", _trace_title(command), body)
+    if item_type == "reasoning":
+        text = str(item.get("text") or item.get("summary") or item.get("content") or "")
+        return _trace_entry("reasoning", _trace_title(text), text)
+    if item_type == "agent_message":
+        text = str(item.get("text") or "")
+        return _trace_entry("message", _trace_title(text), text)
+    if item_type == "file_change":
+        changes = item.get("changes")
+        paths = (
+            [str(c.get("path")) for c in changes if isinstance(c, dict) and c.get("path")]
+            if isinstance(changes, list)
+            else []
+        )
+        title = ", ".join(paths) if paths else "file change"
+        status = item.get("status")
+        body = title if not status else f"{title}\n[{status}]"
+        return _trace_entry("file_change", _trace_title(title), body)
+    return _trace_entry("other", f"item.completed · {item_type}", _raw_json_body(event))
+
+
+def _raw_json_body(event: Any) -> str:
+    try:
+        return json.dumps(event, ensure_ascii=False, indent=2)
+    except (TypeError, ValueError):
+        return str(event)
+
+
+def _claude_assistant_entry(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a raw Claude stream-json assistant event (pre-compat shape)."""
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return _trace_entry("other", "assistant", _raw_json_body(event))
+    sections: List[str] = []
+    texts: List[str] = []
+    thinkings: List[str] = []
+    bash_commands: List[str] = []
+    file_paths: List[str] = []
+    tool_names: List[str] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "text" and block.get("text"):
+            texts.append(str(block["text"]))
+            sections.append(str(block["text"]))
+        elif block_type == "thinking" and block.get("thinking"):
+            thinkings.append(str(block["thinking"]))
+            sections.append(f"[thinking]\n{block['thinking']}")
+        elif block_type == "tool_use":
+            name = str(block.get("name") or "tool")
+            tool_names.append(name)
+            input_data = block.get("input")
+            input_data = input_data if isinstance(input_data, dict) else {}
+            if name == "Bash" and input_data.get("command"):
+                bash_commands.append(str(input_data["command"]))
+                sections.append(f"$ {input_data['command']}")
+            elif name in _CLAUDE_FILE_TOOLS:
+                path = input_data.get("file_path") or input_data.get("notebook_path")
+                if path:
+                    file_paths.append(str(path))
+                sections.append(f"[{name}] {path or ''}".rstrip())
+            else:
+                sections.append(f"[{name}] {_raw_json_body(input_data)}")
+    body = "\n\n".join(sections)
+    if bash_commands:
+        return _trace_entry("command", _trace_title(bash_commands[0]), body)
+    if file_paths or (tool_names and set(tool_names) <= _CLAUDE_FILE_TOOLS):
+        return _trace_entry("file_change", _trace_title(", ".join(file_paths) or "file change"), body)
+    if tool_names:
+        return _trace_entry("command", _trace_title(f"{tool_names[0]}(…)"), body)
+    if texts:
+        return _trace_entry("message", _trace_title(texts[0]), body)
+    if thinkings:
+        return _trace_entry("reasoning", _trace_title(thinkings[0]), body)
+    return _trace_entry("other", "assistant", _raw_json_body(event))
+
+
+def _claude_user_entry(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a raw Claude stream-json user event (tool results)."""
+    message = event.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return _trace_entry("other", "user", _raw_json_body(event))
+    parts: List[str] = []
+    is_error = False
+    saw_tool_result = False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_result":
+            saw_tool_result = True
+            is_error = is_error or bool(block.get("is_error"))
+            block_content = block.get("content")
+            if isinstance(block_content, str):
+                parts.append(block_content)
+            elif isinstance(block_content, list):
+                parts.extend(
+                    str(piece.get("text", ""))
+                    for piece in block_content
+                    if isinstance(piece, dict) and piece.get("type") == "text"
+                )
+        elif block.get("type") == "text" and block.get("text"):
+            parts.append(str(block["text"]))
+    if not saw_tool_result and not parts:
+        return _trace_entry("other", "user", _raw_json_body(event))
+    title = "tool result (error)" if is_error else "tool result"
+    if not saw_tool_result:
+        title = "user message"
+    return _trace_entry("command" if saw_tool_result else "message", title, "\n\n".join(parts))
+
+
+def _normalize_trace_event(line: str, seconds_offset: Optional[float]) -> Dict[str, Any]:
+    """One events.jsonl line → one timeline entry. Never drops or invents.
+
+    Handles the normalized compat shape (Codex native plus the compat events
+    the other adapters append) and the raw Claude stream-json shape that
+    precedes compat normalization. Anything unrecognized — including
+    unparseable lines — degrades to ``type: "other"`` carrying the raw text.
+    """
+    try:
+        event = json.loads(line)
+    except ValueError:
+        event = None
+    if not isinstance(event, dict):
+        return _trace_entry("other", "unparseable event line", line, seconds_offset)
+
+    event_type = str(event.get("type", "unknown"))
+    item = event.get("item")
+    if isinstance(item, dict):
+        entry = _compat_item_entry(event_type, item, event)
+    elif event_type == "assistant":
+        entry = _claude_assistant_entry(event)
+    elif event_type == "user":
+        entry = _claude_user_entry(event)
+    elif event_type in _LIFECYCLE_EVENT_TYPES:
+        bits = [event_type]
+        for key in ("subtype", "thread_id", "session_id", "model"):
+            value = event.get(key)
+            if isinstance(value, str) and value:
+                bits.append(value)
+                break
+        usage = event.get("usage")
+        if isinstance(usage, dict):
+            tokens = [
+                f"{key}={usage[key]}"
+                for key in ("input_tokens", "output_tokens")
+                if isinstance(usage.get(key), (int, float))
+            ]
+            bits.extend(tokens)
+        entry = _trace_entry("lifecycle", _trace_title(" · ".join(bits)), _raw_json_body(event))
+    else:
+        entry = _trace_entry("other", event_type, _raw_json_body(event))
+    entry["seconds_offset"] = seconds_offset
+    return entry
+
+
+def task_trace(
+    runs_dir: Path, run_id: str, task_run_id: str, offset: int, limit: int
+) -> Dict[str, Any]:
+    """Normalized execution timeline for one task run, paginated.
+
+    Every physical line of ``logs/events.jsonl`` becomes exactly one entry, in
+    file order, so entry indexes are stable anchors and always line up with the
+    raw-events pagination. ``seconds_offset`` is only filled when events carry
+    parseable timestamps (most runtimes do not emit them — absent is reported
+    as ``null``, never estimated).
+    """
+    task_root = resolve_task_run_dir(runs_dir, run_id, task_run_id)
+    events_path = task_root / "logs" / "events.jsonl"
+    offset = max(0, offset)
+    limit = max(1, min(limit, TRACE_MAX_LIMIT))
+
+    try:
+        raw_lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {
+            "run_id": run_id,
+            "run_task_id": task_run_id,
+            "entries": [],
+            "offset": 0,
+            "total": 0,
+            "next_offset": None,
+            "has_events": False,
+        }
+    lines = [line for line in raw_lines if line.strip()]
+
+    # First parseable timestamp anchors seconds_offset for the whole file.
+    epoch: Optional[datetime] = None
+    stamps: Dict[int, datetime] = {}
+    for index, line in enumerate(lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            stamp = _parse_iso(row.get("timestamp"))
+            if stamp is not None:
+                stamps[index] = stamp
+                if epoch is None:
+                    epoch = stamp
+
+    entries: List[Dict[str, Any]] = []
+    for index in range(offset, min(offset + limit, len(lines))):
+        stamp = stamps.get(index)
+        seconds_offset = (
+            round((stamp - epoch).total_seconds(), 3)
+            if stamp is not None and epoch is not None
+            else None
+        )
+        entry = _normalize_trace_event(lines[index], seconds_offset)
+        entry["index"] = index
+        entries.append(entry)
+
+    total = len(lines)
+    end = offset + len(entries)
+    return {
+        "run_id": run_id,
+        "run_task_id": task_run_id,
+        "entries": entries,
+        "offset": offset,
+        "total": total,
+        "next_offset": end if end < total else None,
+        "has_events": True,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Deliverable reader (/api/runs/<id>/tasks/<tid>/artifact?path=...)
+# ---------------------------------------------------------------------------
+
+
+def read_artifact(runs_dir: Path, run_id: str, task_run_id: str, rel_path: str) -> Dict[str, Any]:
+    """Read one delivered file under ``workspace/outputs/``.
+
+    Security: the requested path must resolve (symlinks followed) to a file
+    inside the outputs directory — ``..`` segments, absolute paths and symlink
+    escapes are all rejected with NotFound. Content policy: files over
+    ``ARTIFACT_MAX_BYTES`` return metadata only; files whose head contains a
+    NUL byte are reported binary and never decoded.
+    """
+    task_root = resolve_task_run_dir(runs_dir, run_id, task_run_id)
+    outputs = (task_root / "workspace" / "outputs").resolve()
+    if not outputs.is_dir():
+        raise NotFound(f"No outputs directory for task run: {task_run_id!r}")
+    if not rel_path or Path(rel_path).is_absolute():
+        raise NotFound(f"Invalid artifact path: {rel_path!r}")
+    target = (outputs / rel_path).resolve()
+    try:
+        relative = target.relative_to(outputs)
+    except ValueError:
+        raise NotFound(f"Artifact outside outputs directory: {rel_path!r}")
+    if not target.is_file():
+        raise NotFound(f"No such artifact: {rel_path!r}")
+
+    try:
+        size = target.stat().st_size
+        with target.open("rb") as handle:
+            head = handle.read(ARTIFACT_BINARY_SNIFF_BYTES)
+            is_binary = b"\x00" in head
+            content: Optional[str] = None
+            truncated = False
+            if is_binary:
+                pass
+            elif size > ARTIFACT_MAX_BYTES:
+                truncated = True
+            else:
+                data = head + handle.read()
+                content = data.decode("utf-8", errors="replace")
+    except OSError as error:
+        raise NotFound(f"Artifact unreadable: {rel_path!r} ({error})")
+
+    return {
+        "path": relative.as_posix(),
+        "size_bytes": size,
+        "is_binary": is_binary,
+        "truncated": truncated,
+        "content": content,
     }
 
 

@@ -336,6 +336,87 @@ class RunLivePayload(TypedDict):
 
 
 # ---------------------------------------------------------------------------
+# Trace replay + deliverables (task run detail, R2)
+# ---------------------------------------------------------------------------
+
+# Normalized timeline entry kinds. "other" is the honest-degradation bucket:
+# anything the normalizer does not recognize keeps its raw JSON as the body.
+TraceEntryType = Literal[
+    "reasoning", "command", "file_change", "message", "lifecycle", "other"
+]
+
+
+class TraceEntry(TypedDict):
+    """One events.jsonl line, normalized. Index = physical line position, so
+    anchors stay stable and line up with the raw-events pagination.
+
+    ``seconds_offset`` is filled only when events carry parseable timestamps
+    (most runtimes emit none — absent is ``null``, never estimated).
+    ``truncated`` marks a body cut at the per-entry cap.
+    """
+
+    index: int
+    type: TraceEntryType
+    title: str
+    body: str
+    seconds_offset: Optional[float]
+    truncated: bool
+
+
+class TaskTracePayload(TypedDict):
+    run_id: str
+    run_task_id: str
+    entries: List[TraceEntry]
+    offset: int
+    total: int
+    next_offset: Optional[int]
+    # False = logs/events.jsonl does not exist (run captured no event stream);
+    # the UI must say so instead of showing an empty timeline.
+    has_events: bool
+
+
+class ArtifactPayload(TypedDict):
+    """One delivered file under workspace/outputs/.
+
+    ``content`` is null for binaries (NUL byte in the head) and for files over
+    the size cap; ``truncated`` marks the over-cap case so the UI can say
+    "too large to render" instead of silently showing nothing.
+    """
+
+    path: str
+    size_bytes: int
+    is_binary: bool
+    truncated: bool
+    content: Optional[str]
+
+
+class VariantSibling(TypedDict):
+    """A task run in the same run sharing this task's base task id (an
+    ablation variant or a repeat). Derived from each sibling's recorded
+    task_summary/manifest identity, never by parsing directory names."""
+
+    run_task_id: str
+    instruction_variant: Optional[str]
+    evaluated: bool
+
+
+class OutputsListingEntry(TypedDict, total=False):
+    path: str
+    kind: str
+    size_bytes: Optional[int]
+
+
+class OutputsListing(TypedDict):
+    """Fallback Deliverables tree for runs without artifact_manifest.json:
+    a direct listing of workspace/outputs/ taken now (no hashes)."""
+
+    outputs_dir: str
+    file_count: int
+    entries: List[OutputsListingEntry]
+    truncated: bool
+
+
+# ---------------------------------------------------------------------------
 # Experiments (/api/experiments)
 # ---------------------------------------------------------------------------
 
@@ -416,6 +497,13 @@ GENERATED_TYPES = [
     "RunLiveCurrent",
     "RunLiveEta",
     "RunLivePayload",
+    "TraceEntryType",
+    "TraceEntry",
+    "TaskTracePayload",
+    "ArtifactPayload",
+    "VariantSibling",
+    "OutputsListingEntry",
+    "OutputsListing",
     "ExperimentPlanItem",
     "Contender",
 ]

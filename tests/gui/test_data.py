@@ -168,6 +168,338 @@ class GuiDataTest(unittest.TestCase):
         self.assertEqual(data.rigor_count(task, {"id": "broken"}), 0)
 
 
+class TraceReplayTest(unittest.TestCase):
+    """The ``task_trace`` assembler behind ``/api/runs/<id>/tasks/<tid>/trace``."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_trace_test_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+        self.run_root = make_run(self.runs_dir, "run_trace")
+        self.events = self.run_root / "demo_task__baseline_01" / "logs" / "events.jsonl"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _write_events(self, lines: list) -> None:
+        self.events.write_text(
+            "\n".join(
+                line if isinstance(line, str) else json.dumps(line) for line in lines
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def _trace(self, offset: int = 0, limit: int = 200) -> dict:
+        return data.task_trace(self.runs_dir, "run_trace", "demo_task__baseline_01", offset, limit)
+
+    def test_compat_events_normalize_to_typed_entries(self) -> None:
+        self._write_events(
+            [
+                {"type": "thread.started", "thread_id": "t1"},
+                {
+                    "type": "item.completed",
+                    "item": {"type": "reasoning", "id": "r1", "text": "think hard"},
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "command_execution",
+                        "command": "python hello.py",
+                        "exit_code": 0,
+                        "status": "completed",
+                        "aggregated_output": "hello world",
+                    },
+                },
+                {
+                    "type": "item.completed",
+                    "item": {"type": "file_change", "changes": [{"path": "outputs/hello.py"}]},
+                },
+                {
+                    "type": "item.completed",
+                    "item": {"type": "agent_message", "text": "done, see outputs/"},
+                },
+                {"type": "turn.completed", "usage": {"input_tokens": 5, "output_tokens": 2}},
+            ]
+        )
+        trace = self._trace()
+        self.assertTrue(trace["has_events"])
+        self.assertEqual(trace["total"], 6)
+        types = [entry["type"] for entry in trace["entries"]]
+        self.assertEqual(
+            types, ["lifecycle", "reasoning", "command", "file_change", "message", "lifecycle"]
+        )
+        command = trace["entries"][2]
+        self.assertEqual(command["title"], "python hello.py")
+        self.assertIn("hello world", command["body"])
+        self.assertIn("exit 0", command["body"])
+        # Indexes are physical line positions — stable anchors.
+        self.assertEqual([entry["index"] for entry in trace["entries"]], list(range(6)))
+        # These events carry no timestamps: offsets are null, never invented.
+        self.assertTrue(all(entry["seconds_offset"] is None for entry in trace["entries"]))
+
+    def test_claude_stream_json_events_normalize(self) -> None:
+        self._write_events(
+            [
+                {"type": "system", "subtype": "init", "model": "claude-x"},
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {"type": "thinking", "thinking": "let me look"},
+                            {
+                                "type": "tool_use",
+                                "id": "tu1",
+                                "name": "Bash",
+                                "input": {"command": "ls outputs"},
+                            },
+                        ]
+                    },
+                },
+                {
+                    "type": "user",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tu1",
+                                "content": [{"type": "text", "text": "hello.py"}],
+                            }
+                        ]
+                    },
+                },
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "All done."}]},
+                },
+                {"type": "result", "usage": {"input_tokens": 9}},
+            ]
+        )
+        trace = self._trace()
+        types = [entry["type"] for entry in trace["entries"]]
+        self.assertEqual(types, ["lifecycle", "command", "command", "message", "lifecycle"])
+        self.assertEqual(trace["entries"][1]["title"], "ls outputs")
+        self.assertIn("[thinking]", trace["entries"][1]["body"])
+        self.assertEqual(trace["entries"][2]["title"], "tool result")
+        self.assertIn("hello.py", trace["entries"][2]["body"])
+        self.assertEqual(trace["entries"][3]["title"], "All done.")
+
+    def test_bad_lines_degrade_to_other_and_are_never_dropped(self) -> None:
+        self._write_events(
+            [
+                "not json at all {{{",
+                {"type": "totally.unknown", "payload": {"x": 1}},
+                {"type": "item.completed", "item": {"type": "mystery_item"}},
+            ]
+        )
+        trace = self._trace()
+        self.assertEqual(trace["total"], 3)
+        self.assertEqual([entry["type"] for entry in trace["entries"]], ["other"] * 3)
+        self.assertEqual(trace["entries"][0]["title"], "unparseable event line")
+        self.assertIn("not json at all", trace["entries"][0]["body"])
+        self.assertIn('"totally.unknown"', trace["entries"][1]["body"])
+
+    def test_long_bodies_are_truncated_and_flagged(self) -> None:
+        self._write_events(
+            [
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "command_execution",
+                        "command": "yes",
+                        "aggregated_output": "y" * (data.TRACE_BODY_MAX_CHARS + 500),
+                    },
+                }
+            ]
+        )
+        entry = self._trace()["entries"][0]
+        self.assertTrue(entry["truncated"])
+        self.assertEqual(len(entry["body"]), data.TRACE_BODY_MAX_CHARS)
+
+    def test_pagination_counts_every_line(self) -> None:
+        self._write_events(
+            ["bad line"] + [{"type": "item.completed", "item": {"type": "agent_message", "text": f"m{i}"}} for i in range(5)]
+        )
+        page = self._trace(offset=0, limit=2)
+        self.assertEqual(page["total"], 6)
+        self.assertEqual(len(page["entries"]), 2)
+        self.assertEqual(page["next_offset"], 2)
+        last = self._trace(offset=4, limit=10)
+        self.assertEqual(len(last["entries"]), 2)
+        self.assertIsNone(last["next_offset"])
+        self.assertEqual(last["entries"][0]["index"], 4)
+
+    def test_timestamps_become_seconds_offsets(self) -> None:
+        self._write_events(
+            [
+                {"type": "thread.started", "timestamp": "2026-07-04T02:00:00+00:00"},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": "hi"}},
+                {"type": "turn.completed", "timestamp": "2026-07-04T02:00:12.500+00:00"},
+            ]
+        )
+        entries = self._trace()["entries"]
+        self.assertEqual(entries[0]["seconds_offset"], 0.0)
+        self.assertIsNone(entries[1]["seconds_offset"])
+        self.assertEqual(entries[2]["seconds_offset"], 12.5)
+
+    def test_missing_events_file_reports_has_events_false(self) -> None:
+        self.events.unlink()
+        trace = self._trace()
+        self.assertFalse(trace["has_events"])
+        self.assertEqual(trace["entries"], [])
+        self.assertEqual(trace["total"], 0)
+
+
+class ArtifactReaderTest(unittest.TestCase):
+    """The ``read_artifact`` reader behind ``…/artifact?path=``."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_artifact_test_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+        self.run_root = make_run(self.runs_dir, "run_art")
+        self.outputs = self.run_root / "demo_task__baseline_01" / "workspace" / "outputs"
+        self.outputs.mkdir(parents=True)
+        (self.outputs / "report.md").write_text("# Report\n\nbody", encoding="utf-8")
+        (self.outputs / "sub").mkdir()
+        (self.outputs / "sub" / "notes.txt").write_text("nested", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _read(self, rel: str) -> dict:
+        return data.read_artifact(self.runs_dir, "run_art", "demo_task__baseline_01", rel)
+
+    def test_reads_text_content(self) -> None:
+        payload = self._read("report.md")
+        self.assertEqual(payload["path"], "report.md")
+        self.assertEqual(payload["content"], "# Report\n\nbody")
+        self.assertFalse(payload["is_binary"])
+        self.assertFalse(payload["truncated"])
+        nested = self._read("sub/notes.txt")
+        self.assertEqual(nested["content"], "nested")
+
+    def test_rejects_traversal_and_absolute_paths(self) -> None:
+        # A real secret outside outputs that traversal would otherwise reach.
+        secret = self.run_root / "demo_task__baseline_01" / "workspace" / "secret.txt"
+        secret.write_text("secret", encoding="utf-8")
+        for bad in ("../secret.txt", "../../logs/final.md", str(secret), "/etc/hosts", ""):
+            with self.assertRaises(data.NotFound):
+                self._read(bad)
+
+    def test_rejects_symlink_escape(self) -> None:
+        secret = self.tmp / "outside.txt"
+        secret.write_text("outside", encoding="utf-8")
+        (self.outputs / "sneaky.txt").symlink_to(secret)
+        with self.assertRaises(data.NotFound):
+            self._read("sneaky.txt")
+
+    def test_binary_files_are_flagged_not_decoded(self) -> None:
+        (self.outputs / "blob.bin").write_bytes(b"PK\x00\x01\x02")
+        payload = self._read("blob.bin")
+        self.assertTrue(payload["is_binary"])
+        self.assertIsNone(payload["content"])
+
+    def test_oversize_files_return_metadata_only(self) -> None:
+        big = self.outputs / "big.txt"
+        big.write_text("x" * (data.ARTIFACT_MAX_BYTES + 10), encoding="utf-8")
+        payload = self._read("big.txt")
+        self.assertTrue(payload["truncated"])
+        self.assertIsNone(payload["content"])
+        self.assertEqual(payload["size_bytes"], data.ARTIFACT_MAX_BYTES + 10)
+
+    def test_missing_outputs_dir_is_not_found(self) -> None:
+        shutil.rmtree(self.outputs)
+        with self.assertRaises(data.NotFound):
+            self._read("report.md")
+
+
+class VariantGroupTest(unittest.TestCase):
+    """Sibling derivation for the Deliverables variant switcher."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_variant_test_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_variant_group_lists_same_base_task_only(self) -> None:
+        run_root = self.runs_dir / "run_ablate"
+        run_root.mkdir()
+        write_json(
+            run_root / "run_config.json",
+            {
+                "run_id": "run_ablate",
+                "task_order": [
+                    "demo_task",
+                    "demo_task__step01",
+                    "demo_task__step01__002",
+                    "other_task",
+                ],
+            },
+        )
+        make_task_run(run_root, "demo_task", task_id="demo_task", instruction_variant="baseline")
+        make_task_run(
+            run_root, "demo_task__step01", task_id="demo_task", instruction_variant="step01"
+        )
+        make_task_run(
+            run_root,
+            "demo_task__step01__002",
+            task_id="demo_task",
+            instruction_variant="step01",
+            evaluated=False,
+        )
+        make_task_run(run_root, "other_task", task_id="other_task")
+
+        detail = data.task_run_detail(self.runs_dir, "run_ablate", "demo_task__step01")
+        group = detail["variant_group"]
+        self.assertEqual(
+            [row["run_task_id"] for row in group],
+            ["demo_task", "demo_task__step01", "demo_task__step01__002"],
+        )
+        self.assertEqual(
+            [row["instruction_variant"] for row in group], ["baseline", "step01", "step01"]
+        )
+        # The unevaluated repeat is still derivable from its manifest.
+        self.assertFalse(group[2]["evaluated"])
+        # Identity comes from recorded metadata, not the directory name.
+        self.assertEqual(detail["task_id"], "demo_task")
+        self.assertEqual(detail["instruction_variant"], "step01")
+
+    def test_unknown_identity_yields_empty_group(self) -> None:
+        run_root = self.runs_dir / "run_bare"
+        (run_root / "mystery" / "logs").mkdir(parents=True)
+        write_json(run_root / "run_config.json", {"run_id": "run_bare", "task_order": ["mystery"]})
+        detail = data.task_run_detail(self.runs_dir, "run_bare", "mystery")
+        self.assertEqual(detail["variant_group"], [])
+
+    def test_outputs_listing_fallback_when_manifest_missing(self) -> None:
+        run_root = self.runs_dir / "run_nomanifest"
+        task_root = run_root / "demo_task"
+        (task_root / "logs").mkdir(parents=True)
+        outputs = task_root / "workspace" / "outputs"
+        (outputs / "docs").mkdir(parents=True)
+        (outputs / "docs" / "a.md").write_text("hi", encoding="utf-8")
+        write_json(run_root / "run_config.json", {"run_id": "run_nomanifest", "task_order": ["demo_task"]})
+
+        detail = data.task_run_detail(self.runs_dir, "run_nomanifest", "demo_task")
+        self.assertIsNone(detail["artifact_manifest"])
+        listing = detail["outputs_listing"]
+        self.assertEqual(listing["file_count"], 1)
+        self.assertIn(
+            {"path": "docs/a.md", "kind": "file", "size_bytes": 2}, listing["entries"]
+        )
+        self.assertFalse(listing["truncated"])
+
+    def test_outputs_listing_absent_when_manifest_present(self) -> None:
+        make_run(self.runs_dir, "run_ok")
+        detail = data.task_run_detail(self.runs_dir, "run_ok", "demo_task__baseline_01")
+        self.assertIsNotNone(detail["artifact_manifest"])
+        self.assertIsNone(detail["outputs_listing"])
+
+
 class RunLiveTest(unittest.TestCase):
     """The ``run_live`` reader behind ``/api/runs/<id>/live``."""
 

@@ -47,7 +47,18 @@ def make_task_run(
     executor_status: str = "success",
     overall_pass: bool = True,
     evaluated: bool = True,
+    task_id: str = "demo_task",
+    instruction_variant: str = "baseline",
+    outputs: dict | None = None,
+    evidence_override: dict | None = None,
 ) -> None:
+    """Write one task-run directory.
+
+    ``outputs`` maps relative paths under workspace/outputs/ to file content;
+    when given, real files plus a matching artifact_manifest are written.
+    ``evidence_override`` maps rubric_id -> evidence text (e.g. to embed
+    outputs/ paths for the verdict↔deliverable linking tests).
+    """
     task_root = run_root / task_run_id
     logs = task_root / "logs"
     logs.mkdir(parents=True, exist_ok=True)
@@ -74,16 +85,40 @@ def make_task_run(
             "thread_id": "t1",
         },
     )
-    write_json(
-        logs / "artifact_manifest.json",
-        {
-            "outputs_dir": str(task_root / "workspace" / "outputs"),
-            "file_count": 1,
-            "entries": [
-                {"path": "hello.py", "kind": "file", "size_bytes": 10, "sha256": "ab" * 32}
-            ],
-        },
-    )
+    if outputs:
+        outputs_dir = task_root / "workspace" / "outputs"
+        entries = []
+        for rel, content in sorted(outputs.items()):
+            file_path = outputs_dir / rel
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8")
+            entries.append(
+                {
+                    "path": rel,
+                    "kind": "file",
+                    "size_bytes": len(content.encode("utf-8")),
+                    "sha256": "ab" * 32,
+                }
+            )
+        write_json(
+            logs / "artifact_manifest.json",
+            {
+                "outputs_dir": str(outputs_dir),
+                "file_count": len(entries),
+                "entries": entries,
+            },
+        )
+    else:
+        write_json(
+            logs / "artifact_manifest.json",
+            {
+                "outputs_dir": str(task_root / "workspace" / "outputs"),
+                "file_count": 1,
+                "entries": [
+                    {"path": "hello.py", "kind": "file", "size_bytes": 10, "sha256": "ab" * 32}
+                ],
+            },
+        )
     (logs / "final.md").write_text("# Done\n\nAll good.", encoding="utf-8")
     (logs / "events.jsonl").write_text(
         '{"type": "thread.started", "thread_id": "t1"}\n'
@@ -93,7 +128,8 @@ def make_task_run(
     write_json(
         task_root / "manifest.json",
         {
-            "task_id": "demo_task",
+            "task_id": task_id,
+            "instruction_variant": instruction_variant,
             "rubrics": [
                 {"id": "R001", "question": "Does it exist?", "fail_fast": True, "expected": True},
                 {"id": "R002", "question": "Does it run?", "fail_fast": False, "expected": True},
@@ -102,6 +138,7 @@ def make_task_run(
     )
     if not evaluated:
         return
+    evidence_override = evidence_override or {}
     aggregate = {
         "mode": "single",
         "overall_pass": overall_pass,
@@ -117,7 +154,7 @@ def make_task_run(
                 "expected": True,
                 "passed": True,
                 "fail_fast": True,
-                "evidence": "Found it.",
+                "evidence": evidence_override.get("R001", "Found it."),
             },
             {
                 "rubric_id": "R002",
@@ -125,7 +162,9 @@ def make_task_run(
                 "expected": True,
                 "passed": overall_pass,
                 "fail_fast": False,
-                "evidence": "Ran it." if overall_pass else "Crashed.",
+                "evidence": evidence_override.get(
+                    "R002", "Ran it." if overall_pass else "Crashed."
+                ),
             },
         ],
     }
@@ -138,8 +177,8 @@ def make_task_run(
         task_root / "task_summary.json",
         {
             "run_task_id": task_run_id,
-            "task_id": "demo_task",
-            "instruction_variant": "baseline",
+            "task_id": task_id,
+            "instruction_variant": instruction_variant,
             "executor": status,
             "executor_timing": {"duration_seconds": 200.0},
             "judges": {"single": {"aggregate": aggregate, "status": {"status": "success"}}},

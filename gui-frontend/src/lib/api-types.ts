@@ -234,6 +234,54 @@ export interface RunLivePayload {
   eta: RunLiveEta
 }
 
+export type TraceEntryType = "reasoning" | "command" | "file_change" | "message" | "lifecycle" | "other"
+
+export interface TraceEntry {
+  index: number
+  type: "reasoning" | "command" | "file_change" | "message" | "lifecycle" | "other"
+  title: string
+  body: string
+  seconds_offset: number | null
+  truncated: boolean
+}
+
+export interface TaskTracePayload {
+  run_id: string
+  run_task_id: string
+  entries: TraceEntry[]
+  offset: number
+  total: number
+  next_offset: number | null
+  has_events: boolean
+}
+
+export interface ArtifactPayload {
+  path: string
+  size_bytes: number
+  is_binary: boolean
+  truncated: boolean
+  content: string | null
+}
+
+export interface VariantSibling {
+  run_task_id: string
+  instruction_variant: string | null
+  evaluated: boolean
+}
+
+export interface OutputsListingEntry {
+  path?: string
+  kind?: string
+  size_bytes?: number | null
+}
+
+export interface OutputsListing {
+  outputs_dir: string
+  file_count: number
+  entries: OutputsListingEntry[]
+  truncated: boolean
+}
+
 export interface ExperimentPlanItem {
   label: string
   agent: string
