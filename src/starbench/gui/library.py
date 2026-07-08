@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..adapters import list_builtin
+from ..contracts import ContractValidationError, validate_payload
 from .data import (
     SAFE_ID,
     _read_json,
@@ -155,6 +156,7 @@ def validate_task_package(files: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
             errors.append(f"task.json is not valid JSON: {error}")
             spec = None
         if isinstance(spec, dict):
+            _validate_uploaded_json_contract("task.schema.json", spec, "task.json", errors)
             task_id = str(spec.get("id") or "")
             if not SAFE_ID.match(task_id):
                 errors.append(
@@ -178,6 +180,9 @@ def validate_task_package(files: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                     errors.append(f"{rubrics_name} is not valid JSON: {error}")
                     rubrics = None
                 if isinstance(rubrics, dict):
+                    _validate_uploaded_json_contract(
+                        "rubrics.schema.json", rubrics, rubrics_name, errors
+                    )
                     rows = rubrics.get("rubrics")
                     if not isinstance(rows, list) or not rows:
                         errors.append(f"{rubrics_name} has no `rubrics` array.")
@@ -196,6 +201,25 @@ def validate_task_package(files: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                                 break
                 elif rubrics is not None:
                     errors.append(f"{rubrics_name} must be a JSON object with a `rubrics` array.")
+            human_reference_name = str(spec.get("human_reference") or "human_reference.json")
+            if human_reference_name in by_path:
+                _validate_uploaded_json_file(
+                    by_path,
+                    human_reference_name,
+                    "human_reference.schema.json",
+                    errors,
+                )
+            rigors_name = str(spec.get("rigors") or "rigors.json")
+            if rigors_name in by_path:
+                _validate_uploaded_json_file(by_path, rigors_name, "rigors.schema.json", errors)
+            executor_skills_name = spec.get("executor_skills")
+            if isinstance(executor_skills_name, str) and executor_skills_name in by_path:
+                _validate_uploaded_json_file(
+                    by_path,
+                    executor_skills_name,
+                    "executor_skills.schema.json",
+                    errors,
+                )
         elif spec is not None:
             errors.append("task.json must be a JSON object.")
 
@@ -214,6 +238,35 @@ def validate_task_package(files: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "file_count": len(decoded),
         "_files": decoded,
     }
+
+
+def _validate_uploaded_json_file(
+    by_path: Dict[str, bytes],
+    rel_path: str,
+    schema_name: str,
+    errors: List[str],
+) -> None:
+    try:
+        payload = json.loads(by_path[rel_path].decode("utf-8"))
+    except (ValueError, UnicodeDecodeError) as error:
+        errors.append(f"{rel_path} is not valid JSON: {error}")
+        return
+    if not isinstance(payload, dict):
+        errors.append(f"{rel_path} must be a JSON object.")
+        return
+    _validate_uploaded_json_contract(schema_name, payload, rel_path, errors)
+
+
+def _validate_uploaded_json_contract(
+    schema_name: str,
+    payload: Dict[str, Any],
+    rel_path: str,
+    errors: List[str],
+) -> None:
+    try:
+        validate_payload(schema_name, payload, path=rel_path)
+    except ContractValidationError as error:
+        errors.append(f"{rel_path} does not match StarBench artifact contract: {error}")
 
 
 def install_task_package(

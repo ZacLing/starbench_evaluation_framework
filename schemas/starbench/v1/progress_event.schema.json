@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/progress_event.schema.json",
+  "title": "StarBench progress event",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "event": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "run_task_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": ["string", "null"]
+    }
+  },
+  "required": ["event"]
+}
+

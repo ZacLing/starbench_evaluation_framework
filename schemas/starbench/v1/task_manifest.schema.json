@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/task_manifest.schema.json",
+  "title": "StarBench task manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "task_name": {
+      "type": "string"
+    },
+    "run_task_id": {
+      "type": "string"
+    },
+    "rubric_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "allow_web_search": {
+      "type": "boolean"
+    },
+    "input_materials": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "instruction_mode": {
+      "type": "string"
+    },
+    "instruction_variant": {
+      "type": "string"
+    },
+    "instruction_step_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rigor_mode": {
+      "type": "string"
+    },
+    "rigor_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "executor_skill_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["task_id", "task_name", "run_task_id", "rubric_count", "timeout_seconds", "allow_web_search", "input_materials"]
+}
+

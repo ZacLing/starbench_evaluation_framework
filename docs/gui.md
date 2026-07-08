@@ -5,6 +5,9 @@ exists on disk (`runs/<run_id>/…`) and can launch new `starbench-run` processe
 the same machine. It never keeps its own database: delete a run directory and it
 disappears from the console; copy one in and it shows up.
 
+The console consumes the same public task-package and run-artifact contracts as
+the CLI; see [Artifact Contracts](artifact_contracts.md).
+
 ## The experiment model
 
 The console's unit of work is the **experiment**: a fixed task set and one shared

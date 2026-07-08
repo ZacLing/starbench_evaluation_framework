@@ -200,6 +200,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Architecture Plan & Execution Status](docs/architecture_plan.md)
 - [GUI Console](docs/gui.md)
 - [Task Package Structure](docs/task_package.md)
+- [Artifact Contracts](docs/artifact_contracts.md)
 - [Runner Reference](docs/runner_reference.md)
 - [Model Runtime Matrix](docs/model_runtime_matrix.md)
 - [Docker Isolation](docs/docker.md)
@@ -210,6 +211,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Authoring Rubrics](docs/rubrics.md)
 - [Human Reference Instructions](docs/human_reference.md)
 - [Rigor Prompt Injection](docs/rigor_prompt_injection.md)
+- [Contributing Notes](docs/contributing.md)
 
 ## Where To Put Tasks
 

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from ..adapters import ExecutorContext, JudgeContext, resolve
+from ..contracts import ARTIFACT_SCHEMA_VERSION
 from .env_scope import scoped_base_envs
 from .executor import json_dump, materialize_task, run_executor
 from .judge import rubric_launch_order, run_parallel_judges, run_single_judge
@@ -300,6 +301,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     with (logs / "stderr.log").open("a", encoding="utf-8") as handle:
                         handle.write(f"\nExecutor crashed: {type(exc).__name__}: {exc}\n")
                     status = {
+                        "schema_version": ARTIFACT_SCHEMA_VERSION,
                         "command": [],
                         "exit_code": None,
                         "status": "failed",
@@ -347,6 +349,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         modes["single"] = {
                             "status": {"status": "failed", "error": f"{type(exc).__name__}: {exc}"},
                             "aggregate": {
+                                "schema_version": ARTIFACT_SCHEMA_VERSION,
                                 "mode": "single",
                                 "overall_pass": False,
                                 "error": f"{type(exc).__name__}: {exc}",
@@ -380,6 +383,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     except Exception as exc:
                         modes["parallel"] = {
                             "aggregate": {
+                                "schema_version": ARTIFACT_SCHEMA_VERSION,
                                 "mode": "parallel",
                                 "overall_pass": False,
                                 "error": f"{type(exc).__name__}: {exc}",
@@ -388,6 +392,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                             },
                         }
                 result = {
+                    "schema_version": ARTIFACT_SCHEMA_VERSION,
                     "run_task_id": record["run_task_id"],
                     "task_id": task.id,
                     **record["task_run"].instruction_metadata(),
@@ -418,6 +423,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
 
     summary: Dict[str, Any] = {
         **run_config,
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "run_root": str(run_root),
         "batches": batch_summaries,
     }

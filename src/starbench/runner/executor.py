@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from ..adapters import BUILTIN_AGENTS, ExecutorContext, RuntimeAdapter, get_builtin
+from ..contracts import ARTIFACT_SCHEMA_VERSION
 from .models import TaskRunSpec
 from .prompts import build_augmented_prompt_text
 from .trace import build_artifact_manifest, write_trace_summary
@@ -180,6 +181,7 @@ def materialize_task(
     json_dump(
         task_root / "manifest.json",
         {
+            "schema_version": ARTIFACT_SCHEMA_VERSION,
             "task_id": task.id,
             "task_name": task.name,
             "run_task_id": run_task_id,
@@ -209,6 +211,7 @@ async def run_executor(
     artifact_manifest = build_artifact_manifest(paths["outputs"], logs / "artifact_manifest.json")
     status = {
         **result.to_dict(),
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "executor_backend": ctx.executor_backend,
         "docker_image": ctx.docker_image if ctx.executor_backend == "docker" else None,
         "trace_summary_path": str(logs / "trace_summary.json"),

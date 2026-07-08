@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
+from ..contracts import ARTIFACT_SCHEMA_VERSION
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -74,7 +76,12 @@ class BenchmarkProgress:
         )
 
     def write_event(self, event: str, **payload: Any) -> None:
-        row = {"timestamp": utc_now(), "event": event, **payload}
+        row = {
+            "timestamp": utc_now(),
+            "event": event,
+            **payload,
+            "schema_version": ARTIFACT_SCHEMA_VERSION,
+        }
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
