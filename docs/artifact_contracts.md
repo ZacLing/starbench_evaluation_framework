@@ -176,6 +176,12 @@ runs/<run_id>/
 Stable fields include run configuration (`run_id`, agents, models, backend,
 judge mode, seed, selected research knobs) and `batches`.
 
+Runs created after runtime provenance capture landed also carry an optional
+`runtime_provenance` object (executor/evaluator environment snapshot for
+reproducibility). Its full contract is
+`schemas/starbench/v1/runtime_provenance.schema.json`; older runs simply omit
+the field.
+
 Schema: `schemas/starbench/v1/run_summary.schema.json`.
 
 ### 5.2 `progress_events.jsonl`
@@ -203,6 +209,9 @@ Schema: `schemas/starbench/v1/task_summary.schema.json`.
 ### 5.5 `logs/status.json`
 
 `logs/status.json` is the executor process status and artifact pointers.
+Newer runs add an optional `executor_runtime_provenance` object whose shape
+matches the `executor` snapshot in
+`schemas/starbench/v1/runtime_provenance.schema.json`.
 
 Schema: `schemas/starbench/v1/executor_status.schema.json`.
 

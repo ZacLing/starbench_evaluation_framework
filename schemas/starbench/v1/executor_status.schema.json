@@ -39,6 +39,10 @@
     "docker_image": {
       "type": ["string", "null"]
     },
+    "executor_runtime_provenance": {
+      "type": "object",
+      "description": "Optional executor runtime snapshot; absent on runs created before provenance capture. Shape matches the `executor` object in runtime_provenance.schema.json."
+    },
     "trace_summary_path": {
       "type": "string"
     },

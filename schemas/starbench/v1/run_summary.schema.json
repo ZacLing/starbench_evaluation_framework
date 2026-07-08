@@ -40,6 +40,10 @@
     "executor_backend": {
       "type": "string"
     },
+    "runtime_provenance": {
+      "type": "object",
+      "description": "Optional runtime provenance snapshot; absent on runs created before provenance capture. Full contract: runtime_provenance.schema.json."
+    },
     "task_order": {
       "type": "array",
       "items": {

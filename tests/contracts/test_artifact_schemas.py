@@ -35,6 +35,7 @@ EXPECTED_SCHEMAS = {
     "rigors.schema.json",
     "rubrics.schema.json",
     "run_summary.schema.json",
+    "runtime_provenance.schema.json",
     "task.schema.json",
     "task_manifest.schema.json",
     "task_summary.schema.json",
@@ -247,6 +248,19 @@ class ArtifactSchemaTests(unittest.TestCase):
             validate_json_schema(schema("task_manifest.schema.json"), task_manifest)
             validate_json_schema(schema("task_summary.schema.json"), task_summary)
             validate_json_schema(schema("executor_status.schema.json"), executor_status)
+
+            # Runtime provenance must land in the run artifacts and honour
+            # its own contract (fake-runner smoke: no real model involved).
+            validate_json_schema(
+                schema("runtime_provenance.schema.json"),
+                run_summary["runtime_provenance"],
+                path="summary.runtime_provenance",
+            )
+            validate_json_schema(
+                schema("runtime_provenance.schema.json")["properties"]["executor"],
+                executor_status["executor_runtime_provenance"],
+                path="status.executor_runtime_provenance",
+            )
             validate_json_schema(schema("trace_summary.schema.json"), trace_summary)
             validate_json_schema(schema("artifact_manifest.schema.json"), artifact_manifest)
             validate_json_schema(
@@ -268,6 +282,60 @@ class ArtifactSchemaTests(unittest.TestCase):
     def test_shared_validator_reports_schema_errors(self) -> None:
         with self.assertRaisesRegex(ContractValidationError, "missing required key 'id'"):
             validate_json_schema(schema("task.schema.json"), {})
+
+
+class ValidatorKeywordTests(unittest.TestCase):
+    """The lightweight validator must refuse keywords it does not implement.
+
+    Silently ignoring an unknown keyword would let a schema author believe a
+    constraint is enforced when it is not.
+    """
+
+    def test_unknown_keyword_raises(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "unsupported schema keyword.*const"):
+            validate_json_schema({"type": "string", "const": "fixed"}, "anything")
+
+    def test_composition_keywords_still_raise(self) -> None:
+        for keyword in ("$ref", "allOf", "anyOf", "oneOf", "not"):
+            with self.subTest(keyword=keyword):
+                with self.assertRaisesRegex(ContractValidationError, "unsupported schema keyword"):
+                    validate_json_schema({keyword: []}, {})
+
+    def test_nested_unknown_keyword_raises(self) -> None:
+        nested = {
+            "type": "object",
+            "properties": {"name": {"type": "string", "minLength": 1}},
+        }
+        with self.assertRaisesRegex(ContractValidationError, r"\$\.name.*minLength"):
+            validate_json_schema(nested, {"name": "ok"})
+
+    def test_annotations_and_vendor_extensions_are_allowed(self) -> None:
+        validate_json_schema(
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "$id": "https://example.test/x.json",
+                "$comment": "note",
+                "title": "t",
+                "description": "d",
+                "examples": ["a"],
+                "default": "a",
+                "deprecated": False,
+                "x-starbench-private": True,
+                "type": "string",
+            },
+            "value",
+        )
+
+    def test_schema_valued_additional_properties_raises(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "unsupported additionalProperties form"):
+            validate_json_schema(
+                {"type": "object", "additionalProperties": {"type": "string"}},
+                {"free": "form"},
+            )
+
+    def test_non_object_items_form_raises(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "unsupported items form"):
+            validate_json_schema({"type": "array", "items": False}, ["x"])
 
 
 if __name__ == "__main__":

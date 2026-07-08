@@ -21,6 +21,34 @@ class ContractValidationError(ValueError):
     """Raised when a StarBench artifact fails its public contract schema."""
 
 
+# Keywords this validator actually enforces. Anything outside this set (or the
+# annotation set below) makes validation raise instead of silently passing:
+# a schema author must not believe a constraint is active when it is ignored.
+SUPPORTED_KEYWORDS = {
+    "type",
+    "enum",
+    "required",
+    "properties",
+    "additionalProperties",
+    "items",
+    "minItems",
+    "minimum",
+    "pattern",
+}
+
+# Pure annotations: legal in schemas, never affect validation.
+ANNOTATION_KEYWORDS = {
+    "$schema",
+    "$id",
+    "$comment",
+    "title",
+    "description",
+    "examples",
+    "default",
+    "deprecated",
+}
+
+
 def load_schema(name: str) -> Dict[str, Any]:
     path = SCHEMA_ROOT / name
     if not path.exists():
@@ -33,14 +61,12 @@ def validate_payload(schema_name: str, data: Any, *, path: str = "$") -> None:
 
 
 def validate_json_schema(schema: Dict[str, Any], data: Any, *, path: str = "$") -> None:
-    unsupported = set(schema) & {
-        "$ref",
-        "allOf",
-        "anyOf",
-        "oneOf",
-        "not",
-        "patternProperties",
-        "dependentRequired",
+    unsupported = {
+        key
+        for key in schema
+        if key not in SUPPORTED_KEYWORDS
+        and key not in ANNOTATION_KEYWORDS
+        and not key.startswith("x-")
     }
     if unsupported:
         raise ContractValidationError(
@@ -82,10 +108,17 @@ def _validate_object(schema: Dict[str, Any], data: Dict[str, Any], *, path: str)
         if key in data:
             validate_json_schema(child_schema, data[key], path=f"{path}.{key}")
 
-    if schema.get("additionalProperties") is False:
+    additional = schema.get("additionalProperties", True)
+    if additional is False:
         extra = set(data) - set(properties)
         if extra:
             raise ContractValidationError(f"{path}: unexpected key(s): {sorted(extra)}")
+    elif additional is not True:
+        # Schema-valued additionalProperties is a real constraint this
+        # validator does not implement; refuse rather than silently pass.
+        raise ContractValidationError(
+            f"{path}: unsupported additionalProperties form: {additional!r}"
+        )
 
 
 def _validate_array(schema: Dict[str, Any], data: list, *, path: str) -> None:
@@ -95,6 +128,12 @@ def _validate_array(schema: Dict[str, Any], data: list, *, path: str) -> None:
 
     item_schema = schema.get("items")
     if item_schema is not None:
+        if not isinstance(item_schema, dict):
+            # Boolean/tuple `items` forms are not implemented; refuse rather
+            # than silently pass.
+            raise ContractValidationError(
+                f"{path}: unsupported items form: {item_schema!r}"
+            )
         for index, item in enumerate(data):
             validate_json_schema(item_schema, item, path=f"{path}[{index}]")
 
