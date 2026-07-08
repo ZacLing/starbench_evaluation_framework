@@ -46,3 +46,11 @@ export function percent(numerator: number, denominator: number): number | null {
   if (!denominator) return null
   return numerator / denominator
 }
+
+/* Last two path segments — enough to recognize a folder without the noise of
+   an absolute path; callers put the full path in a title attribute. */
+export function shortDir(path: string | null | undefined): string {
+  if (!path) return ""
+  const parts = path.split("/").filter(Boolean)
+  return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : path
+}

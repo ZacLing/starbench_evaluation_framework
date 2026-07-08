@@ -20,7 +20,7 @@ import { WebSearchBadge } from "@/components/task-badges"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type TaskPackage } from "@/lib/api"
 import { renderMarkdown } from "@/lib/markdown"
-import { fmtDuration } from "@/lib/format"
+import { fmtDuration, shortDir } from "@/lib/format"
 
 export default function Tasks() {
   const navigate = useNavigate()
@@ -64,7 +64,7 @@ export default function Tasks() {
       {libraries.map((library) => (
         <section key={library.dir} className="grid gap-3">
           <h2 className="truncate font-mono text-xs text-muted-foreground" title={library.dir}>
-            {library.dir}
+            {shortDir(library.dir)}
           </h2>
           {library.tasks.length ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

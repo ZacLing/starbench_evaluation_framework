@@ -126,34 +126,37 @@ export default function Agents() {
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-center gap-3">
-        <div>
+        <div className="min-w-0 flex-1 basis-64">
           <h1 className="text-xl font-semibold tracking-tight">Agents</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="max-w-2xl text-sm text-muted-foreground">
             The coding-agent CLIs that can compete or judge. Any headless CLI can be added
             as a runtime; runs execute in Docker whenever the runtime supports it.
           </p>
         </div>
-        <Button
-          variant="outline"
-          className="ml-auto gap-1.5"
-          onClick={() => {
-            if (checkUpdates) agentStatusQuery.refetch()
-            else setCheckUpdates(true)
-          }}
-          disabled={agentStatusQuery.isFetching}
-        >
-          <RefreshCw className={cn("size-4", agentStatusQuery.isFetching && "animate-spin")} />
-          Check updates
-        </Button>
-        <Button
-          className="gap-1.5"
-          onClick={() => {
-            setIsNew(true)
-            setEditing(emptyDraft())
-          }}
-        >
-          <Plus /> Add runtime
-        </Button>
+        {/* One flex unit: the actions never split across rows when space runs out. */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => {
+              if (checkUpdates) agentStatusQuery.refetch()
+              else setCheckUpdates(true)
+            }}
+            disabled={agentStatusQuery.isFetching}
+          >
+            <RefreshCw className={cn("size-4", agentStatusQuery.isFetching && "animate-spin")} />
+            Check updates
+          </Button>
+          <Button
+            className="gap-1.5"
+            onClick={() => {
+              setIsNew(true)
+              setEditing(emptyDraft())
+            }}
+          >
+            <Plus /> Add runtime
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">

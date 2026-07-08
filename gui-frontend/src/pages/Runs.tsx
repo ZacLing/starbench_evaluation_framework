@@ -34,14 +34,7 @@ import { ExecutorStatsInline, PassSummaryBadge, StatusBadge } from "@/components
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type RunOverview } from "@/lib/api"
-
-/* Last two path segments: enough to recognize the folder, full path on hover. */
-function shortDir(path: string | undefined): string {
-  if (!path) return "this directory"
-  const parts = path.split("/").filter(Boolean)
-  return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : path
-}
-import { fmtTime, spanBetween } from "@/lib/format"
+import { fmtTime, shortDir, spanBetween } from "@/lib/format"
 
 export default function Runs() {
   const navigate = useNavigate()

@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorNote } from "@/pages/Dashboard"
 import { api, type Skill } from "@/lib/api"
+import { shortDir } from "@/lib/format"
 
 const DOCS_PATH = "docs/executor_skills.md"
 
@@ -112,7 +113,7 @@ export default function Skills() {
         className="truncate font-mono text-[11px] text-muted-foreground"
         title={payload.root}
       >
-        Skill library · {payload.root}
+        Skill library · {shortDir(payload.root)}
       </p>
     </div>
   )

@@ -204,9 +204,9 @@ export default function Providers() {
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-center gap-3">
-        <div>
+        <div className="min-w-0 flex-1 basis-64">
           <h1 className="text-xl font-semibold tracking-tight">AI providers</h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="max-w-2xl text-sm text-muted-foreground">
             Where models come from. API-key providers fan out by protocol; local CLI
             accounts stay bound to that CLI.
           </p>

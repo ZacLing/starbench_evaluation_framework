@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton"
 import { PassSummaryBadge, StatusBadge } from "@/components/verdict"
 import { api } from "@/lib/api"
-import { fmtTime, fmtRate, percent } from "@/lib/format"
+import { fmtTime, fmtRate, percent, shortDir } from "@/lib/format"
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -17,6 +17,7 @@ export default function Dashboard() {
     refetchInterval: (query) =>
       query.state.data?.runs.some((run) => run.status === "running") ? 4000 : false,
   })
+  const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta, staleTime: Infinity })
 
   if (runsQuery.isPending) {
     return (
@@ -58,7 +59,10 @@ export default function Dashboard() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
         <p className="text-sm text-muted-foreground">
-          {runs.length} runs in this directory
+          {runs.length} runs in{" "}
+          <span className="font-mono" title={meta.data?.runs_dir}>
+            {shortDir(meta.data?.runs_dir) || "this directory"}
+          </span>
           {running.length > 0 && `, ${running.length} running now`}
         </p>
       </div>
@@ -92,10 +96,14 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
-        <Card className="lg:col-span-3">
+        <Card className="min-w-0 lg:col-span-3">
           <CardHeader>
             <CardTitle>Pass rate by run</CardTitle>
-            <CardDescription>Single-judge task pass rate, oldest to newest</CardDescription>
+            <CardDescription>
+              Single-judge task pass rate, oldest to newest ·{" "}
+              <span className="text-pass-ink">green</span> = all passed,{" "}
+              <span className="text-fail-ink">red</span> = none
+            </CardDescription>
           </CardHeader>
           <CardContent className="h-56">
             {chartData.length ? (
@@ -108,7 +116,8 @@ export default function Dashboard() {
                     axisLine={false}
                     tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                     tickFormatter={(value: string) =>
-                      value.length > 14 ? `${value.slice(0, 13)}…` : value
+                      // Run ids share long prefixes; the tail is what tells them apart.
+                      value.length > 14 ? `…${value.slice(-13)}` : value
                     }
                   />
                   <YAxis
@@ -145,7 +154,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2">
+        <Card className="min-w-0 lg:col-span-2">
           <CardHeader>
             <CardTitle>Recent runs</CardTitle>
             <CardDescription>Newest first</CardDescription>
@@ -156,7 +165,7 @@ export default function Dashboard() {
                 key={run.run_id}
                 type="button"
                 onClick={() => navigate(`/runs/${encodeURIComponent(run.run_id)}`)}
-                className="flex items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted"
+                className="flex min-w-0 items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-mono text-sm">{run.run_id}</span>
