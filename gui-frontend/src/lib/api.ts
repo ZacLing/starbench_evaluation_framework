@@ -512,7 +512,10 @@ export const api = {
       `/api/preflight?${new URLSearchParams(params).toString()}`,
     ),
   agents: () => request<AgentsPayload>("/api/agents"),
-  agentStatus: () => request<AgentStatusPayload>("/api/agents/status"),
+  agentStatus: (checkUpdates = false) =>
+    request<AgentStatusPayload>(
+      `/api/agents/status${checkUpdates ? "?check_updates=1" : ""}`,
+    ),
   agentTemplates: () => request<{ templates: AgentTemplate[] }>("/api/agents/templates"),
   skills: () => request<SkillsPayload>("/api/skills"),
   saveAgent: (payload: CustomRuntimePayload) =>

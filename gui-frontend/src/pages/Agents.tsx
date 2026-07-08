@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
   AlertTriangle,
@@ -67,11 +67,15 @@ const PARSER_NOTES: Record<string, string> = {
 export default function Agents() {
   const queryClient = useQueryClient()
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
+  // The page paints from local CLI probes only; npm update checks hit the
+  // network and run solely when the user clicks "Check updates".
+  const [checkUpdates, setCheckUpdates] = useState(false)
   const agentStatusQuery = useQuery({
-    queryKey: ["agent-status"],
-    queryFn: api.agentStatus,
+    queryKey: ["agent-status", checkUpdates],
+    queryFn: () => api.agentStatus(checkUpdates),
     enabled: agentsQuery.isSuccess,
     retry: false,
+    placeholderData: keepPreviousData,
   })
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
   const templatesQuery = useQuery({
@@ -132,7 +136,10 @@ export default function Agents() {
         <Button
           variant="outline"
           className="ml-auto gap-1.5"
-          onClick={() => agentStatusQuery.refetch()}
+          onClick={() => {
+            if (checkUpdates) agentStatusQuery.refetch()
+            else setCheckUpdates(true)
+          }}
           disabled={agentStatusQuery.isFetching}
         >
           <RefreshCw className={cn("size-4", agentStatusQuery.isFetching && "animate-spin")} />
@@ -499,6 +506,12 @@ function VersionLine({
   const local = status.version ? `v${status.version}` : "version unavailable"
   const latest = status.latest_version ? `latest v${status.latest_version}` : null
   const update = status.update_available === true
+  // Three distinct states, honestly labeled: the update check ran and found a
+  // newer version ("update available"), it ran and failed ("update check
+  // failed"), or it never ran (latest_error and latest_checked_at both null —
+  // neutral "updates not checked", never a warning).
+  const updatesNotChecked =
+    status.installable && !status.latest_version && !status.latest_error && !status.latest_checked_at
   return (
     <span
       className={cn(
@@ -518,6 +531,7 @@ function VersionLine({
       {latest ? ` · ${latest}` : ""}
       {update ? " · update available" : ""}
       {status.latest_error ? " · update check failed" : ""}
+      {updatesNotChecked ? " · updates not checked" : ""}
     </span>
   )
 }

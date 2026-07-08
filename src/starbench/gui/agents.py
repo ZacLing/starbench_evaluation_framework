@@ -24,9 +24,11 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..adapters import list_builtin, provider_filter_for_protocol
 from ..adapters.base import ProviderFilter, RuntimeInfo
@@ -42,6 +44,16 @@ PROTOCOL_CHOICES = ("openai", "anthropic", "gemini", "none")
 CLI_VERSION_TIMEOUT_SECONDS = 3
 NPM_VIEW_TIMEOUT_SECONDS = 8
 INSTALL_TIMEOUT_SECONDS = 300
+STATUS_PROBE_MAX_WORKERS = 8
+
+# Local `--version` probes are cheap but not free (a subprocess per runtime);
+# npm lookups hit the network. Cache both so the Agents page stays fast and
+# an offline machine does not stall on every paint. Keyed by (agent_id, bin).
+LOCAL_STATUS_TTL_SECONDS = 60.0
+NPM_LATEST_TTL_SECONDS = 600.0
+_STATUS_CACHE_LOCK = threading.Lock()
+_LOCAL_STATUS_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
+_NPM_LATEST_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
 
 # Two concurrent `npm install -g` runs write into the same global prefix;
 # serialize installs and reject the second click instead of queueing it.
@@ -232,28 +244,87 @@ def _runtime_targets(runtimes_dir: Path) -> List[Dict[str, str]]:
     return targets
 
 
-def agent_statuses(runtimes_dir: Path) -> "contracts.AgentStatusPayload":
-    statuses: Dict[str, Any] = {}
-    for target in _runtime_targets(runtimes_dir):
-        cli = _cli_probe(target["bin"])
-        version = _local_version(cli)
+_LATEST_NOT_CHECKED = {
+    "latest_version": None,
+    "latest_checked_at": None,
+    "latest_error": None,
+}
+
+
+def _clear_status_caches() -> None:
+    """Drop cached probe results (used by tests and nowhere else)."""
+    with _STATUS_CACHE_LOCK:
+        _LOCAL_STATUS_CACHE.clear()
+        _NPM_LATEST_CACHE.clear()
+
+
+def _cached_local_status(agent_id: str, bin_name: str) -> Dict[str, Any]:
+    key = (agent_id, bin_name)
+    now = time.monotonic()
+    with _STATUS_CACHE_LOCK:
+        cached = _LOCAL_STATUS_CACHE.get(key)
+        if cached and now - cached[0] < LOCAL_STATUS_TTL_SECONDS:
+            return dict(cached[1])
+    cli = _cli_probe(bin_name)
+    status = {**cli, **_local_version(cli)}
+    with _STATUS_CACHE_LOCK:
+        _LOCAL_STATUS_CACHE[key] = (time.monotonic(), dict(status))
+    return status
+
+
+def _cached_npm_latest(agent_id: str, bin_name: str, package_name: str) -> Dict[str, Any]:
+    key = (agent_id, bin_name)
+    now = time.monotonic()
+    with _STATUS_CACHE_LOCK:
+        cached = _NPM_LATEST_CACHE.get(key)
+        if cached and now - cached[0] < NPM_LATEST_TTL_SECONDS:
+            return dict(cached[1])
+    latest = _latest_npm_version(package_name)
+    with _STATUS_CACHE_LOCK:
+        _NPM_LATEST_CACHE[key] = (time.monotonic(), dict(latest))
+    return latest
+
+
+def agent_statuses(
+    runtimes_dir: Path, *, check_updates: bool = False
+) -> "contracts.AgentStatusPayload":
+    """Probe every runtime's local CLI; optionally check npm for updates.
+
+    Probes run in parallel (a serial pass over ~8 runtimes at multi-second
+    timeouts kept the page hostage), and npm — the only network hop — runs
+    only when the caller explicitly asks for an update check. When it did not
+    ask, the three `latest_*` fields and `update_available` stay None, which
+    the UI renders as "not checked", distinct from a failed check.
+    """
+
+    def probe(target: Dict[str, str]) -> Dict[str, Any]:
+        local = _cached_local_status(target["id"], target["bin"])
         package = INSTALL_SPECS.get(target["id"])
-        latest = (
-            _latest_npm_version(package["name"])
-            if package and package.get("manager") == "npm"
-            else {"latest_version": None, "latest_checked_at": None, "latest_error": None}
-        )
-        statuses[target["id"]] = {
+        if check_updates and package and package.get("manager") == "npm":
+            latest = _cached_npm_latest(target["id"], target["bin"], package["name"])
+        else:
+            latest = dict(_LATEST_NOT_CHECKED)
+        return {
             "id": target["id"],
-            "bin": cli["bin"],
-            "present": cli["present"],
-            "path": cli["path"],
-            **version,
+            "bin": local["bin"],
+            "present": local["present"],
+            "path": local["path"],
+            "version": local["version"],
+            "version_output": local["version_output"],
+            "version_error": local["version_error"],
             "package": package,
             **latest,
-            "update_available": _is_newer(latest.get("latest_version"), version.get("version")),
+            "update_available": _is_newer(latest.get("latest_version"), local.get("version")),
             "installable": bool(package),
         }
+
+    targets = _runtime_targets(runtimes_dir)
+    statuses: Dict[str, Any] = {}
+    if targets:
+        with ThreadPoolExecutor(max_workers=STATUS_PROBE_MAX_WORKERS) as pool:
+            rows = list(pool.map(probe, targets))
+        for target, row in zip(targets, rows):
+            statuses[target["id"]] = row
     return {"statuses": statuses}
 
 

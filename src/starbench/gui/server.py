@@ -232,7 +232,12 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         elif segments == ["agents"]:
             self._send_json(agents.list_agents(state.runtimes_dir))
         elif segments == ["agents", "status"]:
-            self._send_json(agents.agent_statuses(state.runtimes_dir))
+            # npm update checks hit the network; the fast default paints the
+            # page from local probes only, and the UI opts in explicitly.
+            check_updates = str(query.get("check_updates", [""])[0]).strip().lower() in ("1", "true")
+            self._send_json(
+                agents.agent_statuses(state.runtimes_dir, check_updates=check_updates)
+            )
         elif segments == ["agents", "templates"]:
             self._send_json({"templates": agents.agent_templates()})
         elif segments == ["skills"]:

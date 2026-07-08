@@ -122,7 +122,8 @@ export default function NewRun() {
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
   const agentStatusQuery = useQuery({
     queryKey: ["agent-status"],
-    queryFn: api.agentStatus,
+    // Fast path: local CLI probes only, no npm update check.
+    queryFn: () => api.agentStatus(),
     enabled: agentsQuery.isSuccess,
     retry: false,
   })

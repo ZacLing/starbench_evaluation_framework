@@ -17,9 +17,11 @@ class AgentRegistryTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_agents_"))
         self.runtimes_dir = self.tmp / "runtimes"
         self.runtimes_dir.mkdir()
+        agents._clear_status_caches()
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
+        agents._clear_status_caches()
 
     def qwen_payload(self, **overrides):
         base = {
@@ -163,7 +165,9 @@ class AgentRegistryTest(unittest.TestCase):
         agents.shutil.which = fake_which
         agents._run = fake_run
         try:
-            status = agents.agent_statuses(self.runtimes_dir)["statuses"]["codex"]
+            status = agents.agent_statuses(self.runtimes_dir, check_updates=True)[
+                "statuses"
+            ]["codex"]
         finally:
             agents.shutil.which = original_which
             agents._run = original_run
@@ -173,6 +177,63 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(status["latest_version"], "0.142.5")
         self.assertTrue(status["update_available"])
         self.assertEqual(status["package"]["name"], "@openai/codex")
+
+    def test_agent_statuses_default_path_never_calls_npm(self) -> None:
+        original_which = agents.shutil.which
+        original_run = agents._run
+        commands = []
+
+        def fake_which(name: str):
+            if name in {"codex", "npm"}:
+                return f"/bin/{name}"
+            return None
+
+        def fake_run(command, *, timeout):
+            commands.append(list(command))
+            return subprocess.CompletedProcess(command, 0, "codex 0.141.0\n", "")
+
+        agents.shutil.which = fake_which
+        agents._run = fake_run
+        try:
+            payload = agents.agent_statuses(self.runtimes_dir)
+        finally:
+            agents.shutil.which = original_which
+            agents._run = original_run
+
+        self.assertFalse(
+            [command for command in commands if command and command[0] == "npm"],
+            f"default status path must not hit npm, got: {commands}",
+        )
+        status = payload["statuses"]["codex"]
+        # "not checked", not "check failed": all latest_* fields stay None.
+        self.assertIsNone(status["latest_version"])
+        self.assertIsNone(status["latest_checked_at"])
+        self.assertIsNone(status["latest_error"])
+        self.assertIsNone(status["update_available"])
+        self.assertEqual(status["version"], "0.141.0")
+
+    def test_agent_statuses_caches_local_probes(self) -> None:
+        original_which = agents.shutil.which
+        original_run = agents._run
+        version_calls = []
+
+        def fake_which(name: str):
+            return f"/bin/{name}" if name == "codex" else None
+
+        def fake_run(command, *, timeout):
+            version_calls.append(list(command))
+            return subprocess.CompletedProcess(command, 0, "codex 0.141.0\n", "")
+
+        agents.shutil.which = fake_which
+        agents._run = fake_run
+        try:
+            agents.agent_statuses(self.runtimes_dir)
+            agents.agent_statuses(self.runtimes_dir)
+        finally:
+            agents.shutil.which = original_which
+            agents._run = original_run
+
+        self.assertEqual(len(version_calls), 1, version_calls)
 
     def test_version_key_orders_prereleases_below_releases(self) -> None:
         self.assertTrue(agents._is_newer("1.0.0", "1.0.0-rc1"))
