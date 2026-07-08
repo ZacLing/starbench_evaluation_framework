@@ -270,6 +270,72 @@ class ExecutionEstimate(TypedDict):
 
 
 # ---------------------------------------------------------------------------
+# Run live view (/api/runs/<id>/live)
+# ---------------------------------------------------------------------------
+
+RunStatus = Literal["complete", "running", "interrupted"]
+# Per-task lane phase, derived from progress events + on-disk artifacts:
+# pending → executing → judging → done, with failed for executor failure/timeout.
+RunLiveState = Literal["pending", "executing", "judging", "done", "failed"]
+# Where a lane's executor_seconds came from: "measured" is the recorded
+# duration on disk; "elapsed" is wall-clock since executor start (still running).
+ExecutorSecondsSource = Literal["measured", "elapsed"]
+
+
+class RunLiveEvent(TypedDict):
+    """One summarized task event: its type plus a one-line excerpt.
+
+    Deliberately tiny — the raw event payload (which can carry huge tool
+    outputs) never crosses this boundary; ``gui.data._live_event_summary`` is
+    the single reducer.
+    """
+
+    type: str
+    summary: str
+
+
+class RunLiveTask(TypedDict):
+    run_task_id: str
+    state: RunLiveState
+    executor_status: Optional[str]
+    executor_seconds: Optional[float]
+    executor_seconds_source: Optional[ExecutorSecondsSource]
+
+
+class RunLiveCurrent(TypedDict):
+    """The most recently started, still-executing task and its event tail."""
+
+    run_task_id: str
+    task_id: Optional[str]
+    started_at: Optional[str]
+    elapsed_seconds: Optional[float]
+    events: List[RunLiveEvent]
+
+
+class RunLiveEta(TypedDict):
+    """Remaining-time *estimate*: average measured executor duration × remaining.
+
+    ``estimated_remaining_seconds`` stays ``None`` until at least two executor
+    durations exist — with fewer samples the console says "estimating" instead
+    of inventing a number.
+    """
+
+    estimated_remaining_seconds: Optional[float]
+    average_executor_seconds: Optional[float]
+    completed_sample_count: int
+    remaining_task_count: int
+
+
+class RunLivePayload(TypedDict):
+    run_id: str
+    status: RunStatus
+    generated_at: str
+    tasks: List[RunLiveTask]
+    current: Optional[RunLiveCurrent]
+    eta: RunLiveEta
+
+
+# ---------------------------------------------------------------------------
 # Experiments (/api/experiments)
 # ---------------------------------------------------------------------------
 
@@ -342,6 +408,14 @@ GENERATED_TYPES = [
     "HumanReferenceStepDetail",
     "RigorDetail",
     "ExecutionEstimate",
+    "RunStatus",
+    "RunLiveState",
+    "ExecutorSecondsSource",
+    "RunLiveEvent",
+    "RunLiveTask",
+    "RunLiveCurrent",
+    "RunLiveEta",
+    "RunLivePayload",
     "ExperimentPlanItem",
     "Contender",
 ]

@@ -191,6 +191,49 @@ export interface ExecutionEstimate {
   note: string
 }
 
+export type RunStatus = "complete" | "running" | "interrupted"
+
+export type RunLiveState = "pending" | "executing" | "judging" | "done" | "failed"
+
+export type ExecutorSecondsSource = "measured" | "elapsed"
+
+export interface RunLiveEvent {
+  type: string
+  summary: string
+}
+
+export interface RunLiveTask {
+  run_task_id: string
+  state: "pending" | "executing" | "judging" | "done" | "failed"
+  executor_status: string | null
+  executor_seconds: number | null
+  executor_seconds_source: "measured" | "elapsed" | null
+}
+
+export interface RunLiveCurrent {
+  run_task_id: string
+  task_id: string | null
+  started_at: string | null
+  elapsed_seconds: number | null
+  events: RunLiveEvent[]
+}
+
+export interface RunLiveEta {
+  estimated_remaining_seconds: number | null
+  average_executor_seconds: number | null
+  completed_sample_count: number
+  remaining_task_count: number
+}
+
+export interface RunLivePayload {
+  run_id: string
+  status: "complete" | "running" | "interrupted"
+  generated_at: string
+  tasks: RunLiveTask[]
+  current: RunLiveCurrent | null
+  eta: RunLiveEta
+}
+
 export interface ExperimentPlanItem {
   label: string
   agent: string

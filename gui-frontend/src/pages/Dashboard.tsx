@@ -90,8 +90,9 @@ export default function Dashboard() {
           icon={<Activity className="size-4" />}
           label="Running now"
           value={String(running.length)}
-          hint={running.length ? running[0].run_id : "nothing in flight"}
+          hint={running.length ? `${running[0].run_id} →` : "nothing in flight"}
           live={running.length > 0}
+          to={running.length ? `/runs/${encodeURIComponent(running[0].run_id)}` : undefined}
         />
       </div>
 
@@ -196,15 +197,18 @@ function StatCard({
   value,
   hint,
   live,
+  to,
 }: {
   icon: React.ReactNode
   label: string
   value: string
   hint: string
   live?: boolean
+  /* When set, the whole card links to this route (e.g. the running run). */
+  to?: string
 }) {
-  return (
-    <Card>
+  const card = (
+    <Card className={to ? "transition-colors hover:border-live-ink/40 hover:bg-muted/40" : undefined}>
       <CardContent className="grid gap-1">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           {icon}
@@ -212,9 +216,21 @@ function StatCard({
           {live && <span className="size-1.5 animate-pulse rounded-full bg-live-ink" aria-hidden />}
         </div>
         <div className="text-2xl font-semibold tabular-nums tracking-tight">{value}</div>
-        <div className="truncate text-xs text-muted-foreground">{hint}</div>
+        <div className="truncate text-xs text-muted-foreground" title={hint}>
+          {hint}
+        </div>
       </CardContent>
     </Card>
+  )
+  if (!to) return card
+  return (
+    <Link
+      to={to}
+      aria-label={`${label}: ${hint}`}
+      className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {card}
+    </Link>
   )
 }
 

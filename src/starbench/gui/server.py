@@ -202,6 +202,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json({"runs": data.list_runs(state.runs_dir, active)})
         elif len(segments) == 2 and segments[0] == "runs":
             self._send_json(data.run_detail(state.runs_dir, segments[1], active))
+        elif len(segments) == 3 and segments[0] == "runs" and segments[2] == "live":
+            self._send_json(data.run_live(state.runs_dir, segments[1], active))
         elif len(segments) == 4 and segments[0] == "runs" and segments[2] == "tasks":
             self._send_json(data.task_run_detail(state.runs_dir, segments[1], segments[3]))
         elif (

@@ -1,7 +1,16 @@
+import { useEffect, useRef } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ChevronDown, OctagonX } from "lucide-react"
+import {
+  CheckCircle2,
+  ChevronDown,
+  Circle,
+  LoaderCircle,
+  OctagonX,
+  Scale,
+  XCircle,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -32,7 +41,16 @@ import {
   VerdictBadge,
 } from "@/components/verdict"
 import { ErrorNote } from "@/pages/Dashboard"
-import { api, type RunDetail as RunDetailData } from "@/lib/api"
+import {
+  api,
+  type RunDetail as RunDetailData,
+  type RunLiveCurrent,
+  type RunLiveEta,
+  type RunLivePayload,
+  type RunLiveState,
+  type RunLiveTask,
+} from "@/lib/api"
+import { cn } from "@/lib/utils"
 import { fmtDelta, fmtDuration, fmtRate, fmtTime, percent, spanBetween } from "@/lib/format"
 
 export default function RunDetail() {
@@ -51,6 +69,21 @@ export default function RunDetail() {
     enabled: runQuery.data?.status === "running",
     refetchInterval: 5000,
   })
+  const liveQuery = useQuery({
+    queryKey: ["runLive", runId],
+    queryFn: () => api.runLive(runId),
+    enabled: runQuery.data?.status === "running",
+    refetchInterval: 4000,
+  })
+  // When the live poll sees the run leave "running", refresh the static detail
+  // (and the runs list) so the page settles into its final state.
+  const liveStatus = liveQuery.data?.status
+  useEffect(() => {
+    if (liveStatus && liveStatus !== "running") {
+      queryClient.invalidateQueries({ queryKey: ["run", runId] })
+      queryClient.invalidateQueries({ queryKey: ["runs"] })
+    }
+  }, [liveStatus, queryClient, runId])
   const stopMutation = useMutation({
     mutationFn: () => api.stop(runId),
     onSuccess: () => {
@@ -99,6 +132,10 @@ export default function RunDetail() {
           )}
         </div>
       </div>
+
+      {run.status === "running" && liveQuery.data?.status === "running" && (
+        <LiveProgressCard runId={runId} live={liveQuery.data} />
+      )}
 
       {run.status === "running" && run.progress && <ProgressCard progress={run.progress} />}
 
@@ -323,6 +360,209 @@ function ProgressLane({
         </span>
       </div>
       <Progress value={total ? (done / total) * 100 : undefined} className="h-2" />
+    </div>
+  )
+}
+
+/* Live mode — only rendered while the run is "running". Every lane speaks
+   through three channels (glyph + color + word), never color alone. */
+
+const LANE_STYLES: Record<
+  RunLiveState,
+  { label: string; icon: typeof Circle; card: string; ink: string }
+> = {
+  pending: {
+    label: "Pending",
+    icon: Circle,
+    card: "border-dashed border-border bg-muted/30",
+    ink: "text-muted-foreground",
+  },
+  executing: {
+    label: "Executing",
+    icon: LoaderCircle,
+    card: "border-live-ink/40 bg-live-soft",
+    ink: "text-live-ink",
+  },
+  judging: {
+    label: "Judging",
+    icon: Scale,
+    card: "border-warn-ink/40 bg-warn-soft",
+    ink: "text-warn-ink",
+  },
+  done: {
+    label: "Done",
+    icon: CheckCircle2,
+    card: "border-pass-ink/30 bg-pass-soft",
+    ink: "text-pass-ink",
+  },
+  failed: {
+    label: "Failed",
+    icon: XCircle,
+    card: "border-fail-ink/40 bg-fail-soft",
+    ink: "text-fail-ink",
+  },
+}
+
+function LiveProgressCard({ runId, live }: { runId: string; live: RunLivePayload }) {
+  const navigate = useNavigate()
+  return (
+    <Card className="min-w-0 border-live-ink/25">
+      <CardContent className="grid gap-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
+            Live task progress
+          </div>
+          <EtaLine eta={live.eta} />
+        </div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {live.tasks.map((lane) => (
+            <LaneCell
+              key={lane.run_task_id}
+              lane={lane}
+              onOpen={() =>
+                navigate(
+                  `/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(
+                    lane.run_task_id,
+                  )}`,
+                )
+              }
+            />
+          ))}
+        </div>
+        {live.current && <ExecutingNow runId={runId} current={live.current} />}
+      </CardContent>
+    </Card>
+  )
+}
+
+function LaneCell({ lane, onOpen }: { lane: RunLiveTask; onOpen: () => void }) {
+  const style = LANE_STYLES[lane.state]
+  const Icon = style.icon
+  const label =
+    lane.state === "failed" && lane.executor_status === "timeout" ? "Timeout" : style.label
+  // Pending lanes have no task directory on disk yet — nothing to open.
+  const clickable = lane.state !== "pending"
+  const timing =
+    lane.executor_seconds === null || lane.executor_seconds === undefined
+      ? null
+      : lane.executor_seconds_source === "elapsed"
+        ? `${fmtDuration(lane.executor_seconds)} so far`
+        : fmtDuration(lane.executor_seconds)
+  const body = (
+    <>
+      <span className={cn("flex items-center gap-1 text-xs font-medium", style.ink)}>
+        <Icon
+          className={cn("size-3 shrink-0", lane.state === "executing" && "animate-spin")}
+          aria-hidden
+        />
+        {label}
+      </span>
+      <span className="w-full truncate font-mono text-[11px] text-muted-foreground">
+        {lane.run_task_id}
+      </span>
+      <span className="text-[11px] tabular-nums text-muted-foreground">
+        {timing ?? " "}
+      </span>
+    </>
+  )
+  const className = cn(
+    "flex w-36 shrink-0 flex-col items-start gap-0.5 rounded-md border px-2.5 py-2 text-left",
+    style.card,
+  )
+  if (!clickable) {
+    return (
+      <div className={className} title={`${lane.run_task_id} — ${label} (not started yet)`}>
+        {body}
+      </div>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={`${lane.run_task_id} — ${label}`}
+      className={cn(
+        className,
+        "cursor-pointer transition-shadow hover:ring-2 hover:ring-ring/40 focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    >
+      {body}
+    </button>
+  )
+}
+
+function EtaLine({ eta }: { eta: RunLiveEta }) {
+  if (eta.estimated_remaining_seconds === null) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Estimating time remaining… (needs at least 2 completed tasks)
+      </p>
+    )
+  }
+  return (
+    <p className="text-xs text-muted-foreground">
+      ~{fmtDuration(eta.estimated_remaining_seconds)} remaining · estimate from{" "}
+      {eta.completed_sample_count} completed task{eta.completed_sample_count === 1 ? "" : "s"} ×{" "}
+      {eta.remaining_task_count} left
+    </p>
+  )
+}
+
+function ExecutingNow({ runId, current }: { runId: string; current: RunLiveCurrent }) {
+  const navigate = useNavigate()
+  const scrollRef = useRef<HTMLDivElement>(null)
+  // Keep the newest event in view as the tail grows.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [current.events])
+  return (
+    <div className="grid min-w-0 gap-1.5">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
+          Executing now
+        </span>
+        <button
+          type="button"
+          className="min-w-0 max-w-full truncate font-mono text-sm font-medium hover:underline"
+          title={current.run_task_id}
+          onClick={() =>
+            navigate(
+              `/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(
+                current.run_task_id,
+              )}`,
+            )
+          }
+        >
+          {current.run_task_id}
+        </button>
+        {current.elapsed_seconds !== null && current.elapsed_seconds !== undefined && (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            running {fmtDuration(current.elapsed_seconds)}
+          </span>
+        )}
+      </div>
+      {current.events.length ? (
+        <div
+          ref={scrollRef}
+          className="max-h-56 overflow-auto rounded-md border bg-muted/30 p-2"
+        >
+          {current.events.map((event, index) => (
+            <div
+              key={index}
+              className="flex gap-2 whitespace-nowrap font-mono text-xs leading-5"
+            >
+              <span className="shrink-0 text-muted-foreground">{event.type}</span>
+              <span>{event.summary || "–"}</span>
+            </div>
+          ))}
+          <p className="mt-1 text-[11px] font-sans text-muted-foreground">
+            Last {current.events.length} events, summarized · newest at the bottom
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">No events on disk for this task yet.</p>
+      )}
     </div>
   )
 }
