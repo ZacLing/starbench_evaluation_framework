@@ -318,6 +318,58 @@ export interface CoveragePayload {
   generated_at: string
 }
 
+export interface ProfileSnapshotProfile {
+  id: string
+  rev: number
+  name: string
+}
+
+export interface ProfileSnapshotContender {
+  agent: string
+  model: string
+  label?: string
+  thinking_effort?: string
+  auth_mode?: string
+  provider_id?: string
+  base_url?: string
+  api_key_env?: string
+}
+
+export interface ProfileSnapshotInstrument {
+  evaluator_agent: string
+  evaluator_model: string
+  evaluator_auth_mode: string
+  judge_mode: string
+  evaluator_timeout_seconds?: number
+}
+
+export interface ProfileSnapshotExecution {
+  seed: number
+  batch_size: number
+  repeat: number
+  executor_backend: string
+  executor_auth_mode: string
+  max_evaluator_parallel?: number
+  web_search?: "task" | "allow" | "deny"
+  claude_max_turns?: number
+}
+
+export interface ProfileSnapshotTaskSet {
+  tasks_dir: string
+  task_ids: string[]
+}
+
+export interface ProfileSnapshot {
+  schema_version: number
+  captured_at: string
+  profile: ProfileSnapshotProfile
+  contender: ProfileSnapshotContender
+  roster: ProfileSnapshotContender[]
+  instrument: ProfileSnapshotInstrument
+  execution: ProfileSnapshotExecution
+  task_set: ProfileSnapshotTaskSet
+}
+
 export interface ExperimentPlanItem {
   label: string
   agent: string

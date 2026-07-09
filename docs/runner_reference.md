@@ -21,6 +21,10 @@ For stable run-output files written by this command, see
 
 The seed controls Starbench scheduling randomness. It does not claim to make model internals deterministic.
 
+## Profile Snapshot
+
+- `--profile-snapshot PATH`: a JSON file carrying the launch-time measurement contract (profile identity + revision, this run's contender, the full roster, judge instrument, execution parameters, resolved task set — see `schemas/starbench/v1/profile_snapshot.schema.json`). The runner validates it against the public contract **before anything is written**: an unreadable file, invalid JSON, or a contract violation aborts the start and no run directory is created (fail closed, never a silent drop). A valid snapshot is written atomically to `<run-root>/profile_snapshot.json`, so the run carries the exact contract it was launched under even after the profile is edited later. Credentials never travel through a snapshot — the contract only has fields for environment-variable *names* (`api_key_env`) and rejects unknown keys. The console passes this flag automatically when launching from a profile that declares a roster; runs without it stay fully supported.
+
 ## Models
 
 - `--executor-model MODEL_ID`: exact model id passed to the selected executor runtime.

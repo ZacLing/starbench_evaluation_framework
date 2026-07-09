@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from starbench.contracts import validate_payload
 from starbench.gui import experiments
 from starbench.gui.experiments import ExperimentError
 from helpers import make_run, write_json
@@ -140,6 +141,7 @@ class ExperimentTest(unittest.TestCase):
         loaded = experiments.load_profiles(self.runs_dir)
         self.assertFalse(loaded["persisted"])
         self.assertEqual(loaded["profiles"][0]["id"], "standard")
+        self.assertEqual(loaded["default_profile_id"], "standard")
 
         saved = experiments.save_profiles(
             self.runs_dir,
@@ -182,6 +184,113 @@ class ExperimentTest(unittest.TestCase):
                         {"id": "a", "shared": {}, "per_contender_fields": ["nope"]}
                     ]
                 },
+            )
+
+    def test_hsw_frontier_builtin_template(self) -> None:
+        loaded = experiments.load_profiles(self.runs_dir)
+        by_id = {profile["id"]: profile for profile in loaded["profiles"]}
+        hsw = by_id["hsw-frontier"]
+        self.assertEqual(hsw["name"], "HSW frontier sweep")
+        self.assertEqual(hsw["shared"]["repeat"], 5)
+        # Same instrument as "standard" — only the repeat count differs.
+        standard_shared = dict(by_id["standard"]["shared"])
+        hsw_shared = dict(hsw["shared"])
+        self.assertEqual(standard_shared.pop("repeat"), 1)
+        self.assertEqual(hsw_shared.pop("repeat"), 5)
+        self.assertEqual(standard_shared, hsw_shared)
+        # Empty roster placeholder: which columns to measure is the operator's
+        # judgment, not a shipped guess. task_set is deliberately absent.
+        self.assertEqual(hsw["roster"], [])
+        self.assertNotIn("task_set", hsw)
+        # The plain default stays roster-less (bare launches remain the norm).
+        self.assertNotIn("roster", by_id["standard"])
+
+    def save_roster_profile(self, **overrides):
+        profile = {
+            "id": "hsw",
+            "name": "HSW",
+            "shared": {"judge_mode": "single", "seed": 1, "repeat": 5},
+            "per_contender_fields": ["model"],
+            "roster": [
+                {"agent": "claude", "model": "claude-opus-4-8", "provider_id": "anthropic"},
+                {"agent": "codex", "model": "gpt-5.5"},
+            ],
+            "task_set": {"tasks_dir": str(self.tasks_dir), "task_ids": ["demo_task"]},
+        }
+        profile.update(overrides)
+        return experiments.save_profiles(self.runs_dir, {"profiles": [profile]})
+
+    def test_profiles_roster_and_task_set_roundtrip(self) -> None:
+        self.save_roster_profile()
+        reloaded = experiments.load_profiles(self.runs_dir)["profiles"][0]
+        self.assertEqual(len(reloaded["roster"]), 2)
+        self.assertEqual(reloaded["roster"][0]["provider_id"], "anthropic")
+        self.assertEqual(reloaded["task_set"]["task_ids"], ["demo_task"])
+        self.assertEqual(reloaded["rev"], 1)
+
+    def test_profiles_rev_increments_only_on_content_change(self) -> None:
+        self.save_roster_profile()
+        # Identical save: the revision counter must not move.
+        self.save_roster_profile()
+        self.assertEqual(experiments.load_profiles(self.runs_dir)["profiles"][0]["rev"], 1)
+        # Content change bumps it.
+        self.save_roster_profile(name="HSW v2")
+        self.assertEqual(experiments.load_profiles(self.runs_dir)["profiles"][0]["rev"], 2)
+        # A client echoing back a stale rev is ignored: the server assigns it.
+        self.save_roster_profile(name="HSW v3", rev=99)
+        self.assertEqual(experiments.load_profiles(self.runs_dir)["profiles"][0]["rev"], 3)
+
+    def test_profiles_old_format_backward_compatible(self) -> None:
+        # A pre-roster profiles.json (no roster/task_set/rev) loads untouched
+        # and can be re-saved as-is; new fields stay optional.
+        write_json(
+            self.runs_dir / "profiles.json",
+            {
+                "default_profile_id": "legacy",
+                "profiles": [
+                    {
+                        "id": "legacy",
+                        "name": "Legacy",
+                        "shared": {"judge_mode": "single"},
+                        "per_contender_fields": ["model"],
+                    }
+                ],
+            },
+        )
+        loaded = experiments.load_profiles(self.runs_dir)
+        self.assertTrue(loaded["persisted"])
+        self.assertEqual(loaded["profiles"][0]["id"], "legacy")
+        self.assertNotIn("roster", loaded["profiles"][0])
+        saved = experiments.save_profiles(
+            self.runs_dir, {"default_profile_id": "legacy", "profiles": loaded["profiles"][:]}
+        )
+        self.assertEqual(saved["profiles"][0]["rev"], 1)
+
+    def test_profiles_roster_validation(self) -> None:
+        with self.assertRaisesRegex(ExperimentError, "must be a list"):
+            self.save_roster_profile(roster="claude")
+        with self.assertRaisesRegex(ExperimentError, "must be an object"):
+            self.save_roster_profile(roster=["claude"])
+        with self.assertRaisesRegex(ExperimentError, "needs an `agent`"):
+            self.save_roster_profile(roster=[{"model": "gpt-5.5"}])
+        # Credential-shaped fields are rejected by name whitelist.
+        with self.assertRaisesRegex(ExperimentError, "unsupported field"):
+            self.save_roster_profile(
+                roster=[{"agent": "codex", "model": "gpt-5.5", "api_key": "sk-secret"}]
+            )
+
+    def test_profiles_task_set_validation(self) -> None:
+        with self.assertRaisesRegex(ExperimentError, "task_set must be an object"):
+            self.save_roster_profile(task_set=["demo_task"])
+        with self.assertRaisesRegex(ExperimentError, "tasks_dir"):
+            self.save_roster_profile(task_set={"task_ids": ["demo_task"]})
+        with self.assertRaisesRegex(ExperimentError, "task_ids"):
+            self.save_roster_profile(
+                task_set={"tasks_dir": str(self.tasks_dir), "task_ids": "demo_task"}
+            )
+        with self.assertRaisesRegex(ExperimentError, "unsupported field"):
+            self.save_roster_profile(
+                task_set={"tasks_dir": str(self.tasks_dir), "task_ids": [], "extra": 1}
             )
 
 
@@ -748,6 +857,218 @@ class ExperimentRigorTest(unittest.TestCase):
         self.assertEqual(with_rigor["per_contender"], without["per_contender"])
         self.assertEqual(with_rigor["total"], without["total"])
         self.assertEqual(with_rigor["per_contender"], 2)  # one run per task, unchanged
+
+
+class ExperimentProfileSnapshotTest(unittest.TestCase):
+    """Snapshot-on-use: launching from a roster-carrying profile attaches one
+    contract snapshot per contender; bare launches attach nothing."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_snapshot_"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+        self.tasks_dir = self.tmp / "tasks"
+        self.tasks_dir.mkdir()
+        for task_id in ("task_a", "task_b"):
+            pkg = self.tasks_dir / task_id
+            write_json(pkg / "task.json", {"id": task_id, "name": task_id})
+            write_json(
+                pkg / "rubrics.json",
+                {"rubrics": [{"id": "R001", "fail_fast": True, "expected": True, "question": "?"}]},
+            )
+            (pkg / "prompt.md").write_text("# go", encoding="utf-8")
+        # Providers the snapshot inlines (endpoint value + key env NAME only).
+        write_json(
+            self.runs_dir / "providers.json",
+            {
+                "providers": [
+                    {
+                        "id": "anthropic",
+                        "name": "Anthropic",
+                        "kind": "anthropic",
+                        "auth": "api_key",
+                        "base_url": "https://api.anthropic.com",
+                        "api_key_env": "ANTHROPIC_API_KEY",
+                        "models": ["claude-opus-4-8"],
+                    },
+                    {
+                        "id": "openai",
+                        "name": "OpenAI",
+                        "kind": "openai",
+                        "auth": "api_key",
+                        "base_url": "",
+                        "api_key_env": "OPENAI_API_KEY",
+                        "models": ["gpt-5.5"],
+                    },
+                ]
+            },
+        )
+
+    def save_profile(self, **overrides) -> None:
+        profile = {
+            "id": "hsw",
+            "name": "HSW sweep",
+            "shared": {
+                "evaluator_agent": "codex",
+                "evaluator_model": "gpt-5.5",
+                "evaluator_auth_mode": "global",
+                "judge_mode": "single",
+                "evaluator_timeout_seconds": 600,
+                "executor_backend": "local",
+                "seed": 7,
+                "batch_size": 2,
+                "repeat": 5,
+            },
+            "per_contender_fields": ["model", "credentials"],
+            "roster": [
+                {
+                    "agent": "claude",
+                    "model": "claude-opus-4-8",
+                    "provider_id": "anthropic",
+                    "label": "Claude Opus",
+                },
+                {"agent": "codex", "model": "gpt-5.5", "provider_id": "openai"},
+            ],
+            "task_set": {"tasks_dir": str(self.tasks_dir), "task_ids": []},
+        }
+        profile.update(overrides)
+        experiments.save_profiles(self.runs_dir, {"profiles": [profile]})
+
+    def payload(self, **overrides):
+        base = {
+            "name": "exp_snapshot",
+            "profile_id": "hsw",
+            "tasks_dir": str(self.tasks_dir),
+            "tasks": [],
+            "shared": {
+                "evaluator_agent": "codex",
+                "evaluator_model": "gpt-5.5",
+                "evaluator_auth_mode": "global",
+                "judge_mode": "single",
+                "evaluator_timeout_seconds": 600,
+                "executor_backend": "local",
+                "seed": 7,
+                "batch_size": 2,
+                "repeat": 5,
+            },
+            "contenders": [
+                {
+                    "label": "Claude Opus",
+                    "agent": "claude",
+                    "provider_id": "anthropic",
+                    "model": "claude-opus-4-8",
+                },
+                {
+                    "label": "GPT",
+                    "agent": "codex",
+                    "provider_id": "openai",
+                    "model": "gpt-5.5",
+                },
+            ],
+        }
+        base.update(overrides)
+        return base
+
+    @staticmethod
+    def snapshot_path_from(argv) -> str:
+        return argv[argv.index("--profile-snapshot") + 1]
+
+    def test_roster_profile_attaches_one_snapshot_per_contender(self) -> None:
+        self.save_profile()
+        plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
+        self.assertEqual(len(plan["plans"]), 2)
+        paths = set()
+        for item in plan["plans"]:
+            path = self.snapshot_path_from(item["argv"])
+            paths.add(path)
+            snapshot = json.loads(Path(path).read_text(encoding="utf-8"))
+            # The transported file honours the public contract as written.
+            validate_payload("profile_snapshot.schema.json", snapshot)
+            # This run's column corresponds to the launched contender.
+            self.assertEqual(snapshot["contender"]["agent"], item["agent"])
+            self.assertEqual(snapshot["contender"]["model"], item["model"])
+            self.assertEqual(snapshot["contender"]["label"], item["label"])
+            # Roster context travels whole, resolved to inline values.
+            self.assertEqual(len(snapshot["roster"]), 2)
+            self.assertEqual(
+                snapshot["roster"][0]["base_url"], "https://api.anthropic.com"
+            )
+            self.assertEqual(snapshot["roster"][0]["api_key_env"], "ANTHROPIC_API_KEY")
+            # Profile identity + revision pin the contract as of launch.
+            self.assertEqual(snapshot["profile"], {"id": "hsw", "rev": 1, "name": "HSW sweep"})
+            # Instrument and execution mirror the shared configuration.
+            self.assertEqual(snapshot["instrument"]["evaluator_agent"], "codex")
+            self.assertEqual(snapshot["instrument"]["evaluator_auth_mode"], "global")
+            self.assertEqual(snapshot["instrument"]["evaluator_timeout_seconds"], 600)
+            self.assertEqual(snapshot["execution"]["seed"], 7)
+            self.assertEqual(snapshot["execution"]["repeat"], 5)
+            self.assertEqual(snapshot["execution"]["executor_backend"], "local")
+            # Empty selector list resolved to every task in the directory.
+            self.assertEqual(snapshot["task_set"]["task_ids"], ["task_a", "task_b"])
+            # Credential discipline: env-var NAMES only, never key material.
+            serialized = json.dumps(snapshot)
+            self.assertNotIn("sk-", serialized)
+            self.assertNotIn('"api_key"', serialized)
+        self.assertEqual(len(paths), 2, "each contender gets its own snapshot file")
+
+    def test_contender_snapshot_inlines_its_provider(self) -> None:
+        self.save_profile()
+        plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
+        by_agent = {item["agent"]: item for item in plan["plans"]}
+        claude = json.loads(
+            Path(self.snapshot_path_from(by_agent["claude"]["argv"])).read_text(encoding="utf-8")
+        )
+        self.assertEqual(claude["contender"]["provider_id"], "anthropic")
+        self.assertEqual(claude["contender"]["base_url"], "https://api.anthropic.com")
+        self.assertEqual(claude["contender"]["api_key_env"], "ANTHROPIC_API_KEY")
+        codex = json.loads(
+            Path(self.snapshot_path_from(by_agent["codex"]["argv"])).read_text(encoding="utf-8")
+        )
+        # Official OpenAI provider: no base_url configured, key env still named.
+        self.assertEqual(codex["contender"]["provider_id"], "openai")
+        self.assertNotIn("base_url", codex["contender"])
+        self.assertEqual(codex["contender"]["api_key_env"], "OPENAI_API_KEY")
+
+    def test_snapshot_cites_the_current_profile_rev(self) -> None:
+        self.save_profile()
+        self.save_profile(name="HSW sweep v2")  # rev 2
+        plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
+        snapshot = json.loads(
+            Path(self.snapshot_path_from(plan["plans"][0]["argv"])).read_text(encoding="utf-8")
+        )
+        self.assertEqual(snapshot["profile"]["rev"], 2)
+        self.assertEqual(snapshot["profile"]["name"], "HSW sweep v2")
+
+    def test_profile_without_roster_launches_bare(self) -> None:
+        self.save_profile(roster=[])
+        plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
+        for item in plan["plans"]:
+            self.assertNotIn("--profile-snapshot", item["argv"])
+
+    def test_payload_without_profile_launches_bare(self) -> None:
+        self.save_profile()
+        payload = self.payload()
+        del payload["profile_id"]
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        for item in plan["plans"]:
+            self.assertNotIn("--profile-snapshot", item["argv"])
+
+    def test_unknown_profile_id_rejected(self) -> None:
+        self.save_profile()
+        with self.assertRaisesRegex(ExperimentError, "ghost"):
+            experiments.plan_experiment(
+                self.payload(profile_id="ghost"), runs_dir=self.runs_dir
+            )
+
+    def test_dangling_roster_provider_rejected(self) -> None:
+        # A snapshot must never carry an unresolvable reference: fail the plan,
+        # do not write a half-true contract.
+        self.save_profile(
+            roster=[{"agent": "claude", "model": "claude-opus-4-8", "provider_id": "ghost"}]
+        )
+        with self.assertRaisesRegex(ExperimentError, "ghost"):
+            experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
 
 
 if __name__ == "__main__":

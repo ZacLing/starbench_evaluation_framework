@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import random
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
@@ -54,6 +56,33 @@ def make_run_task_ids(task_runs: Sequence[Any]) -> List[str]:
         suffix = counts[base_id]
         run_task_ids.append(base_id if suffix == 1 else f"{base_id}__{suffix:03d}")
     return run_task_ids
+
+
+def write_profile_snapshot(run_root: Path, snapshot: Dict[str, Any]) -> Path:
+    """Atomically materialize the launch-time profile snapshot into the run root.
+
+    The snapshot was already validated against the public contract at
+    argument-parse time (fail closed, before the run directory existed); this
+    write is temp-file + ``os.replace`` so a crash mid-write can never leave a
+    truncated ``profile_snapshot.json`` behind. The runner stays the only
+    writer inside the run directory.
+    """
+    target = run_root / "profile_snapshot.json"
+    body = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(run_root), prefix=".profile_snapshot-", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.replace(tmp_name, target)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return target
 
 
 def executor_timing_from_status(status: Dict[str, Any]) -> Dict[str, Any]:
@@ -113,6 +142,10 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         raise SystemExit(
             f"Run directory already exists: {run_root}. Choose a new --run-id or remove the old run."
         )
+    # Contract-validated at parse time; a run launched from a profile carries
+    # its measurement contract from the first moment the directory exists.
+    if getattr(args, "profile_snapshot_data", None) is not None:
+        write_profile_snapshot(run_root, args.profile_snapshot_data)
     selected_instruction_step_ids = task_runs[0].instruction_step_ids if args.instruction_mode == "select" and task_runs else []
     instruction_variants: List[Dict[str, Any]] = []
     seen_instruction_variants = set()

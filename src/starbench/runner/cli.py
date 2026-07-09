@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, Sequence
 
 from ..adapters import BUILTIN_AGENTS, DEFAULT_DOCKER_IMAGES, resolve
+from ..contracts import ContractValidationError, validate_payload
 from .custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .orchestrator import run_benchmark
 
@@ -233,6 +234,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_EXECUTOR_SKILLS_DIR,
         help="Shared executor skill registry root containing registry.json and skill directories.",
     )
+    parser.add_argument(
+        "--profile-snapshot",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a profile-snapshot JSON (the launch-time measurement contract; "
+            "see schemas/starbench/v1/profile_snapshot.schema.json). Validated against "
+            "the public contract before anything is written — an invalid snapshot "
+            "aborts the start. A valid one is copied atomically to "
+            "<run-root>/profile_snapshot.json. The contract carries environment-variable "
+            "NAMES only (api_key_env), never key values."
+        ),
+    )
     parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars and progress stderr output.")
     args = parser.parse_args(argv)
     if args.batch_size < 1:
@@ -281,6 +295,28 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.tasks_dir = args.tasks_dir.resolve()
     args.runs_dir = args.runs_dir.resolve()
     args.executor_skill_root = args.executor_skill_root.resolve()
+
+    # Profile snapshot: validate at parse time, before the run directory exists.
+    # A snapshot that fails its public contract must abort the start (fail
+    # closed) rather than be dropped silently or leave half a run behind.
+    args.profile_snapshot_data = None
+    if args.profile_snapshot is not None:
+        try:
+            raw_snapshot = args.profile_snapshot.read_text(encoding="utf-8")
+        except OSError as exc:
+            parser.error(f"--profile-snapshot: cannot read {args.profile_snapshot}: {exc}")
+        try:
+            snapshot_payload = json.loads(raw_snapshot)
+        except ValueError as exc:
+            parser.error(f"--profile-snapshot: {args.profile_snapshot} is not valid JSON: {exc}")
+        try:
+            validate_payload("profile_snapshot.schema.json", snapshot_payload)
+        except ContractValidationError as exc:
+            parser.error(
+                f"--profile-snapshot: {args.profile_snapshot} violates the "
+                f"profile_snapshot contract: {exc}"
+            )
+        args.profile_snapshot_data = snapshot_payload
     return args
 
 

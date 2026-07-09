@@ -8,18 +8,24 @@ stay plain runs that the CLI fully owns.
 
 Profiles live in `<runs-dir>/profiles.json`: named bundles of the shared
 configuration plus a declaration of which fields each contender fills in
-individually.
+individually. A profile may additionally declare a `roster` (the contender
+columns its coverage matrix measures) and a `task_set`; launching from such a
+profile hands every contender's run a self-contained, credential-free
+`profile_snapshot.json` (snapshot-on-use — the runner validates and writes it).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..adapters import DEFAULT_DOCKER_IMAGES, list_builtin
+from ..contracts import ARTIFACT_SCHEMA_VERSION, ContractValidationError, validate_payload
 from . import injection, providers as providers_module, skills as skills_module
 from .agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
 from .data import SAFE_ID, _read_json, read_human_reference_steps, read_rigors, run_overview
@@ -57,6 +63,13 @@ def _validated_thinking_effort(agent: str, contender: Dict[str, Any], label: str
 
 PER_CONTENDER_FIELD_CHOICES = ["model", "credentials", "gateway", "thinking_effort"]
 
+# Fields a profile roster entry may carry: the reference shape the wizard
+# collects per contender (runtime + provider reference + model). Credentials
+# never belong in a profile — providers are referenced by id, and the launch
+# snapshot inlines only endpoint values and env-var NAMES.
+ROSTER_ENTRY_FIELDS = {"agent", "model", "label", "provider_id", "thinking_effort"}
+TASK_SET_FIELDS = {"tasks_dir", "task_ids"}
+
 BUILTIN_PROFILE = {
     "id": "standard",
     "name": "Standard evaluation",
@@ -74,6 +87,20 @@ BUILTIN_PROFILE = {
     },
     "per_contender_fields": ["model", "credentials", "gateway"],
 }
+
+# HSW measurement-contract template: same instrument as "standard" but five
+# repeats per cell (a single execution is a sample, not a score). The roster is
+# deliberately an empty placeholder — which contender columns are worth
+# measuring is a human judgment the operator fills in, not a default we invent.
+BUILTIN_PROFILE_HSW_FRONTIER = {
+    "id": "hsw-frontier",
+    "name": "HSW frontier sweep",
+    "shared": {**BUILTIN_PROFILE["shared"], "repeat": 5},
+    "per_contender_fields": ["model", "credentials", "gateway"],
+    "roster": [],
+}
+
+BUILTIN_PROFILES = [BUILTIN_PROFILE, BUILTIN_PROFILE_HSW_FRONTIER]
 
 
 class ExperimentError(ValueError):
@@ -93,12 +120,60 @@ def load_profiles(runs_dir: Path) -> Dict[str, Any]:
     if not isinstance(payload, dict) or not isinstance(payload.get("profiles"), list):
         return {
             "default_profile_id": BUILTIN_PROFILE["id"],
-            "profiles": [BUILTIN_PROFILE],
+            "profiles": list(BUILTIN_PROFILES),
             "persisted": False,
         }
     payload.setdefault("default_profile_id", None)
     payload["persisted"] = True
     return payload
+
+
+def _validate_profile_roster(profile_id: str, roster: Any) -> None:
+    """Roster entries follow the wizard's reference shape; unknown keys are
+    rejected so credential-shaped fields can never enter profiles.json."""
+    if not isinstance(roster, list):
+        raise ExperimentError(f"Profile {profile_id} roster must be a list of contender specs.")
+    for index, entry in enumerate(roster):
+        if not isinstance(entry, dict):
+            raise ExperimentError(f"Profile {profile_id} roster[{index}] must be an object.")
+        unknown = set(entry) - ROSTER_ENTRY_FIELDS
+        if unknown:
+            raise ExperimentError(
+                f"Profile {profile_id} roster[{index}] has unsupported field(s) "
+                f"{sorted(unknown)}; allowed: {sorted(ROSTER_ENTRY_FIELDS)}. Credentials "
+                "never belong in a profile — reference a provider by id instead."
+            )
+        if not isinstance(entry.get("agent"), str) or not entry.get("agent"):
+            raise ExperimentError(f"Profile {profile_id} roster[{index}] needs an `agent` string.")
+        for field in ("model", "label", "provider_id", "thinking_effort"):
+            if field in entry and not isinstance(entry[field], str):
+                raise ExperimentError(
+                    f"Profile {profile_id} roster[{index}].{field} must be a string."
+                )
+
+
+def _validate_profile_task_set(profile_id: str, task_set: Any) -> None:
+    if not isinstance(task_set, dict):
+        raise ExperimentError(f"Profile {profile_id} task_set must be an object.")
+    unknown = set(task_set) - TASK_SET_FIELDS
+    if unknown:
+        raise ExperimentError(
+            f"Profile {profile_id} task_set has unsupported field(s) {sorted(unknown)}; "
+            f"allowed: {sorted(TASK_SET_FIELDS)}."
+        )
+    if not isinstance(task_set.get("tasks_dir"), str) or not task_set.get("tasks_dir"):
+        raise ExperimentError(f"Profile {profile_id} task_set needs a non-empty `tasks_dir`.")
+    task_ids = task_set.get("task_ids")
+    if not isinstance(task_ids, list) or not all(isinstance(item, str) for item in task_ids):
+        raise ExperimentError(
+            f"Profile {profile_id} task_set.task_ids must be a list of task ids "
+            "(empty means every task in the directory)."
+        )
+
+
+def _profile_content(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """A profile minus its revision counter — the content `rev` versions."""
+    return {key: value for key, value in profile.items() if key != "rev"}
 
 
 def save_profiles(runs_dir: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -125,11 +200,39 @@ def save_profiles(runs_dir: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
                 f"Profile {profile_id} per_contender_fields must be a subset of "
                 f"{PER_CONTENDER_FIELD_CHOICES}."
             )
+        if "roster" in profile:
+            _validate_profile_roster(profile_id, profile.get("roster"))
+        if "task_set" in profile:
+            _validate_profile_task_set(profile_id, profile.get("task_set"))
     default_id = payload.get("default_profile_id")
     if default_id is not None and default_id not in seen:
         raise ExperimentError(f"default_profile_id {default_id!r} matches no profile.")
 
-    stored = {"default_profile_id": default_id, "profiles": profiles}
+    # Revision counter: server-assigned, never trusted from the client. A new
+    # profile starts at 1; content changes bump the stored rev; an identical
+    # save keeps it. Snapshots cite this rev to pin "the contract as of launch".
+    previous = _read_json(profiles_path(runs_dir))
+    previous_by_id: Dict[str, Dict[str, Any]] = {}
+    if isinstance(previous, dict) and isinstance(previous.get("profiles"), list):
+        previous_by_id = {
+            str(entry.get("id")): entry
+            for entry in previous["profiles"]
+            if isinstance(entry, dict)
+        }
+    revised: List[Dict[str, Any]] = []
+    for profile in profiles:
+        profile_id = str(profile.get("id") or "")
+        stored_profile = dict(profile)
+        old = previous_by_id.get(profile_id)
+        if old is None:
+            stored_profile["rev"] = 1
+        elif _profile_content(old) == _profile_content(stored_profile):
+            stored_profile["rev"] = int(old.get("rev") or 1)
+        else:
+            stored_profile["rev"] = int(old.get("rev") or 1) + 1
+        revised.append(stored_profile)
+
+    stored = {"default_profile_id": default_id, "profiles": revised}
     runs_dir.mkdir(parents=True, exist_ok=True)
     profiles_path(runs_dir).write_text(
         json.dumps(stored, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -395,6 +498,127 @@ def _instruction_execution_estimate(
     }
 
 
+# ---------------------------------------------------------------------------
+# Profile snapshot (snapshot-on-use): the measurement contract each run carries
+# ---------------------------------------------------------------------------
+
+def _int_or_default(value: Any, default: int) -> int:
+    """Effective integer a launch will use: the runner's default when unset.
+
+    Snapshots inline effective values (self-containment), never blanks. Values
+    were already validated by ``build_run_argv`` before assembly runs.
+    """
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _snapshot_contender_spec(
+    entry: Dict[str, Any],
+    provider_by_id: Dict[str, Any],
+    *,
+    context: str,
+) -> Dict[str, Any]:
+    """One contender/roster entry in the snapshot's self-contained shape.
+
+    Provider references resolve to inline values here — the endpoint URL and
+    the NAME of the API-key environment variable — so the snapshot survives
+    provider edits/deletions without dangling ids. Secrets never enter a
+    snapshot: only env-var names travel, and the contract schema rejects any
+    field that could carry key material.
+    """
+    spec: Dict[str, Any] = {
+        "agent": str(entry.get("agent") or ""),
+        "model": str(entry.get("model") or ""),
+    }
+    for field in ("label", "thinking_effort", "auth_mode"):
+        value = str(entry.get(field) or "")
+        if value:
+            spec[field] = value
+    provider_id = str(entry.get("provider_id") or "")
+    if provider_id:
+        provider = provider_by_id.get(provider_id)
+        if provider is None:
+            raise ExperimentError(
+                f"{context}: provider {provider_id!r} is not a configured AI provider; "
+                "a snapshot must not carry a dangling reference."
+            )
+        spec["provider_id"] = provider_id
+        base_url = str(provider.get("base_url") or "")
+        if base_url:
+            spec["base_url"] = base_url
+        api_key_env = str(provider.get("api_key_env") or "")
+        if api_key_env:
+            spec["api_key_env"] = api_key_env
+    return spec
+
+
+def _assemble_profile_snapshot(
+    *,
+    profile: Dict[str, Any],
+    contender_spec: Dict[str, Any],
+    provider_by_id: Dict[str, Any],
+    shared: Dict[str, Any],
+    evaluator_agent: str,
+    launch_payload: Dict[str, Any],
+    effective_backend: str,
+    tasks_dir: str,
+    task_ids: List[str],
+) -> Dict[str, Any]:
+    """The full measurement contract for one contender's run, as of launch."""
+    profile_id = str(profile.get("id") or "")
+    roster = [
+        _snapshot_contender_spec(
+            entry, provider_by_id, context=f"Profile {profile_id} roster[{index}]"
+        )
+        for index, entry in enumerate(profile.get("roster") or [])
+        if isinstance(entry, dict)
+    ]
+    contender_auth = str(launch_payload.get("auth_mode") or "env")
+    instrument = {
+        "evaluator_agent": evaluator_agent,
+        "evaluator_model": str(shared.get("evaluator_model") or ""),
+        # The runner defaults --evaluator-auth-mode to --auth-mode (this
+        # contender's), so the effective value is what gets pinned here.
+        "evaluator_auth_mode": str(shared.get("evaluator_auth_mode") or "") or contender_auth,
+        "judge_mode": str(shared.get("judge_mode") or "single"),
+        "evaluator_timeout_seconds": _int_or_default(
+            shared.get("evaluator_timeout_seconds"), 900
+        ),
+    }
+    execution = {
+        "seed": _int_or_default(shared.get("seed"), 123),
+        "batch_size": _int_or_default(shared.get("batch_size"), 1),
+        "repeat": _int_or_default(shared.get("repeat"), 1),
+        "executor_backend": effective_backend,
+        "executor_auth_mode": contender_auth,
+        "max_evaluator_parallel": _int_or_default(shared.get("max_evaluator_parallel"), 4),
+        "web_search": str(launch_payload.get("web_search") or "task"),
+    }
+    claude_max_turns = shared.get("claude_max_turns")
+    if claude_max_turns not in (None, ""):
+        execution["claude_max_turns"] = int(claude_max_turns)
+    return {
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "profile": {
+            "id": profile_id,
+            # Hand-edited profiles.json may predate the revision counter; the
+            # first revision is the honest floor, matching what save assigns.
+            "rev": int(profile.get("rev") or 1),
+            "name": str(profile.get("name") or profile_id),
+        },
+        "contender": contender_spec,
+        "roster": roster,
+        "instrument": instrument,
+        "execution": execution,
+        "task_set": {"tasks_dir": tasks_dir, "task_ids": list(task_ids)},
+    }
+
+
 def plan_experiment(
     payload: Dict[str, Any],
     *,
@@ -518,6 +742,26 @@ def plan_experiment(
         for provider in providers_module.load_providers(runs_dir)["providers"]
     }
 
+    # Test-profile launch link (snapshot-on-use): a payload naming a profile
+    # with a non-empty roster gets one measurement-contract snapshot per
+    # contender, handed to the runner via --profile-snapshot. No profile, or a
+    # profile without a roster, launches bare — legal, just not a coverage-
+    # matrix column filler.
+    profile_id = str(payload.get("profile_id") or "")
+    snapshot_profile: Optional[Dict[str, Any]] = None
+    if profile_id:
+        profile_by_id = {
+            str(profile.get("id")): profile
+            for profile in load_profiles(runs_dir)["profiles"]
+            if isinstance(profile, dict)
+        }
+        launch_profile = profile_by_id.get(profile_id)
+        if launch_profile is None:
+            raise ExperimentError(f"Profile {profile_id!r} does not exist in profiles.json.")
+        profile_roster = launch_profile.get("roster")
+        if isinstance(profile_roster, list) and profile_roster:
+            snapshot_profile = launch_profile
+
     backend = str(shared.get("executor_backend") or "local")
     evaluator_agent = str(shared.get("evaluator_agent") or "codex")
     shared = _resolve_judge_reference(shared, evaluator_agent, provider_by_id, runtimes_dir)
@@ -542,6 +786,9 @@ def plan_experiment(
     for index, contender in enumerate(contenders):
         if not isinstance(contender, dict):
             raise ExperimentError("Each contender must be an object.")
+        # The reference-shaped original: the snapshot needs its provider_id,
+        # which _resolve_contender_reference drops from the resolved shape.
+        requested_contender = contender
         agent = str(contender.get("agent") or "")
         custom_meta = None
         if agent.startswith("custom:"):
@@ -649,6 +896,47 @@ def plan_experiment(
             argv = build_run_argv(launch_payload, runs_dir=runs_dir)
         except LaunchError as error:
             raise ExperimentError(f"Contender {label}: {error}")
+
+        if snapshot_profile is not None:
+            contender_spec = _snapshot_contender_spec(
+                {
+                    "agent": agent,
+                    "model": launch_payload["executor_model"],
+                    "label": label,
+                    "thinking_effort": launch_payload["thinking_effort"],
+                    "auth_mode": launch_payload["auth_mode"],
+                    "provider_id": str(requested_contender.get("provider_id") or ""),
+                },
+                provider_by_id,
+                context=f"Contender {label}",
+            )
+            snapshot = _assemble_profile_snapshot(
+                profile=snapshot_profile,
+                contender_spec=contender_spec,
+                provider_by_id=provider_by_id,
+                shared=shared,
+                evaluator_agent=evaluator_agent,
+                launch_payload=launch_payload,
+                effective_backend=effective_backend,
+                tasks_dir=str(payload.get("tasks_dir") or ""),
+                task_ids=[task_id for task_id, _ in resolved_steps],
+            )
+            # Belt and braces: the runner re-validates and fails closed, but an
+            # assembly bug should surface as a plan-time error, not at launch.
+            try:
+                validate_payload("profile_snapshot.schema.json", snapshot)
+            except ContractValidationError as error:
+                raise ExperimentError(
+                    f"Contender {label}: assembled profile snapshot violates its "
+                    f"contract: {error}"
+                )
+            fd, snapshot_path = tempfile.mkstemp(
+                prefix=f"starbench-profile-snapshot-{run_id}-", suffix=".json"
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
+            argv += ["--profile-snapshot", snapshot_path]
+
         executor_env_spec = contender.get("env") if isinstance(contender.get("env"), dict) else {}
 
         # The runner now scopes executor and judge env separately (the console

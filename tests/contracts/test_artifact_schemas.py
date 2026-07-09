@@ -31,6 +31,7 @@ EXPECTED_SCHEMAS = {
     "executor_status.schema.json",
     "human_reference.schema.json",
     "judge_aggregate.schema.json",
+    "profile_snapshot.schema.json",
     "progress_event.schema.json",
     "rigors.schema.json",
     "rubrics.schema.json",

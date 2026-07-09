@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/profile_snapshot.schema.json",
+  "title": "StarBench profile snapshot",
+  "description": "Snapshot-on-use of the Test Profile (measurement contract) a run was launched under: profile identity + revision, the contender this run measures, the roster context, the judge instrument, the execution parameters, and the resolved task set. The snapshot is self-contained (provider endpoints are inlined as values) and credential-free by construction: every object forbids unknown keys, and the only credential-shaped fields are environment-variable NAMES (api_key_env). There is no field for secret material anywhere in this contract; a payload carrying one is rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "captured_at": {
+      "description": "When the snapshot was assembled (launch time), ISO-8601.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    },
+    "profile": {
+      "description": "Identity of the profile in <runs-dir>/profiles.json at launch. rev is the profile's revision counter there; editing the profile later never rewrites this snapshot.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "rev": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "rev",
+        "name"
+      ]
+    },
+    "contender": {
+      "description": "The roster column this run measures. Provider references are resolved to inline values (base_url plus the NAME of the key env var); no key value ever appears.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "thinking_effort": {
+          "type": "string",
+          "enum": [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        "auth_mode": {
+          "type": "string",
+          "enum": [
+            "env",
+            "global",
+            "copy-auth"
+          ]
+        },
+        "provider_id": {
+          "type": "string"
+        },
+        "base_url": {
+          "description": "Provider endpoint inlined at launch so the snapshot has no dangling provider reference.",
+          "type": "string"
+        },
+        "api_key_env": {
+          "description": "NAME of the environment variable holding the provider key. Never the key value: this contract has no field for secrets, and unknown keys are rejected.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "model"
+      ]
+    },
+    "roster": {
+      "description": "The profile's full roster as declared at launch (the comparison context / coverage-matrix columns), each entry resolved the same way as `contender`.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "thinking_effort": {
+            "type": "string",
+            "enum": [
+              "none",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "auth_mode": {
+            "type": "string",
+            "enum": [
+              "env",
+              "global",
+              "copy-auth"
+            ]
+          },
+          "provider_id": {
+            "type": "string"
+          },
+          "base_url": {
+            "type": "string"
+          },
+          "api_key_env": {
+            "description": "NAME of the environment variable holding the provider key; never the key value.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent",
+          "model"
+        ]
+      }
+    },
+    "instrument": {
+      "description": "The measurement instrument (judge). Changing any of these means measuring with a different ruler.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "evaluator_agent": {
+          "type": "string"
+        },
+        "evaluator_model": {
+          "type": "string"
+        },
+        "evaluator_auth_mode": {
+          "type": "string",
+          "enum": [
+            "env",
+            "global",
+            "copy-auth"
+          ]
+        },
+        "judge_mode": {
+          "type": "string",
+          "enum": [
+            "both",
+            "single",
+            "parallel"
+          ]
+        },
+        "evaluator_timeout_seconds": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "evaluator_agent",
+        "evaluator_model",
+        "evaluator_auth_mode",
+        "judge_mode"
+      ]
+    },
+    "execution": {
+      "description": "Execution strategy in effect for this run (part of the measurement contract: affects reproducibility and rate limits).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "batch_size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repeat": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "executor_backend": {
+          "type": "string",
+          "enum": [
+            "local",
+            "docker"
+          ]
+        },
+        "executor_auth_mode": {
+          "type": "string",
+          "enum": [
+            "env",
+            "global",
+            "copy-auth"
+          ]
+        },
+        "max_evaluator_parallel": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "web_search": {
+          "type": "string",
+          "enum": [
+            "task",
+            "allow",
+            "deny"
+          ]
+        },
+        "claude_max_turns": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "seed",
+        "batch_size",
+        "repeat",
+        "executor_backend",
+        "executor_auth_mode"
+      ]
+    },
+    "task_set": {
+      "description": "The task list as resolved at launch (selectors expanded against the task directory).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tasks_dir": {
+          "type": "string"
+        },
+        "task_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "tasks_dir",
+        "task_ids"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "captured_at",
+    "profile",
+    "contender",
+    "roster",
+    "instrument",
+    "execution",
+    "task_set"
+  ]
+}

@@ -22,8 +22,17 @@ the grouping in `<runs-dir>/experiments/<id>.json`. **Profiles**
 (`<runs-dir>/profiles.json`) store the shared configuration plus a declaration
 of which fields each contender fills in individually (model id, credentials,
 gateway); the default profile pre-fills the wizard so repeated evaluations keep
-the same measurement methodology. Both files are plain JSON you can edit or
-delete; the runs themselves stay fully CLI-owned.
+the same measurement methodology. A profile can additionally declare a
+**roster** (the contender columns it intends to measure) and a **task_set**,
+making it a complete, launchable measurement contract; launching from such a
+profile hands each contender's run a self-contained `profile_snapshot.json`
+(validated and written by the runner) that pins the contract as of launch —
+profile id + revision, this contender, the full roster, instrument, execution
+parameters, and resolved task list — with provider endpoints inlined and only
+env-var *names* for credentials, never key values. Editing the profile later
+never rewrites past runs' snapshots, and runs launched without a
+roster-carrying profile stay fully supported. Both files are plain JSON you can
+edit or delete; the runs themselves stay fully CLI-owned.
 
 ## Start
 

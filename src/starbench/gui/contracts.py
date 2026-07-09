@@ -477,6 +477,81 @@ class CoveragePayload(TypedDict):
 
 
 # ---------------------------------------------------------------------------
+# Profile snapshot (run detail): the measurement contract a run was launched
+# under. Mirrors schemas/starbench/v1/profile_snapshot.schema.json — the file
+# system copy (<run>/profile_snapshot.json) is the truth; absent file = null.
+# ---------------------------------------------------------------------------
+
+class ProfileSnapshotProfile(TypedDict):
+    """Identity of the profile at launch; ``rev`` pins its revision then."""
+
+    id: str
+    rev: int
+    name: str
+
+
+class _ProfileSnapshotContenderBase(TypedDict):
+    agent: str
+    model: str
+
+
+class ProfileSnapshotContender(_ProfileSnapshotContenderBase, total=False):
+    """A contender/roster entry, self-contained: provider references resolve
+    to inline values. ``api_key_env`` is the NAME of an environment variable —
+    the contract has no field for secret material, ever."""
+
+    label: str
+    thinking_effort: str
+    auth_mode: str
+    provider_id: str
+    base_url: str
+    api_key_env: str
+
+
+class _ProfileSnapshotInstrumentBase(TypedDict):
+    evaluator_agent: str
+    evaluator_model: str
+    evaluator_auth_mode: str
+    judge_mode: str
+
+
+class ProfileSnapshotInstrument(_ProfileSnapshotInstrumentBase, total=False):
+    evaluator_timeout_seconds: int
+
+
+class _ProfileSnapshotExecutionBase(TypedDict):
+    seed: int
+    batch_size: int
+    repeat: int
+    executor_backend: str
+    executor_auth_mode: str
+
+
+class ProfileSnapshotExecution(_ProfileSnapshotExecutionBase, total=False):
+    max_evaluator_parallel: int
+    web_search: WebSearchMode
+    claude_max_turns: int
+
+
+class ProfileSnapshotTaskSet(TypedDict):
+    """The task list as resolved at launch (selectors expanded)."""
+
+    tasks_dir: str
+    task_ids: List[str]
+
+
+class ProfileSnapshot(TypedDict):
+    schema_version: int
+    captured_at: str
+    profile: ProfileSnapshotProfile
+    contender: ProfileSnapshotContender
+    roster: List[ProfileSnapshotContender]
+    instrument: ProfileSnapshotInstrument
+    execution: ProfileSnapshotExecution
+    task_set: ProfileSnapshotTaskSet
+
+
+# ---------------------------------------------------------------------------
 # Experiments (/api/experiments)
 # ---------------------------------------------------------------------------
 
@@ -569,6 +644,12 @@ GENERATED_TYPES = [
     "CoverageColumn",
     "CoverageRow",
     "CoveragePayload",
+    "ProfileSnapshotProfile",
+    "ProfileSnapshotContender",
+    "ProfileSnapshotInstrument",
+    "ProfileSnapshotExecution",
+    "ProfileSnapshotTaskSet",
+    "ProfileSnapshot",
     "ExperimentPlanItem",
     "Contender",
 ]

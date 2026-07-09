@@ -349,9 +349,13 @@ def run_detail(runs_dir: Path, run_id: str, active_run_ids: Optional[set] = None
     config = run_config if isinstance(run_config, dict) else {}
     task_ids = _task_dirs(run_root, config)
     overview = run_overview(run_root, active_run_ids)
+    # The measurement contract this run was launched under (written by the
+    # runner from --profile-snapshot). Absent for bare runs — null, honestly.
+    profile_snapshot = _read_json(run_root / "profile_snapshot.json")
     detail = {
         **overview,
         "config": config or None,
+        "profile_snapshot": profile_snapshot if isinstance(profile_snapshot, dict) else None,
         "tasks": [_task_row(run_root, task_run_id) for task_run_id in task_ids],
         "progress": progress_snapshot(run_root),
         "ablation": _read_json(run_root / "instruction_ablation_summary.json"),

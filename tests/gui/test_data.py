@@ -65,6 +65,41 @@ class GuiDataTest(unittest.TestCase):
         self.assertEqual(row["task_id"], "demo_task")
         self.assertTrue(row["judges"]["single"]["overall_pass"])
         self.assertEqual(detail["progress"]["executor_done"], 1)
+        # A bare run carries no measurement contract: null, honestly.
+        self.assertIsNone(detail["profile_snapshot"])
+
+    def test_run_detail_reads_profile_snapshot(self) -> None:
+        run_root = make_run(self.runs_dir, "run_profiled")
+        snapshot = {
+            "schema_version": 1,
+            "captured_at": "2026-07-09T08:00:00+00:00",
+            "profile": {"id": "hsw", "rev": 2, "name": "HSW sweep"},
+            "contender": {"agent": "codex", "model": "gpt-5.5"},
+            "roster": [{"agent": "codex", "model": "gpt-5.5"}],
+            "instrument": {
+                "evaluator_agent": "codex",
+                "evaluator_model": "gpt-5.5",
+                "evaluator_auth_mode": "env",
+                "judge_mode": "single",
+            },
+            "execution": {
+                "seed": 123,
+                "batch_size": 1,
+                "repeat": 5,
+                "executor_backend": "local",
+                "executor_auth_mode": "env",
+            },
+            "task_set": {"tasks_dir": "tasks", "task_ids": ["demo_task"]},
+        }
+        write_json(run_root / "profile_snapshot.json", snapshot)
+        detail = data.run_detail(self.runs_dir, "run_profiled")
+        self.assertEqual(detail["profile_snapshot"], snapshot)
+
+    def test_run_detail_unreadable_profile_snapshot_is_null(self) -> None:
+        run_root = make_run(self.runs_dir, "run_broken_snapshot")
+        (run_root / "profile_snapshot.json").write_text("{not json", encoding="utf-8")
+        detail = data.run_detail(self.runs_dir, "run_broken_snapshot")
+        self.assertIsNone(detail["profile_snapshot"])
 
     def test_task_run_detail_reads_all_surfaces(self) -> None:
         make_run(self.runs_dir, "run_pass")
