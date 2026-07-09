@@ -62,7 +62,7 @@ import { cn } from "@/lib/utils"
    The generated `Profile` in api.ts only types the fields the New-experiment
    wizard reads (id/name/shared/per_contender_fields). A profile on disk can
    also carry a server-assigned `rev` and the two blocks that make it a full,
-   launchable measurement contract: `roster` (the contender columns) and
+   launchable measurement contract: `roster` (the executor agent columns) and
    `task_set`. We type them here and read the payload structurally rather than
    editing the generated contract. */
 interface RosterEntry {
@@ -103,10 +103,10 @@ interface Draft extends FullProfile {
 }
 
 const PER_CONTENDER_FIELDS: { id: string; label: string; hint: string }[] = [
-  { id: "model", label: "Model", hint: "each contender picks its own model id" },
-  { id: "credentials", label: "Credentials", hint: "each contender wires its own key" },
-  { id: "gateway", label: "Gateway", hint: "per-contender endpoint override" },
-  { id: "thinking_effort", label: "Thinking effort", hint: "per-contender reasoning level" },
+  { id: "model", label: "Model", hint: "each agent picks its own model id" },
+  { id: "credentials", label: "Credentials", hint: "each agent wires its own key" },
+  { id: "gateway", label: "Gateway", hint: "per-agent endpoint override" },
+  { id: "thinking_effort", label: "Reasoning", hint: "per-agent reasoning level" },
 ]
 
 const NUMERIC_SHARED: (keyof SharedConfig)[] = [
@@ -118,20 +118,33 @@ const NUMERIC_SHARED: (keyof SharedConfig)[] = [
   "claude_max_turns",
 ]
 
-/* Runtimes that can be judge or contender: built-ins plus custom specs that
+/* Runtimes that can be judge or executor: built-ins plus custom specs that
    loaded cleanly. Errored custom specs are dropped, not shown as choices. */
 interface RuntimeRef {
   id: string
   label: string
   icon?: string | null
+  thinking_channel?: "native_config" | "prompt"
+  thinking_efforts?: string[]
 }
 
 function runtimeRefs(agents?: AgentsPayload): RuntimeRef[] {
   return [
-    ...(agents?.builtin ?? []).map((r) => ({ id: r.id, label: r.label })),
+    ...(agents?.builtin ?? []).map((r) => ({
+      id: r.id,
+      label: r.label,
+      thinking_channel: r.thinking_channel,
+      thinking_efforts: r.thinking_efforts,
+    })),
     ...(agents?.custom ?? [])
       .filter((r) => !r.error)
-      .map((r) => ({ id: r.id, label: r.label ?? r.spec_id, icon: r.icon })),
+      .map((r) => ({
+        id: r.id,
+        label: r.label ?? r.spec_id,
+        icon: r.icon,
+        thinking_channel: r.thinking_channel,
+        thinking_efforts: r.thinking_efforts,
+      })),
   ]
 }
 
@@ -157,6 +170,7 @@ const BACKEND_GLOSS: Record<string, string> = {
 }
 
 const RUNTIME_DEFAULT = "__runtime_default__"
+const THINKING_DEFAULT = "none"
 
 function GlossSelectItem({ value, gloss }: { value: string; gloss?: string }) {
   return (
@@ -174,6 +188,10 @@ function runtimeLabelOf(refs: RuntimeRef[], id: string | undefined): string {
   return refs.find((r) => r.id === id)?.label ?? id
 }
 
+function thinkingEffortsOf(refs: RuntimeRef[], id: string | undefined): string[] {
+  return refs.find((r) => r.id === id)?.thinking_efforts ?? ["none", "low", "medium", "high"]
+}
+
 function ProfileSummaryStrip({ value }: { value: Draft }) {
   const rosterCount = value.roster?.length ?? 0
   const taskText = value.hasTaskSet
@@ -188,8 +206,8 @@ function ProfileSummaryStrip({ value }: { value: Draft }) {
     <div className="border-b bg-muted/40 px-4 py-3 sm:px-5">
       <div className="flex flex-wrap items-center gap-2">
         <SummaryPill
-          label="Roster"
-          value={`${rosterCount} contender${rosterCount === 1 ? "" : "s"}`}
+          label="Executors"
+          value={`${rosterCount} agent${rosterCount === 1 ? "" : "s"}`}
         />
         <SummaryPill label="Tasks" value={taskText} />
         <SummaryPill label="Judge" value={`${judge}${judgeModel}`} mono />
@@ -290,7 +308,8 @@ function fromDraft(draft: Draft): FullProfile {
     if (entry.model) out.model = entry.model
     if (entry.provider_id) out.provider_id = entry.provider_id
     if (entry.label) out.label = entry.label
-    if (entry.thinking_effort) out.thinking_effort = entry.thinking_effort
+    if (entry.thinking_effort && entry.thinking_effort !== THINKING_DEFAULT)
+      out.thinking_effort = entry.thinking_effort
     return out
   })
   const profile: FullProfile = {
@@ -421,7 +440,7 @@ export default function Profiles() {
         <div className="min-w-0 flex-1 basis-72">
           <h1 className="text-xl font-semibold tracking-tight">Profiles</h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            A profile is a measurement contract: the roster it measures, the judge and
+            A profile is a measurement contract: the executor agents it runs, the judge and
             settings it measures with, and the tasks it runs. Every run launched from a
             profile carries a frozen snapshot of the contract as it stood at launch.
           </p>
@@ -574,13 +593,13 @@ function ProfileCard({
         </div>
 
         <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
-          <ContractCell icon={Columns3} label="Roster">
+          <ContractCell icon={Columns3} label="Executors">
             {roster.length === 0 ? (
-              <span className="text-muted-foreground">No contenders yet</span>
+              <span className="text-muted-foreground">No agents yet</span>
             ) : (
               <div className="flex flex-col gap-1">
                 <span className="text-sm">
-                  {roster.length} contender{roster.length === 1 ? "" : "s"}
+                  {roster.length} agent{roster.length === 1 ? "" : "s"}
                 </span>
                 <div className="flex flex-wrap gap-1">
                   {roster.map((entry, index) => (
@@ -645,7 +664,7 @@ function ProfileCard({
           <div className="flex flex-wrap items-center gap-2 border-t pt-3">
             {profile.per_contender_fields.length > 0 && (
               <>
-                <span className="text-[11px] text-muted-foreground">Per contender:</span>
+                <span className="text-[11px] text-muted-foreground">Per agent:</span>
                 {profile.per_contender_fields.map((field) => (
                   <Badge key={field} variant="outline" className="text-[11px] text-muted-foreground">
                     {PER_CONTENDER_FIELDS.find((f) => f.id === field)?.label ?? field}
@@ -742,6 +761,14 @@ function ProfileEditor({
     const compatible = compatibleProviders(filter, providers, agent)
     return compatible.length > 0 ? compatible : providers
   }
+  const defaultThinkingEffort = (agent: string) => {
+    const efforts = thinkingEffortsOf(refs, agent)
+    return efforts.includes(THINKING_DEFAULT) ? THINKING_DEFAULT : efforts[0] ?? THINKING_DEFAULT
+  }
+  const normalizeThinkingEffort = (agent: string, effort?: string) => {
+    const efforts = thinkingEffortsOf(refs, agent)
+    return effort && efforts.includes(effort) ? effort : defaultThinkingEffort(agent)
+  }
 
   const setRoster = (roster: RosterEntry[]) => patch({ roster, hasRoster: true })
   const updateRoster = (index: number, next: Partial<RosterEntry>) =>
@@ -749,7 +776,15 @@ function ProfileEditor({
   const addContender = () => {
     const agent = refs[0]?.id ?? "claude"
     const provider = providersFor(agent)[0]?.id
-    setRoster([...(value.roster ?? []), { agent, model: "", provider_id: provider }])
+    setRoster([
+      ...(value.roster ?? []),
+      {
+        agent,
+        model: "",
+        provider_id: provider,
+        thinking_effort: defaultThinkingEffort(agent),
+      },
+    ])
   }
   const removeContender = (index: number) =>
     setRoster((value.roster ?? []).filter((_, i) => i !== index))
@@ -781,7 +816,7 @@ function ProfileEditor({
         }
       }}
     >
-      <SheetContent className="w-full gap-0 overflow-hidden p-0 sm:max-w-4xl">
+      <SheetContent className="w-full gap-0 overflow-hidden p-0 sm:max-w-5xl">
         <SheetHeader className="border-b">
           <SheetTitle className="flex items-center gap-2">
             <Ruler className="size-4 text-primary" />
@@ -837,32 +872,38 @@ function ProfileEditor({
             </div>
           </section>
 
-          {/* roster */}
+          {/* executors */}
           <section className="grid gap-3">
-            <SectionHeading icon={Columns3} title="Roster">
-              The contender columns this profile measures: the coverage matrix's columns.
+            <SectionHeading icon={Columns3} title="Executors">
+              The agents this profile runs. Each row becomes one coverage column.
             </SectionHeading>
             {(value.roster ?? []).length === 0 ? (
               <p className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
-                No contenders yet. Add the agent × model cells you want to measure.
+                No agents yet. Add the agent × model cells you want to measure.
               </p>
             ) : (
               <div className="overflow-hidden rounded-lg border">
-                <div className="hidden grid-cols-[2.25rem_minmax(10rem,0.95fr)_minmax(13rem,1fr)_minmax(14rem,1fr)_2.5rem] gap-2 border-b bg-muted/50 px-3 py-2 text-[11px] font-medium text-muted-foreground lg:grid">
+                <div className="hidden grid-cols-[2.25rem_minmax(9rem,0.8fr)_minmax(12rem,1fr)_minmax(13rem,1fr)_minmax(8rem,0.55fr)_2.5rem] gap-2 border-b bg-muted/50 px-3 py-2 text-[11px] font-medium text-muted-foreground lg:grid">
                   <span>#</span>
-                  <span>Agent runtime</span>
+                  <span>Agent</span>
                   <span>Provider</span>
                   <span>Model</span>
+                  <span>Reasoning</span>
                   <span className="sr-only">Actions</span>
                 </div>
                 <div className="divide-y">
                   {(value.roster ?? []).map((entry, index) => {
                     const rosterProviders = providersFor(entry.agent)
                     const provider = rosterProviders.find((item) => item.id === entry.provider_id)
+                    const thinkingEfforts = thinkingEffortsOf(refs, entry.agent)
+                    const thinkingValue = normalizeThinkingEffort(
+                      entry.agent,
+                      entry.thinking_effort,
+                    )
                     return (
                       <div
                         key={index}
-                        className="grid gap-3 px-3 py-3 lg:grid-cols-[2.25rem_minmax(10rem,0.95fr)_minmax(13rem,1fr)_minmax(14rem,1fr)_2.5rem] lg:items-center lg:gap-2"
+                        className="grid gap-3 px-3 py-3 lg:grid-cols-[2.25rem_minmax(9rem,0.8fr)_minmax(12rem,1fr)_minmax(13rem,1fr)_minmax(8rem,0.55fr)_2.5rem] lg:items-center lg:gap-2"
                       >
                         <div className="flex items-center justify-between lg:block">
                           <span className="font-mono text-xs text-muted-foreground">
@@ -872,7 +913,7 @@ function ProfileEditor({
                             variant="ghost"
                             size="icon"
                             className="text-muted-foreground hover:text-fail-ink lg:hidden"
-                            aria-label={`Remove contender ${index + 1}`}
+                            aria-label={`Remove agent ${index + 1}`}
                             onClick={() => removeContender(index)}
                           >
                             <Trash2 />
@@ -888,6 +929,10 @@ function ProfileEditor({
                                 agent,
                                 provider_id: nextProvider?.id,
                                 model: nextProvider?.models[0] ?? "",
+                                thinking_effort: normalizeThinkingEffort(
+                                  agent,
+                                  entry.thinking_effort,
+                                ),
                               })
                             }}
                           >
@@ -973,11 +1018,31 @@ function ProfileEditor({
                           </Select>
                         </Field>
 
+                        <Field label="Reasoning" className="gap-1 lg:[&>div:first-child]:sr-only">
+                          <Select
+                            value={thinkingValue}
+                            onValueChange={(thinking_effort) => {
+                              updateRoster(index, { thinking_effort })
+                            }}
+                          >
+                            <SelectTrigger className="w-full font-mono text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {thinkingEfforts.map((effort) => (
+                                <SelectItem key={effort} value={effort} className="font-mono text-xs">
+                                  {effort}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
+
                         <Button
                           variant="ghost"
                           size="icon"
                           className="hidden text-muted-foreground hover:text-fail-ink lg:inline-flex"
-                          aria-label={`Remove contender ${index + 1}`}
+                          aria-label={`Remove agent ${index + 1}`}
                           onClick={() => removeContender(index)}
                         >
                           <Trash2 />
@@ -990,7 +1055,7 @@ function ProfileEditor({
             )}
             <div>
               <Button variant="outline" size="sm" onClick={addContender}>
-                <Plus /> Add contender
+                <Plus /> Add agent
               </Button>
             </div>
           </section>
@@ -998,13 +1063,13 @@ function ProfileEditor({
           {/* instrument */}
           <section className="grid gap-3">
             <SectionHeading icon={Scale} title="Instrument">
-              The judge and how it scores, shared across every contender.
+              The judge and how it scores, shared across every agent.
             </SectionHeading>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field
                 label="Evaluator runtime"
                 gloss="the judge is an agent too"
-                hint="Scores are only as trustworthy as the runtime grading them; pick the judge as deliberately as the contenders."
+                hint="Scores are only as trustworthy as the runtime grading them; pick the judge as deliberately as the executor agents."
               >
                 <Select
                   value={String(value.shared.evaluator_agent ?? "")}
@@ -1132,7 +1197,7 @@ function ProfileEditor({
               <Field
                 label="Batch size"
                 gloss="tasks at once"
-                hint="How many executor tasks run concurrently for each contender; 1 runs them one by one."
+                hint="How many executor tasks run concurrently for each agent; 1 runs them one by one."
               >
                 <Input
                   type="number"
@@ -1301,10 +1366,10 @@ function ProfileEditor({
             )}
           </section>
 
-          {/* per-contender fields */}
+          {/* per-agent fields */}
           <section className="grid gap-3">
-            <SectionHeading icon={ListChecks} title="Per-contender fields">
-              Checked: each contender sets its own value at launch. Unchecked: locked by this
+            <SectionHeading icon={ListChecks} title="Per-agent fields">
+              Checked: each agent sets its own value at launch. Unchecked: locked by this
               profile for everyone.
             </SectionHeading>
             <div className="grid gap-2 sm:grid-cols-2">
