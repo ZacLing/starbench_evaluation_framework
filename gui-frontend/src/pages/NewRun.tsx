@@ -618,13 +618,10 @@ export default function NewRun() {
   const activeLibrary = libraries.find((library) => library.dir === tasksDir)
   const libraryTasks = activeLibrary?.tasks ?? []
   const healthyTasks = libraryTasks.filter((task) => !task.error)
-  const brokenCount = libraryTasks.length - healthyTasks.length
-  /* The tasks this experiment will actually run: the explicit selection, or
-     every healthy package when nothing is checked. Broken packages are never
-     runnable, so they never count. */
-  const selectedTaskObjs = tasks.length
-    ? healthyTasks.filter((task) => tasks.includes(task.id))
-    : healthyTasks
+  /* The wizard requires an explicit task selection. The runner still supports
+     an empty task list as "whole folder", but the GUI should not launch that
+     ambiguous mode from this page. */
+  const selectedTaskObjs = healthyTasks.filter((task) => tasks.includes(task.id))
   const taskCount = selectedTaskObjs.length
   const judgeConflicts = contenders.filter(
     (draft) =>
@@ -638,7 +635,7 @@ export default function NewRun() {
     step === 0
       ? mode === "custom" || (mode === "profile" && Boolean(selectedProfile?.roster?.length))
       : step === 1
-        ? healthyTasks.length > 0 && (tasks.length > 0 || brokenCount === 0)
+        ? selectedTaskObjs.length > 0
         : step === 2
           ? contenders.length > 0
           : true
@@ -678,6 +675,10 @@ export default function NewRun() {
      backend diff the effective payload against the profile and record any
      deviation in the run snapshot; omitting it launches bare. */
   const createAndGo = async (profileIdForLaunch?: string) => {
+    if (selectedTaskObjs.length === 0) {
+      setStep(1)
+      throw new Error("Select at least one runnable task before continuing.")
+    }
     const record = await api.createExperiment({
       name: expName.trim(),
       tasks_dir: effectiveTasksDir(),
@@ -1258,7 +1259,9 @@ function ContractSummary({
     `${runtimeLabel(judgeAgent)} · ${judgeModel} judge`,
     `×${repeat} repeat`,
   ]
-  if (ts) facts.push(taskCount ? `${taskCount} task${taskCount === 1 ? "" : "s"}` : "whole folder")
+  if (ts) {
+    facts.push(taskCount ? `${taskCount} task${taskCount === 1 ? "" : "s"}` : "no explicit tasks")
+  }
   return (
     <div className="mt-1 flex flex-col gap-1 rounded-lg bg-muted/50 px-3 py-2.5 text-[13px] leading-5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
@@ -1304,6 +1307,11 @@ function StepTasks({
   onImported: () => void
 }) {
   const library = libraries.find((item) => item.dir === tasksDir)
+  const runnableTasks = library?.tasks.filter((task) => !task.error) ?? []
+  const selectedRunnableCount = tasks.filter((id) =>
+    runnableTasks.some((task) => task.id === id),
+  ).length
+  const requiresTaskSelection = runnableTasks.length > 0 && selectedRunnableCount === 0
   return (
     <Card>
       <CardContent className="grid gap-5">
@@ -1337,12 +1345,34 @@ function StepTasks({
           <div className="grid gap-2">
             <div className="flex items-baseline justify-between">
               <Label>Tasks to run</Label>
-              <span className="text-xs text-muted-foreground">
-                {tasks.length
-                  ? `${tasks.length} of ${library.tasks.filter((task) => !task.error).length} selected`
-                  : `all ${library.tasks.filter((task) => !task.error).length} runnable will run`}
+              <span
+                className={cn(
+                  "text-xs",
+                  requiresTaskSelection ? "font-medium text-warn-ink" : "text-muted-foreground",
+                )}
+              >
+                {selectedRunnableCount} of {runnableTasks.length} runnable selected
               </span>
             </div>
+            {runnableTasks.length === 0 ? (
+              <Alert className="border-warn-ink/40 bg-warn-soft/60">
+                <AlertTriangle className="size-4" />
+                <AlertTitle>No runnable tasks in this folder</AlertTitle>
+                <AlertDescription>
+                  Fix the broken task packages, import valid ones, or choose another task
+                  folder before continuing.
+                </AlertDescription>
+              </Alert>
+            ) : requiresTaskSelection ? (
+              <Alert className="border-warn-ink/40 bg-warn-soft/60">
+                <AlertTriangle className="size-4" />
+                <AlertTitle>Select at least one task</AlertTitle>
+                <AlertDescription>
+                  The experiment needs an explicit task set so the run snapshot is
+                  reproducible and comparable.
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <div className="grid gap-2 sm:grid-cols-2">
               {library.tasks.map((task) => {
                 const checked = tasks.includes(task.id)
@@ -1396,12 +1426,11 @@ function StepTasks({
               })}
             </div>
             <p className="text-xs text-muted-foreground">
-              Leave everything unchecked to run the whole folder.
+              Only selected runnable task packages will run.
             </p>
             {library.tasks.some((task) => task.error) && (
               <p className="text-xs text-warn-ink">
-                This folder contains broken packages. Pick the tasks to run explicitly; the
-                runner stops on a broken package when asked to run the whole folder.
+                This folder contains broken packages. They are disabled here until fixed.
               </p>
             )}
           </div>
