@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom"
 import { Shell } from "@/components/shell"
 import Dashboard from "@/pages/Dashboard"
+import Coverage from "@/pages/Coverage"
 import Tasks from "@/pages/Tasks"
 import Agents from "@/pages/Agents"
 import Skills from "@/pages/Skills"
@@ -16,6 +17,7 @@ export default function App() {
     <Shell>
       <Routes>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/coverage" element={<Coverage />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/skills" element={<Skills />} />

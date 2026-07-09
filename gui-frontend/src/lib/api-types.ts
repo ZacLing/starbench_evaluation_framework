@@ -282,6 +282,42 @@ export interface OutputsListing {
   truncated: boolean
 }
 
+export interface CoverageRunRef {
+  run_id: string
+  run_task_id: string
+}
+
+export interface CoverageCell {
+  column_key: string
+  total: number
+  judged: number
+  passed: number
+  last_tested: string | null
+  recent_refs: CoverageRunRef[]
+}
+
+export interface CoverageColumn {
+  key: string
+  agent: string
+  model: string | null
+  run_count: number
+}
+
+export interface CoverageRow {
+  task_id: string
+  in_library: boolean
+  breached: boolean
+  tested_columns: number
+  cells: CoverageCell[]
+}
+
+export interface CoveragePayload {
+  columns: CoverageColumn[]
+  rows: CoverageRow[]
+  runs_scanned: number
+  generated_at: string
+}
+
 export interface ExperimentPlanItem {
   label: string
   agent: string

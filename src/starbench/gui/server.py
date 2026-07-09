@@ -239,6 +239,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                     state.runs_dir, segments[1], segments[3], query.get("path", [""])[0]
                 )
             )
+        elif segments == ["coverage"]:
+            self._send_json(data.coverage(state.runs_dir, state.tasks_dirs))
         elif segments == ["tasklib"]:
             self._send_json({"libraries": self._libraries()})
         elif segments == ["tasklib", "task"]:

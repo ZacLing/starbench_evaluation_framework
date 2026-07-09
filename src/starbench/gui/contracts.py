@@ -417,6 +417,66 @@ class OutputsListing(TypedDict):
 
 
 # ---------------------------------------------------------------------------
+# Coverage matrix (/api/coverage)
+# ---------------------------------------------------------------------------
+
+class CoverageRunRef(TypedDict):
+    """Drill-down anchor: one task run contributing to a coverage cell."""
+
+    run_id: str
+    run_task_id: str
+
+
+class CoverageCell(TypedDict):
+    """One (task, executor config) intersection, aggregated over all variants
+    and repeats on disk. HSW semantics: ``passed > 0`` means some configuration
+    solved the task — the task is breached, which is bad news for the bench.
+
+    ``last_tested`` is a timestamp recorded on disk (executor ``ended_at``,
+    else the summary/status file's mtime); absent evidence is ``null``, never
+    an estimate.
+    """
+
+    column_key: str
+    total: int
+    judged: int
+    passed: int
+    last_tested: Optional[str]
+    recent_refs: List[CoverageRunRef]
+
+
+class CoverageColumn(TypedDict):
+    """An executor configuration observed in run configs on disk
+    (``executor_agent`` × ``executor_model``); ``agent`` degrades to
+    "unknown" when a run's config is missing or unreadable."""
+
+    key: str
+    agent: str
+    model: Optional[str]
+    run_count: int
+
+
+class CoverageRow(TypedDict):
+    """One task: library ∪ observed. A library task never run has zero cells —
+    the visible gap is the point. ``in_library`` is False for tasks that were
+    run but no longer exist in the registered task directories."""
+
+    task_id: str
+    in_library: bool
+    breached: bool
+    tested_columns: int
+    cells: List[CoverageCell]
+
+
+class CoveragePayload(TypedDict):
+    columns: List[CoverageColumn]
+    rows: List[CoverageRow]
+    runs_scanned: int
+    # When this payload was assembled (describes the assembly, not the runs).
+    generated_at: str
+
+
+# ---------------------------------------------------------------------------
 # Experiments (/api/experiments)
 # ---------------------------------------------------------------------------
 
@@ -504,6 +564,11 @@ GENERATED_TYPES = [
     "VariantSibling",
     "OutputsListingEntry",
     "OutputsListing",
+    "CoverageRunRef",
+    "CoverageCell",
+    "CoverageColumn",
+    "CoverageRow",
+    "CoveragePayload",
     "ExperimentPlanItem",
     "Contender",
 ]

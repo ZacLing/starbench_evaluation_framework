@@ -672,5 +672,190 @@ class RunLiveTest(unittest.TestCase):
         self.assertIn("t_done", lane_ids)
 
 
+class CoverageTest(unittest.TestCase):
+    """The ``coverage`` assembler behind ``/api/coverage``.
+
+    Fixture layout (all under one tmp dir):
+      - library: ``demo_task`` + ``untouched_task`` (never run)
+      - run_a (codex::gpt-5.5): demo_task ×2 judged-fail, ×3 unjudged repeats,
+        plus ghost_task (judged-fail, not in the library)
+      - run_b (codex::gpt-5.5): demo_task ×1 judged-fail → same cell as run_a
+      - run_c (claude::claude-opus-4-8): demo_task ×1 judged-PASS → breached
+      - run_broken: no run_config at all → "unknown" column; contains an
+        identity-less task run (skipped), ``bare_task`` with only a manifest
+        (no timestamps anywhere → last_tested null) and ``mtime_task`` whose
+        status.json has no ended_at (falls back to file mtime).
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_coverage_test_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+        self.tasks_dir = self.tmp / "tasks"
+
+        for task_id in ("demo_task", "untouched_task"):
+            package = self.tasks_dir / task_id
+            package.mkdir(parents=True)
+            write_json(package / "task.json", {"id": task_id, "name": task_id})
+            write_json(package / "rubrics.json", {"rubrics": [{"id": "R001"}]})
+            (package / "prompt.md").write_text("do the task", encoding="utf-8")
+
+        run_a = make_run(
+            self.runs_dir,
+            "run_a",
+            task_specs=(
+                ("demo_task__baseline_01", "success", False),
+                ("demo_task__baseline_02", "success", False),
+            ),
+        )
+        for repeat in ("03", "04", "05"):
+            make_task_run(run_a, f"demo_task__baseline_{repeat}", evaluated=False)
+        make_task_run(run_a, "ghost_task_01", task_id="ghost_task", overall_pass=False)
+
+        make_run(
+            self.runs_dir,
+            "run_b",
+            task_specs=(("demo_task__baseline_01", "success", False),),
+        )
+
+        make_run(
+            self.runs_dir,
+            "run_c",
+            task_specs=(("demo_task__baseline_01", "success", True),),
+        )
+        self._patch_config("run_c", executor_agent="claude", executor_model="claude-opus-4-8")
+
+        # A corrupted run: discoverable (progress events) but no run_config.
+        broken = self.runs_dir / "run_broken"
+        (broken / "mystery" / "logs").mkdir(parents=True)  # no identity → skipped
+        bare = broken / "bare_task_01"
+        (bare / "logs").mkdir(parents=True)
+        write_json(bare / "manifest.json", {"task_id": "bare_task"})
+        stale = broken / "mtime_task_01"
+        (stale / "logs").mkdir(parents=True)
+        write_json(stale / "manifest.json", {"task_id": "mtime_task"})
+        write_json(stale / "logs" / "status.json", {"status": "success"})  # no ended_at
+        write_jsonl(
+            broken / "progress_events.jsonl",
+            [{"timestamp": "2026-07-04T02:00:00+00:00", "event": "run_progress_initialized"}],
+        )
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _patch_config(self, run_id: str, **overrides) -> None:
+        path = self.runs_dir / run_id / "run_config.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload.update(overrides)
+        write_json(path, payload)
+
+    def _coverage(self) -> dict:
+        return data.coverage(self.runs_dir, [self.tasks_dir])
+
+    @staticmethod
+    def _row(payload: dict, task_id: str) -> dict:
+        return next(row for row in payload["rows"] if row["task_id"] == task_id)
+
+    @staticmethod
+    def _cell(row: dict, column_key: str) -> dict:
+        return next(cell for cell in row["cells"] if cell["column_key"] == column_key)
+
+    def test_same_config_repeats_aggregate_into_one_cell(self) -> None:
+        payload = self._coverage()
+        cell = self._cell(self._row(payload, "demo_task"), "codex::gpt-5.5")
+        # run_a: 2 judged + 3 unjudged repeats; run_b: 1 judged — one cell.
+        self.assertEqual(cell["total"], 6)
+        self.assertEqual(cell["judged"], 3)
+        self.assertEqual(cell["passed"], 0)
+        codex = next(col for col in payload["columns"] if col["key"] == "codex::gpt-5.5")
+        self.assertEqual(codex["run_count"], 2)
+
+    def test_distinct_configs_become_columns_sorted_by_agent_then_model(self) -> None:
+        payload = self._coverage()
+        self.assertEqual(
+            [col["key"] for col in payload["columns"]],
+            ["claude::claude-opus-4-8", "codex::gpt-5.5", "unknown::"],
+        )
+        unknown = payload["columns"][-1]
+        self.assertEqual(unknown["agent"], "unknown")
+        self.assertIsNone(unknown["model"])
+        self.assertEqual(unknown["run_count"], 1)
+
+    def test_any_pass_breaches_the_row_and_breached_rows_sort_first(self) -> None:
+        payload = self._coverage()
+        self.assertEqual(
+            [row["task_id"] for row in payload["rows"]],
+            ["demo_task", "bare_task", "ghost_task", "mtime_task", "untouched_task"],
+        )
+        demo = payload["rows"][0]
+        self.assertTrue(demo["breached"])
+        self.assertEqual(self._cell(demo, "claude::claude-opus-4-8")["passed"], 1)
+        # codex (3 judged) + claude (1 judged) count; the unknown column has
+        # no demo_task cell at all.
+        self.assertEqual(demo["tested_columns"], 2)
+        self.assertTrue(all(not row["breached"] for row in payload["rows"][1:]))
+
+    def test_library_task_never_run_is_a_zero_cell_row(self) -> None:
+        row = self._row(self._coverage(), "untouched_task")
+        self.assertTrue(row["in_library"])
+        self.assertEqual(row["cells"], [])
+        self.assertEqual(row["tested_columns"], 0)
+        self.assertFalse(row["breached"])
+
+    def test_run_only_task_is_marked_not_in_library(self) -> None:
+        payload = self._coverage()
+        self.assertFalse(self._row(payload, "ghost_task")["in_library"])
+        self.assertTrue(self._row(payload, "demo_task")["in_library"])
+
+    def test_unjudged_task_run_counts_total_not_judged(self) -> None:
+        cell = self._cell(self._row(self._coverage(), "bare_task"), "unknown::")
+        self.assertEqual(cell["total"], 1)
+        self.assertEqual(cell["judged"], 0)
+        self.assertEqual(cell["passed"], 0)
+        # No task_summary, no status timestamps: honest null, never estimated.
+        self.assertIsNone(cell["last_tested"])
+
+    def test_broken_run_degrades_to_unknown_and_never_sinks_payload(self) -> None:
+        payload = self._coverage()
+        self.assertEqual(payload["runs_scanned"], 4)
+        task_ids = [row["task_id"] for row in payload["rows"]]
+        # The identity-less task run is skipped, never guessed from its name.
+        self.assertNotIn("mystery", task_ids)
+        self.assertNotIn(None, task_ids)
+        self.assertIsInstance(payload["generated_at"], str)
+
+    def test_last_tested_falls_back_to_file_mtime_when_unrecorded(self) -> None:
+        cell = self._cell(self._row(self._coverage(), "mtime_task"), "unknown::")
+        # status.json exists but carries no ended_at → its mtime, still ISO.
+        self.assertIsNotNone(cell["last_tested"])
+        datetime.fromisoformat(cell["last_tested"])  # parseable, no exception
+
+    def test_last_tested_and_recent_refs_are_newest_first_capped_at_five(self) -> None:
+        newer = "2026-07-06T09:00:00+00:00"
+        summary_path = self.runs_dir / "run_b" / "demo_task__baseline_01" / "task_summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["executor"]["ended_at"] = newer
+        write_json(summary_path, summary)
+
+        cell = self._cell(self._row(self._coverage(), "demo_task"), "codex::gpt-5.5")
+        self.assertEqual(cell["last_tested"], newer)
+        self.assertEqual(len(cell["recent_refs"]), 5)  # 6 task runs, capped
+        self.assertEqual(
+            cell["recent_refs"][0],
+            {"run_id": "run_b", "run_task_id": "demo_task__baseline_01"},
+        )
+        # The remaining refs tie on timestamp and keep run/task order.
+        self.assertEqual(
+            [ref["run_task_id"] for ref in cell["recent_refs"][1:]],
+            [
+                "demo_task__baseline_01",
+                "demo_task__baseline_02",
+                "demo_task__baseline_03",
+                "demo_task__baseline_04",
+            ],
+        )
+        self.assertTrue(all(ref["run_id"] == "run_a" for ref in cell["recent_refs"][1:]))
+
+
 if __name__ == "__main__":
     unittest.main()

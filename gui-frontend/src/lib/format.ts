@@ -31,6 +31,26 @@ export function spanBetween(
   return fmtDuration((end - start) / 1000)
 }
 
+/* Compact relative recency ("3d ago") for dense cells; exact timestamps live
+   on the linked detail pages. Unparseable input renders as honest absence. */
+export function fmtRelative(iso: string | null | undefined): string {
+  if (!iso) return ""
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return ""
+  const seconds = Math.round((Date.now() - then) / 1000)
+  if (seconds < 0) return fmtTime(iso) /* future timestamp: show it, don't invent "ago" */
+  if (seconds < 60) return "just now"
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months}mo ago`
+  return `${Math.floor(days / 365)}y ago`
+}
+
 export function fmtRate(rate: number | null | undefined): string {
   if (rate === null || rate === undefined) return "–"
   return `${Math.round(rate * 1000) / 10}%`

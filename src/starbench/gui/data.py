@@ -12,7 +12,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -1284,3 +1284,196 @@ def list_task_packages(tasks_dir: Path) -> List[Dict[str, Any]]:
             }
         )
     return packages
+
+
+# ---------------------------------------------------------------------------
+# Coverage matrix (/api/coverage)
+# ---------------------------------------------------------------------------
+
+# How many task-run references each coverage cell keeps for UI drill-down.
+COVERAGE_RECENT_REFS_LIMIT = 5
+
+
+def _overall_passes(task_root: Path) -> List[Any]:
+    """Every judge-aggregate ``overall_pass`` recorded for one task run.
+
+    Mirrors ``_task_row``'s judge reading: ``task_summary.json`` is
+    authoritative once the judge has run; before that the standalone aggregate
+    files under ``judges/`` are consulted. Nothing on disk yields an empty
+    list — never an invented verdict.
+    """
+    summary = _read_json(task_root / "task_summary.json")
+    values: List[Any] = []
+    if isinstance(summary, dict) and isinstance(summary.get("judges"), dict):
+        for payload in summary["judges"].values():
+            aggregate = payload.get("aggregate") if isinstance(payload, dict) else None
+            if isinstance(aggregate, dict):
+                values.append(aggregate.get("overall_pass"))
+        return values
+    for mode in ("single", "parallel"):
+        aggregate = _read_json(task_root / "judges" / f"{mode}_aggregate.json")
+        if isinstance(aggregate, dict):
+            values.append(aggregate.get("overall_pass"))
+    return values
+
+
+def _task_run_tested_at(task_root: Path) -> Optional[str]:
+    """When this task run finished testing, from recorded data only.
+
+    Preference order: the executor ``ended_at`` recorded in
+    ``task_summary.json`` (executor block, then executor_timing), then in
+    ``logs/status.json``. Failing those, the mtime of whichever of these files
+    exists — a real filesystem timestamp, reported as such. No recorded time
+    and no file yields ``None``, never an estimate.
+    """
+    summary = _read_json(task_root / "task_summary.json")
+    if isinstance(summary, dict):
+        for key in ("executor", "executor_timing"):
+            section = summary.get(key)
+            if isinstance(section, dict) and isinstance(section.get("ended_at"), str):
+                return section["ended_at"]
+    status = _read_json(task_root / "logs" / "status.json")
+    if isinstance(status, dict) and isinstance(status.get("ended_at"), str):
+        return status["ended_at"]
+    for relative in ("task_summary.json", "logs/status.json"):
+        path = task_root / relative
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        return datetime.fromtimestamp(mtime, timezone.utc).isoformat()
+    return None
+
+
+def coverage(runs_dir: Path, tasks_dirs: Sequence[Path]) -> Dict[str, Any]:
+    """Task × executor-config coverage matrix over everything on disk.
+
+    Rows are the union of the task library (``tasks_dirs``) and every task id
+    observed in ``runs_dir``; columns are the executor configs observed in run
+    configs (``executor_agent`` × ``executor_model``). HSW semantics: a cell
+    with any ``overall_pass == True`` means the task was breached, so variants
+    and repeats all aggregate into the same cell. Library tasks never run
+    render as zero-cell rows — the visible gaps are the point. A corrupted run
+    directory degrades to an "unknown" column (or is skipped mid-scan); it
+    never sinks the payload.
+    """
+    library_ids: set = set()
+    for tasks_dir in tasks_dirs:
+        for package in list_task_packages(tasks_dir):
+            library_ids.add(str(package["id"]))
+
+    columns: Dict[str, Dict[str, Any]] = {}
+    cells: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    # (parsed timestamp, raw timestamp string, ref) per task run, per cell.
+    cell_refs: Dict[Tuple[str, str], List[Tuple[Optional[datetime], Optional[str], Dict[str, str]]]] = {}
+    observed_tasks: set = set()
+    runs_scanned = 0
+
+    run_roots: List[Path] = []
+    if runs_dir.is_dir():
+        run_roots = sorted(
+            (
+                entry
+                for entry in runs_dir.iterdir()
+                if entry.is_dir()
+                and (
+                    (entry / "run_config.json").exists()
+                    or (entry / "summary.json").exists()
+                    or (entry / "progress_events.jsonl").exists()
+                )
+            ),
+            key=lambda entry: entry.name,
+        )
+
+    for run_root in run_roots:
+        runs_scanned += 1
+        try:
+            run_config = _read_json(run_root / "run_config.json")
+            config = run_config if isinstance(run_config, dict) else {}
+            agent = config.get("executor_agent")
+            agent = agent if isinstance(agent, str) and agent else "unknown"
+            model = config.get("executor_model")
+            model = model if isinstance(model, str) and model else None
+            column_key = f"{agent}::{model or ''}"
+            column = columns.setdefault(
+                column_key,
+                {"key": column_key, "agent": agent, "model": model, "run_count": 0},
+            )
+            column["run_count"] += 1
+            for name in _task_dirs(run_root, config):
+                task_root = run_root / name
+                task_id, _, _ = _task_identity(task_root)
+                if not isinstance(task_id, str) or not task_id:
+                    # No recorded identity: this task run cannot be attributed
+                    # to a matrix row. Skipped, never guessed from the dir name.
+                    continue
+                observed_tasks.add(task_id)
+                cell_key = (task_id, column_key)
+                cell = cells.setdefault(
+                    cell_key,
+                    {
+                        "column_key": column_key,
+                        "total": 0,
+                        "judged": 0,
+                        "passed": 0,
+                        "last_tested": None,
+                        "recent_refs": [],
+                    },
+                )
+                cell["total"] += 1
+                passes = _overall_passes(task_root)
+                if any(value is not None for value in passes):
+                    cell["judged"] += 1
+                if any(value is True for value in passes):
+                    cell["passed"] += 1
+                tested_at = _task_run_tested_at(task_root)
+                cell_refs.setdefault(cell_key, []).append(
+                    (
+                        _parse_iso(tested_at),
+                        tested_at,
+                        {"run_id": run_root.name, "run_task_id": name},
+                    )
+                )
+        except OSError:
+            # A run directory that vanishes or errors mid-scan keeps whatever
+            # was read before the failure; the payload survives.
+            continue
+
+    epoch_floor = datetime.min.replace(tzinfo=timezone.utc)
+    for cell_key, refs in cell_refs.items():
+        # Newest first; refs without a parseable timestamp sink to the end
+        # (stable sort keeps run order among equals, runs iterate name-sorted).
+        refs.sort(key=lambda item: item[0] or epoch_floor, reverse=True)
+        newest_parsed, newest_raw, _ = refs[0]
+        if newest_parsed is not None:
+            cells[cell_key]["last_tested"] = newest_raw
+        cells[cell_key]["recent_refs"] = [
+            ref for _, _, ref in refs[:COVERAGE_RECENT_REFS_LIMIT]
+        ]
+
+    column_order = sorted(
+        columns.values(), key=lambda col: (col["agent"], col["model"] or "")
+    )
+    ordered_keys = [col["key"] for col in column_order]
+    rows: List[Dict[str, Any]] = []
+    for task_id in library_ids | observed_tasks:
+        row_cells = [
+            cells[(task_id, key)] for key in ordered_keys if (task_id, key) in cells
+        ]
+        rows.append(
+            {
+                "task_id": task_id,
+                "in_library": task_id in library_ids,
+                "breached": any(cell["passed"] > 0 for cell in row_cells),
+                "tested_columns": sum(1 for cell in row_cells if cell["judged"] > 0),
+                "cells": row_cells,
+            }
+        )
+    rows.sort(key=lambda row: (not row["breached"], row["task_id"]))
+
+    return {
+        "columns": column_order,
+        "rows": rows,
+        "runs_scanned": runs_scanned,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
