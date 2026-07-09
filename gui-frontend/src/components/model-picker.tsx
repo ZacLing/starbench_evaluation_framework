@@ -39,7 +39,7 @@ export function ProviderModelPicker({
   const provider = providers.find((item) => item.id === providerId)
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="grid min-w-0 gap-2 sm:flex sm:flex-wrap sm:items-center">
       <Select
         value={providerId}
         onValueChange={(id) => {
@@ -47,7 +47,7 @@ export function ProviderModelPicker({
           if (next) onChange({ provider: next, model: next.models[0] ?? "" })
         }}
       >
-        <SelectTrigger className="w-52">
+        <SelectTrigger className="w-full sm:w-52">
           <SelectValue placeholder="Provider…" />
         </SelectTrigger>
         <SelectContent>
@@ -72,7 +72,7 @@ export function ProviderModelPicker({
           if (provider) onChange({ provider, model: value === RUNTIME_DEFAULT ? "" : value })
         }}
       >
-        <SelectTrigger className="w-64 font-mono text-xs">
+        <SelectTrigger className="w-full font-mono text-xs sm:w-64">
           <SelectValue placeholder="Model…" />
         </SelectTrigger>
         <SelectContent>

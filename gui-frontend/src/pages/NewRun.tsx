@@ -53,6 +53,7 @@ import {
   AGENT_NOTES,
   AgentIcon,
   compatibleProviders,
+  ProviderIcon,
   runtimeFilters,
 } from "@/components/brand"
 import { ProviderModelPicker } from "@/components/model-picker"
@@ -789,10 +790,10 @@ export default function NewRun() {
   }
 
   return (
-    <div className="mx-auto grid max-w-4xl gap-6">
-      <div>
+    <div className="mx-auto grid w-full max-w-4xl gap-6 [&>*]:min-w-0">
+      <div className="min-w-0">
         <h1 className="text-xl font-semibold tracking-tight">New experiment</h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="max-w-[65ch] text-sm text-muted-foreground">
           One task set, one judge, many agents under test: comparable by construction.
         </p>
       </div>
@@ -925,7 +926,7 @@ export default function NewRun() {
         />
       )}
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center justify-between gap-3">
         <Button variant="outline" disabled={step === 0} onClick={() => setStep(step - 1)}>
           <ArrowLeft /> Back
         </Button>
@@ -978,39 +979,43 @@ export default function NewRun() {
 
 function Stepper({ current, onSelect }: { current: number; onSelect: (step: number) => void }) {
   return (
-    <ol className="flex items-center gap-2">
-      {STEPS.map((label, index) => {
-        const done = index < current
-        const active = index === current
-        return (
-          <li key={label} className="flex min-w-0 flex-1 items-center gap-2">
-            <button
-              type="button"
-              disabled={index > current}
-              onClick={() => onSelect(index)}
-              className={cn(
-                "flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors",
-                active ? "font-semibold text-foreground" : "text-muted-foreground",
-                done && "hover:text-foreground",
-              )}
-            >
-              <span
+    <div className="-mx-1 min-w-0 overflow-x-auto px-1 pb-1">
+      <ol className="flex min-w-max items-center gap-2 sm:min-w-0">
+        {STEPS.map((label, index) => {
+          const done = index < current
+          const active = index === current
+          return (
+            <li key={label} className="flex min-w-0 flex-none items-center gap-2 sm:flex-1">
+              <button
+                type="button"
+                disabled={index > current}
+                onClick={() => onSelect(index)}
                 className={cn(
-                  "grid size-6 shrink-0 place-content-center rounded-full border text-xs font-semibold",
-                  active && "border-primary bg-primary text-primary-foreground",
-                  done && "border-pass-ink/40 bg-pass-soft text-pass-ink",
-                  !active && !done && "border-border bg-muted text-muted-foreground",
+                  "flex min-w-0 shrink-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors sm:shrink",
+                  active ? "font-semibold text-foreground" : "text-muted-foreground",
+                  done && "hover:text-foreground",
                 )}
               >
-                {done ? <Check className="size-3.5" /> : index + 1}
-              </span>
-              <span className="truncate">{label}</span>
-            </button>
-            {index < STEPS.length - 1 && <div className="h-px flex-1 bg-border" />}
-          </li>
-        )
-      })}
-    </ol>
+                <span
+                  className={cn(
+                    "grid size-6 shrink-0 place-content-center rounded-full border text-xs font-semibold",
+                    active && "border-primary bg-primary text-primary-foreground",
+                    done && "border-pass-ink/40 bg-pass-soft text-pass-ink",
+                    !active && !done && "border-border bg-muted text-muted-foreground",
+                  )}
+                >
+                  {done ? <Check className="size-3.5" /> : index + 1}
+                </span>
+                <span className="truncate">{label}</span>
+              </button>
+              {index < STEPS.length - 1 && (
+                <div className="h-px w-10 flex-none bg-border sm:flex-1" />
+              )}
+            </li>
+          )
+        })}
+      </ol>
+    </div>
   )
 }
 
@@ -1031,7 +1036,7 @@ function ContractStatusBar({
   dims: string[]
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
       <span className="text-muted-foreground">
         Under{" "}
         <span className="font-medium text-foreground">{profileName}</span>
@@ -1812,6 +1817,53 @@ function ContenderCard({
 
 /* ---------- step 3: shared config (profile) ---------- */
 
+function JudgeCredentialStatus({
+  provider,
+  authMode,
+}: {
+  provider?: AiProvider
+  authMode?: string
+}) {
+  if (!provider) {
+    return (
+      <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Explicit credentials</span>
+        <span className="font-mono">{authMode || "env"}</span>
+        <span className="min-w-0 break-words">
+          No provider reference is attached to this judge model.
+        </span>
+      </div>
+    )
+  }
+
+  const mode = provider.auth === "cli_login" ? "global" : "env"
+  const keyLabel = provider.api_key_env || "API key env"
+
+  return (
+    <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 text-xs">
+      <ProviderIcon provider={provider} size={14} />
+      <span className="font-medium text-foreground">{provider.name}</span>
+      <span className="font-mono text-muted-foreground">{mode}</span>
+      {provider.auth === "api_key" ? (
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 font-mono text-[11px]",
+            provider.key_present
+              ? "bg-pass-soft text-pass-ink"
+              : "bg-warn-soft text-warn-ink",
+          )}
+        >
+          {keyLabel} {provider.key_present ? "set" : "missing"}
+        </span>
+      ) : (
+        <span className="rounded bg-live-soft px-1.5 py-0.5 text-[11px] text-live-ink">
+          CLI login
+        </span>
+      )}
+    </div>
+  )
+}
+
 function StepShared({
   profiles,
   persisted,
@@ -1887,32 +1939,36 @@ function StepShared({
   }
 
   return (
-    <div className="grid gap-4">
-      <Card className="py-4">
-        <CardContent className="flex flex-wrap items-center gap-3 px-4">
-          <Label className="text-sm">Profile</Label>
-          <Select value={profileId ?? undefined} onValueChange={onSelectProfile}>
-            <SelectTrigger className="w-56">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {profiles.map((profile) => (
-                <SelectItem key={profile.id} value={profile.id}>
-                  {profile.name}
-                  {profile.id === defaultProfileId ? " (default)" : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {!persisted && (
-            <span className="text-xs text-muted-foreground">
-              built-in defaults, not saved yet
-            </span>
-          )}
+    <div className="grid min-w-0 gap-4">
+      <Card className="min-w-0 py-0">
+        <CardContent className="flex flex-wrap items-center gap-3 p-3 sm:px-4">
+          <div className="grid min-w-0 gap-0.5">
+            <span className="text-xs font-medium text-muted-foreground">Profile contract</span>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Select value={profileId ?? undefined} onValueChange={onSelectProfile}>
+                <SelectTrigger className="w-full sm:w-64">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {profiles.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id}>
+                      {profile.name}
+                      {profile.id === defaultProfileId ? " (default)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!persisted && (
+                <span className="text-xs text-muted-foreground">
+                  built-in defaults, not saved yet
+                </span>
+              )}
+            </div>
+          </div>
           <Button
             variant="outline"
             size="sm"
-            className="ml-auto"
+            className="sm:ml-auto"
             disabled={saving || !profileId}
             onClick={saveToProfile}
           >
@@ -1921,362 +1977,384 @@ function StepShared({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardContent className="grid gap-5">
-          <div className="flex items-center gap-2">
-            <Scale className="size-4 text-live-ink" />
-            <span className="text-sm font-semibold">Judge — shared across all agents</span>
-          </div>
-          <div className="grid gap-3">
-            <div className="grid gap-1.5">
-              <Label>Judge runtime</Label>
-              <Select
-                value={judgeRuntime}
-                onValueChange={(runtime) => {
-                  const custom = customByRuntime[runtime]
-                  setShared((current) => ({
-                    ...current,
-                    evaluator_agent: runtime,
-                    evaluator_provider_id: undefined,
-                    evaluator_model: "",
-                    evaluator_auth_mode:
-                      custom && (custom.protocol ?? "none") === "none" ? "global" : "env",
-                    evaluator_gateway: null,
-                    judge_env: null,
-                  }))
-                }}
-              >
-                <SelectTrigger className="w-64">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {RUNTIMES.map((runtime) => (
-                    <SelectItem key={runtime} value={runtime}>
-                      <span className="flex items-center gap-2">
-                        <AgentIcon agent={runtime} size={14} />
-                        {AGENT_LABELS[runtime]}
-                      </span>
-                    </SelectItem>
-                  ))}
-                  {customRuntimes.map((agent) => (
-                    <SelectItem key={agent.id} value={agent.id}>
-                      <span className="flex items-center gap-2">
-                        <AgentIcon agent={agent.id} icon={agent.icon} size={14} />
-                        {agent.label ?? agent.spec_id}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                The judge is an agent too — scores are only as trustworthy as the runtime
-                grading them.
-              </p>
-              {judgeCustom && judgeCustom.judge_args_inherited && (
-                <p className="text-xs text-warn-ink">
-                  This runtime declares no read-only judge mode (judge arguments equal the
-                  executor arguments), so the judge could modify its grading workspace.
-                  Prefer a runtime with a plan/read-only flag for judging.
-                </p>
-              )}
-            </div>
-            {judgeOwnLogin ? (
-              <p className="text-xs text-muted-foreground">
-                {runtimeLabel(judgeRuntime)} uses its own login and configuration; no provider
-                applies.
-              </p>
-            ) : (
-              <div className="grid gap-1.5">
-                <Label>Judge model (from a provider)</Label>
-                <ProviderModelPicker
-                  providerFilter={filterFor(judgeRuntime)}
-                  runtimeId={judgeRuntime}
-                  filter={
-                    judgeRuntime === "codex"
-                      ? (provider) => provider.kind === "openai"
-                      : undefined
-                  }
-                  providerId={judgeProvider?.id}
-                  model={String(shared.evaluator_model ?? "")}
-                  onChange={({ provider, model }) => {
-                    /* Pure reference: the backend computes auth/gateway/judge_env
-                       from evaluator_provider_id at plan time. */
-                    setShared((current) => ({
-                      ...current,
-                      evaluator_agent: judgeRuntime,
-                      evaluator_provider_id: provider.id,
-                      evaluator_model: model,
-                      evaluator_auth_mode: undefined,
-                      evaluator_gateway: null,
-                      judge_env: null,
-                    }))
-                  }}
-                />
-                {judgeRuntime === "codex" && (
-                  <p className="text-xs text-muted-foreground">
-                    The Codex judge runs on the official OpenAI endpoint only: codex gateway
-                    overrides are process-wide and would also reroute Codex contenders.
-                  </p>
-                )}
-                {judgeProvider && (
-                  <p className="text-xs text-muted-foreground">
-                    Credentials from the {judgeProvider.name} provider
-                  </p>
-                )}
+      <Card className="min-w-0 overflow-hidden py-0">
+        <CardContent className="p-0">
+          <div className="grid min-w-0 lg:grid-cols-[minmax(0,1.15fr)_minmax(21rem,0.85fr)]">
+            <section className="grid min-w-0 gap-4 p-4 sm:p-5">
+              <div className="flex items-start gap-2">
+                <Scale className="mt-0.5 size-4 text-live-ink" />
+                <div className="grid gap-0.5">
+                  <span className="text-sm font-semibold">Judge</span>
+                  <span className="text-xs text-muted-foreground">
+                    Shared across all agents. The judge is an agent too.
+                  </span>
+                </div>
               </div>
-            )}
-            <div className="grid max-w-52 gap-1.5">
-              <Label htmlFor="judge-timeout">Judge timeout (s)</Label>
-              <Input
-                id="judge-timeout"
-                type="number"
-                min={1}
-                placeholder="900"
-                value={String(shared.evaluator_timeout_seconds ?? "")}
-                onChange={(event) =>
-                  setSharedField("evaluator_timeout_seconds", event.target.value)
-                }
-              />
-            </div>
-          </div>
-          <RadioGroup
-            value={String(shared.judge_mode ?? "single")}
-            onValueChange={(value) => setSharedField("judge_mode", value)}
-            className="grid gap-2 lg:grid-cols-3"
-          >
-            {JUDGE_MODES.map((mode) => (
-              <label
-                key={mode.value}
-                className={cn(
-                  "flex cursor-pointer items-start gap-3 rounded-md border p-3",
-                  String(shared.judge_mode ?? "single") === mode.value
-                    ? "border-primary bg-accent/60"
-                    : "hover:border-primary/40",
-                )}
-              >
-                <RadioGroupItem value={mode.value} className="mt-0.5" />
-                <span>
-                  <span className="block text-sm font-medium">{mode.label}</span>
-                  <span className="block text-xs text-muted-foreground">{mode.note}</span>
-                </span>
-              </label>
-            ))}
-          </RadioGroup>
-          {judgeConflicts > 0 && (
-            <Alert className="border-warn-ink/40 bg-warn-soft/60">
-              <AlertTriangle className="size-4" />
-              <AlertTitle>Judge equals an agent under test</AlertTitle>
-              <AlertDescription>
-                {judgeConflicts} agent{judgeConflicts > 1 ? "s use" : " uses"} the same model
-                as the judge. Self-grading biases scores; consider an independent judge.
-              </AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
 
-      <div className="grid gap-2">
-        <h3 className="px-1 text-sm font-semibold text-muted-foreground">Research add-ons</h3>
-        <PromptAssistanceBlock
-          tasksDir={tasksDir}
-          selectedTasks={selectedTasks}
-          shared={shared}
-          setShared={setShared}
-          setSharedField={setSharedField}
-        />
-        <ExecutorSkillsBlock skills={skills} shared={shared} setShared={setShared} />
-      </div>
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label>Judge runtime</Label>
+                  <Select
+                    value={judgeRuntime}
+                    onValueChange={(runtime) => {
+                      const custom = customByRuntime[runtime]
+                      setShared((current) => ({
+                        ...current,
+                        evaluator_agent: runtime,
+                        evaluator_provider_id: undefined,
+                        evaluator_model: "",
+                        evaluator_auth_mode:
+                          custom && (custom.protocol ?? "none") === "none" ? "global" : "env",
+                        evaluator_gateway: null,
+                        judge_env: null,
+                      }))
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {RUNTIMES.map((runtime) => (
+                        <SelectItem key={runtime} value={runtime}>
+                          <span className="flex items-center gap-2">
+                            <AgentIcon agent={runtime} size={14} />
+                            {AGENT_LABELS[runtime]}
+                          </span>
+                        </SelectItem>
+                      ))}
+                      {customRuntimes.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
+                          <span className="flex items-center gap-2">
+                            <AgentIcon agent={agent.id} icon={agent.icon} size={14} />
+                            {agent.label ?? agent.spec_id}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-      <Card>
-        <CardContent className="grid gap-4">
-          <span className="text-sm font-semibold">Environment & determinism — shared</span>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="grid gap-1.5">
-              <Label>Where executors run</Label>
-              <Select
-                value={String(shared.executor_backend ?? "local")}
-                onValueChange={(value) => setSharedField("executor_backend", value)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="local">This machine</SelectItem>
-                  <SelectItem value="docker">Docker sandbox</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Web search</Label>
-              <Select
-                value={String(shared.web_search_mode ?? "task")}
-                onValueChange={(value) => setSharedField("web_search_mode", value)}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="task">Task default</SelectItem>
-                  <SelectItem value="allow">Allow for all</SelectItem>
-                  <SelectItem value="deny">Deny for all</SelectItem>
-                </SelectContent>
-              </Select>
-              {String(shared.web_search_mode ?? "task") !== "task" && (
-                <p className="text-xs text-warn-ink">
-                  Enforced for Claude Code and Codex; other runtimes' own tooling
-                  decides web access.
-                </p>
-              )}
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Seed</Label>
-              <Input
-                type="number"
-                placeholder="123"
-                value={String(shared.seed ?? "")}
-                onChange={(event) => setSharedField("seed", event.target.value)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Batch size</Label>
-              <Input
-                type="number"
-                min={1}
-                placeholder="1"
-                value={String(shared.batch_size ?? "")}
-                onChange={(event) => setSharedField("batch_size", event.target.value)}
-              />
-            </div>
-            <div className="grid gap-1.5">
-              <Label>Repeat</Label>
-              <Input
-                type="number"
-                min={1}
-                placeholder="1"
-                value={String(shared.repeat ?? "")}
-                onChange={(event) => setSharedField("repeat", event.target.value)}
-              />
-            </div>
-          </div>
-          {String(shared.executor_backend) === "docker" && (
-            <p className="text-xs text-muted-foreground">
-              Each agent runs in its runtime's own container image
-              (<code className="font-mono">starbench-*</code>; custom runtimes use the image
-              from their spec). Build the images once with{" "}
-              <code className="font-mono">make docker-images</code>. The judge always runs on
-              this machine — isolation applies to the agents' execution phase.
-            </p>
-          )}
-          {String(shared.executor_backend) === "docker" && localRuntimeNames.length > 0 && (
-            <Alert className="border-warn-ink/40 bg-warn-soft/60">
-              <AlertTriangle className="size-4" />
-              <AlertTitle>Some agents will run without Docker</AlertTitle>
-              <AlertDescription>
-                Docker isolation covers every built-in runtime and custom runtimes with a
-                Docker image in their spec. These agents run directly on this machine:{" "}
-                {localRuntimeNames.join(", ")}.
-              </AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card className="py-4">
-        <CardContent className="grid gap-2 px-4">
-          <span className="text-sm font-semibold">Per-agent fields</span>
-          <p className="text-xs text-muted-foreground">
-            Which run-time knobs each agent sets individually. Endpoints and credentials
-            always come from the provider.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {PER_FIELD_OPTIONS.map((option) => {
-              const checked = perFields.includes(option.id)
-              return (
-                <label
-                  key={option.id}
-                  className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-sm",
-                    checked ? "border-primary bg-accent/60" : "hover:border-primary/40",
-                    option.locked && "cursor-not-allowed opacity-70",
-                  )}
-                >
-                  <Checkbox
-                    checked={checked}
-                    disabled={option.locked}
-                    onCheckedChange={(value) =>
-                      setPerFields(
-                        value
-                          ? [...perFields, option.id]
-                          : perFields.filter((id) => id !== option.id),
-                      )
+                <div className="grid gap-1.5">
+                  <Label htmlFor="judge-timeout">Judge timeout (s)</Label>
+                  <Input
+                    id="judge-timeout"
+                    type="number"
+                    min={1}
+                    placeholder="900"
+                    value={String(shared.evaluator_timeout_seconds ?? "")}
+                    onChange={(event) =>
+                      setSharedField("evaluator_timeout_seconds", event.target.value)
                     }
                   />
-                  {option.label}
-                </label>
-              )
-            })}
+                </div>
+
+                <div className="grid min-w-0 gap-1.5 sm:col-span-2">
+                  <Label>{judgeOwnLogin ? "Judge credentials" : "Judge model"}</Label>
+                  {judgeOwnLogin ? (
+                    <div className="flex min-h-9 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
+                      {runtimeLabel(judgeRuntime)} uses its own login and configuration.
+                    </div>
+                  ) : (
+                    <div className="grid min-w-0 gap-2">
+                      <ProviderModelPicker
+                        providerFilter={filterFor(judgeRuntime)}
+                        runtimeId={judgeRuntime}
+                        filter={
+                          judgeRuntime === "codex"
+                            ? (provider) => provider.kind === "openai"
+                            : undefined
+                        }
+                        providerId={judgeProvider?.id}
+                        model={String(shared.evaluator_model ?? "")}
+                        onChange={({ provider, model }) => {
+                          /* Pure reference: the backend computes auth/gateway/judge_env
+                             from evaluator_provider_id at plan time. */
+                          setShared((current) => ({
+                            ...current,
+                            evaluator_agent: judgeRuntime,
+                            evaluator_provider_id: provider.id,
+                            evaluator_model: model,
+                            evaluator_auth_mode: undefined,
+                            evaluator_gateway: null,
+                            judge_env: null,
+                          }))
+                        }}
+                      />
+                      <JudgeCredentialStatus
+                        provider={judgeProvider}
+                        authMode={String(shared.evaluator_auth_mode ?? "env")}
+                      />
+                      {judgeRuntime === "codex" && (
+                        <p className="text-xs text-muted-foreground">
+                          Codex judge uses the official OpenAI endpoint; gateway overrides are
+                          process-wide and would also reroute Codex agents under test.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {judgeCustom && judgeCustom.judge_args_inherited && (
+                <Alert className="border-warn-ink/40 bg-warn-soft/60">
+                  <AlertTriangle className="size-4" />
+                  <AlertTitle>Judge can modify its workspace</AlertTitle>
+                  <AlertDescription>
+                    This runtime declares no read-only judge mode. Prefer a runtime with a
+                    plan/read-only flag for judging.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <RadioGroup
+                value={String(shared.judge_mode ?? "single")}
+                onValueChange={(value) => setSharedField("judge_mode", value)}
+                className="grid gap-2 xl:grid-cols-3"
+              >
+                {JUDGE_MODES.map((mode) => (
+                  <label
+                    key={mode.value}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-2.5 rounded-md border p-2.5",
+                      String(shared.judge_mode ?? "single") === mode.value
+                        ? "border-primary bg-accent/60"
+                        : "hover:border-primary/40",
+                    )}
+                  >
+                    <RadioGroupItem value={mode.value} className="mt-0.5" />
+                    <span>
+                      <span className="block text-sm font-medium">{mode.label}</span>
+                      <span className="block text-xs text-muted-foreground">{mode.note}</span>
+                    </span>
+                  </label>
+                ))}
+              </RadioGroup>
+
+              {judgeConflicts > 0 && (
+                <Alert className="border-warn-ink/40 bg-warn-soft/60">
+                  <AlertTriangle className="size-4" />
+                  <AlertTitle>Judge equals an agent under test</AlertTitle>
+                  <AlertDescription>
+                    {judgeConflicts} agent{judgeConflicts > 1 ? "s use" : " uses"} the same
+                    model as the judge. Self-grading biases scores; consider an independent
+                    judge.
+                  </AlertDescription>
+                </Alert>
+              )}
+            </section>
+
+            <section className="grid min-w-0 content-start gap-5 border-t p-4 sm:p-5 lg:border-t-0 lg:border-l">
+              <div className="flex items-start gap-2">
+                <SlidersHorizontal className="mt-0.5 size-4 text-muted-foreground" />
+                <div className="grid gap-0.5">
+                  <span className="text-sm font-semibold">Run controls</span>
+                  <span className="text-xs text-muted-foreground">
+                    Execution environment and deterministic scheduling.
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label>Where executors run</Label>
+                  <Select
+                    value={String(shared.executor_backend ?? "local")}
+                    onValueChange={(value) => setSharedField("executor_backend", value)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="local">This machine</SelectItem>
+                      <SelectItem value="docker">Docker sandbox</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Web search</Label>
+                  <Select
+                    value={String(shared.web_search_mode ?? "task")}
+                    onValueChange={(value) => setSharedField("web_search_mode", value)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="task">Task default</SelectItem>
+                      <SelectItem value="allow">Allow for all</SelectItem>
+                      <SelectItem value="deny">Deny for all</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Seed</Label>
+                  <Input
+                    type="number"
+                    placeholder="123"
+                    value={String(shared.seed ?? "")}
+                    onChange={(event) => setSharedField("seed", event.target.value)}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Batch size</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    placeholder="1"
+                    value={String(shared.batch_size ?? "")}
+                    onChange={(event) => setSharedField("batch_size", event.target.value)}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>Repeat</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    placeholder="1"
+                    value={String(shared.repeat ?? "")}
+                    onChange={(event) => setSharedField("repeat", event.target.value)}
+                  />
+                </div>
+              </div>
+
+              {String(shared.web_search_mode ?? "task") !== "task" && (
+                <p className="text-xs text-warn-ink">
+                  Web-search override is enforced for Claude Code and Codex; other runtimes'
+                  own tooling decides access.
+                </p>
+              )}
+
+              {String(shared.executor_backend) === "docker" && (
+                <p className="text-xs text-muted-foreground">
+                  Each agent runs in its runtime's own container image. Build images once with{" "}
+                  <code className="font-mono">make docker-images</code>. The judge still runs
+                  on this machine.
+                </p>
+              )}
+              {String(shared.executor_backend) === "docker" && localRuntimeNames.length > 0 && (
+                <Alert className="border-warn-ink/40 bg-warn-soft/60">
+                  <AlertTriangle className="size-4" />
+                  <AlertTitle>Some agents will run without Docker</AlertTitle>
+                  <AlertDescription>
+                    Docker isolation covers built-in runtimes and custom runtimes with a Docker
+                    image. These agents run directly on this machine:{" "}
+                    {localRuntimeNames.join(", ")}.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <div className="grid min-w-0 gap-2 border-t pt-4">
+                <span className="text-sm font-semibold">Per-agent fields</span>
+                <p className="text-xs text-muted-foreground">
+                  Run-time knobs each agent sets individually. Endpoints and credentials always
+                  come from the provider.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {PER_FIELD_OPTIONS.map((option) => {
+                    const checked = perFields.includes(option.id)
+                    return (
+                      <label
+                        key={option.id}
+                        className={cn(
+                          "flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-sm",
+                          checked ? "border-primary bg-accent/60" : "hover:border-primary/40",
+                          option.locked && "cursor-not-allowed opacity-70",
+                        )}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          disabled={option.locked}
+                          onCheckedChange={(value) =>
+                            setPerFields(
+                              value
+                                ? [...perFields, option.id]
+                                : perFields.filter((id) => id !== option.id),
+                            )
+                          }
+                        />
+                        {option.label}
+                      </label>
+                    )
+                  })}
+                </div>
+              </div>
+
+              <Collapsible>
+                <CollapsibleTrigger className="group flex w-full items-center justify-between border-t pt-4 text-left">
+                  <span className="text-sm font-semibold">Advanced</span>
+                  <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="grid gap-4 pt-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="judge-parallelism">Judge parallelism</Label>
+                      <Input
+                        id="judge-parallelism"
+                        type="number"
+                        min={1}
+                        placeholder="4"
+                        value={String(shared.max_evaluator_parallel ?? "")}
+                        onChange={(event) =>
+                          setSharedField("max_evaluator_parallel", event.target.value)
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        More parallel judges finish sooner but may hit provider rate limits.
+                      </p>
+                    </div>
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="claude-max-turns">Claude max turns</Label>
+                      <Input
+                        id="claude-max-turns"
+                        type="number"
+                        min={1}
+                        placeholder="unlimited"
+                        value={String(shared.claude_max_turns ?? "")}
+                        onChange={(event) =>
+                          setSharedField("claude_max_turns", event.target.value)
+                        }
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Only affects Claude Code agents. Blank means no cap.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="extra-flags">Extra CLI flags</Label>
+                    <Input
+                      id="extra-flags"
+                      className="font-mono"
+                      placeholder="--docker-bin podman"
+                      value={String(shared.extra_args ?? "")}
+                      onChange={(event) => setSharedField("extra_args", event.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Added to every run command exactly as typed.
+                    </p>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </section>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="py-4">
-        <CardContent className="px-4">
-          <Collapsible>
-            <CollapsibleTrigger className="group flex w-full items-center justify-between text-left">
-              <span className="text-sm font-semibold">Advanced</span>
-              <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-            </CollapsibleTrigger>
-            <CollapsibleContent className="grid gap-5 pt-4">
-              <div className="grid max-w-52 gap-1.5">
-                <Label htmlFor="judge-parallelism">Judge parallelism</Label>
-                <Input
-                  id="judge-parallelism"
-                  type="number"
-                  min={1}
-                  placeholder="4"
-                  value={String(shared.max_evaluator_parallel ?? "")}
-                  onChange={(event) =>
-                    setSharedField("max_evaluator_parallel", event.target.value)
-                  }
-                />
-                <p className="text-xs text-muted-foreground">
-                  How many rubric judges grade at once. Raising it finishes judging sooner but
-                  is more likely to hit the judge provider's rate limit.
-                </p>
-              </div>
-              <div className="grid max-w-52 gap-1.5">
-                <Label htmlFor="claude-max-turns">Claude max turns</Label>
-                <Input
-                  id="claude-max-turns"
-                  type="number"
-                  min={1}
-                  placeholder="unlimited"
-                  value={String(shared.claude_max_turns ?? "")}
-                  onChange={(event) => setSharedField("claude_max_turns", event.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Caps how many turns a Claude Code agent may take on a task. Leave blank for no
-                  cap. Only affects Claude Code agents.
-                </p>
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="extra-flags">Extra CLI flags</Label>
-                <Input
-                  id="extra-flags"
-                  className="font-mono"
-                  placeholder="--docker-bin podman"
-                  value={String(shared.extra_args ?? "")}
-                  onChange={(event) => setSharedField("extra_args", event.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Added to every run's command exactly as typed — an escape hatch for
-                  engineering knobs that have no control of their own here.
-                </p>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        </CardContent>
-      </Card>
+      <section className="grid gap-2">
+        <div className="flex items-center gap-2 px-1">
+          <Sparkles className="size-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold text-muted-foreground">Research add-ons</h3>
+        </div>
+        <div className="grid min-w-0 gap-3">
+          <PromptAssistanceBlock
+            tasksDir={tasksDir}
+            selectedTasks={selectedTasks}
+            shared={shared}
+            setShared={setShared}
+            setSharedField={setSharedField}
+          />
+          <ExecutorSkillsBlock skills={skills} shared={shared} setShared={setShared} />
+        </div>
+      </section>
     </div>
   )
 }
@@ -3382,7 +3460,7 @@ function TaskFactsStrip({ tasks }: { tasks: TaskPackage[] }) {
         : `web search on ${webOn}/${tasks.length}`
   return (
     <div
-      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
       title="Facts set by the selected task packages, not by this run's configuration"
     >
       <span className="font-medium text-foreground">
