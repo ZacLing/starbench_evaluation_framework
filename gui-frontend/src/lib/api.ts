@@ -41,6 +41,9 @@ import type {
   RuntimeProtocol,
   Skill,
   SkillsPayload,
+  TaskHistory,
+  TaskHistoryConfig,
+  TaskHistoryPayload,
   TaskTracePayload,
   TraceEntry,
   TraceEntryType,
@@ -85,6 +88,9 @@ export type {
   RuntimeProtocol,
   Skill,
   SkillsPayload,
+  TaskHistory,
+  TaskHistoryConfig,
+  TaskHistoryPayload,
   TaskTracePayload,
   TraceEntry,
   TraceEntryType,
@@ -544,6 +550,10 @@ export const api = {
     ),
   coverage: () => request<CoveragePayload>("/api/coverage"),
   tasklib: () => request<{ libraries: TaskLibrary[] }>("/api/tasklib"),
+  taskHistory: (dir?: string | null) =>
+    request<TaskHistoryPayload>(
+      `/api/tasklib/history${dir ? `?dir=${encodeURIComponent(dir)}` : ""}`,
+    ),
   launches: () => request<{ launches: Launch[] }>("/api/launches"),
   launch: (payload: LaunchPayload) =>
     request<Launch & { argv: string[]; dry_run?: boolean }>("/api/launch", {

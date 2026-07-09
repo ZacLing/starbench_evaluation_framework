@@ -45,9 +45,17 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
 import { TaskBadges } from "@/components/task-badges"
-import { fmtDuration } from "@/lib/format"
+import { fmtDuration, fmtRelative } from "@/lib/format"
 import {
   AGENT_LABELS,
   AGENT_NOTES,
@@ -72,6 +80,8 @@ import {
   type ProviderFilter,
   type SharedConfig,
   type SkillsPayload,
+  type TaskHistory,
+  type TaskHistoryConfig,
   type TaskPackage,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -838,6 +848,7 @@ export default function NewRun() {
           setTasks={setTasks}
           onOpenPicker={() => setPickerOpen(true)}
           onImported={() => queryClient.invalidateQueries({ queryKey: ["tasklib"] })}
+          runtimeLabel={runtimeLabel}
         />
       )}
       {step === 2 && (
@@ -1297,6 +1308,7 @@ function StepTasks({
   setTasks,
   onOpenPicker,
   onImported,
+  runtimeLabel,
 }: {
   libraries: { dir: string; tasks: TaskPackage[] }[]
   tasksDir: string
@@ -1305,13 +1317,24 @@ function StepTasks({
   setTasks: (tasks: string[]) => void
   onOpenPicker: () => void
   onImported: () => void
+  runtimeLabel: (runtime: string) => string
 }) {
   const library = libraries.find((item) => item.dir === tasksDir)
+  const historyQuery = useQuery({
+    queryKey: ["task-history", tasksDir],
+    queryFn: () => api.taskHistory(tasksDir),
+    enabled: Boolean(tasksDir),
+  })
+  const historyByTask = historyQuery.data?.tasks ?? {}
   const runnableTasks = library?.tasks.filter((task) => !task.error) ?? []
   const selectedRunnableCount = tasks.filter((id) =>
     runnableTasks.some((task) => task.id === id),
   ).length
   const requiresTaskSelection = runnableTasks.length > 0 && selectedRunnableCount === 0
+  const toggleTask = (task: TaskPackage, checked: boolean) => {
+    if (task.error) return
+    setTasks(checked ? [...tasks, task.id] : tasks.filter((id) => id !== task.id))
+  }
   return (
     <Card>
       <CardContent className="grid gap-5">
@@ -1373,57 +1396,79 @@ function StepTasks({
                 </AlertDescription>
               </Alert>
             ) : null}
-            <div className="grid gap-2 sm:grid-cols-2">
-              {library.tasks.map((task) => {
-                const checked = tasks.includes(task.id)
-                const broken = Boolean(task.error)
-                return (
-                  <label
-                    key={task.dir_name}
-                    className={cn(
-                      "flex items-start gap-3 rounded-md border p-3 transition-colors",
-                      broken
-                        ? "cursor-not-allowed border-fail-ink/40 bg-fail-soft/30"
-                        : checked
-                          ? "cursor-pointer border-primary bg-accent/60"
-                          : "cursor-pointer hover:border-primary/40",
-                    )}
-                  >
-                    <Checkbox
-                      className="mt-0.5"
-                      checked={checked}
-                      disabled={broken}
-                      onCheckedChange={(value) =>
-                        setTasks(
-                          value ? [...tasks, task.id] : tasks.filter((id) => id !== task.id),
-                        )
-                      }
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-mono text-sm font-medium">
-                        {task.id}
-                      </span>
-                      {broken ? (
-                        <span className="block text-xs text-fail-ink">
-                          Not runnable: {task.error}
-                        </span>
-                      ) : (
-                        <>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {task.name} · {task.rubric_count} rubrics
-                          </span>
-                          {task.warning && (
-                            <span className="block text-xs text-warn-ink">{task.warning}</span>
-                          )}
-                          <span className="mt-1 block">
-                            <TaskBadges task={task} />
-                          </span>
-                        </>
-                      )}
-                    </span>
-                  </label>
-                )
-              })}
+            {historyQuery.isError && (
+              <p className="text-xs text-warn-ink">
+                Run history could not be loaded: {(historyQuery.error as Error).message}
+              </p>
+            )}
+            <div className="overflow-hidden rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50 hover:bg-muted/50">
+                    <TableHead className="w-9" />
+                    <TableHead className="min-w-[22rem]">Task</TableHead>
+                    <TableHead className="min-w-[11rem]">History</TableHead>
+                    <TableHead className="min-w-[24rem]">Configs</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {library.tasks.map((task) => {
+                    const checked = tasks.includes(task.id)
+                    const broken = Boolean(task.error)
+                    const history = historyByTask[task.id]
+                    return (
+                      <TableRow
+                        key={task.dir_name}
+                        data-state={checked ? "selected" : undefined}
+                        className={cn(
+                          broken && "bg-fail-soft/30 hover:bg-fail-soft/40",
+                          checked && "bg-accent/60 hover:bg-accent/70",
+                        )}
+                      >
+                        <TableCell>
+                          <Checkbox
+                            checked={checked}
+                            disabled={broken}
+                            aria-label={`Select ${task.id}`}
+                            onCheckedChange={(value) => toggleTask(task, Boolean(value))}
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <div className="grid min-w-0 gap-1">
+                            <div className="truncate font-mono text-sm font-medium" title={task.id}>
+                              {task.id}
+                            </div>
+                            {broken ? (
+                              <div className="text-xs text-fail-ink">
+                                Not runnable: {task.error}
+                              </div>
+                            ) : (
+                              <>
+                                <div className="truncate text-xs text-muted-foreground" title={task.name}>
+                                  {task.name} · {task.rubric_count} rubrics
+                                </div>
+                                {task.warning && (
+                                  <div className="text-xs text-warn-ink">{task.warning}</div>
+                                )}
+                                <TaskBadges task={task} />
+                              </>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <TaskHistoryStatus
+                            history={history}
+                            loading={historyQuery.isPending || historyQuery.isFetching}
+                          />
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <TaskHistoryConfigs history={history} runtimeLabel={runtimeLabel} />
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             </div>
             <p className="text-xs text-muted-foreground">
               Only selected runnable task packages will run.
@@ -1443,6 +1488,121 @@ function StepTasks({
         {tasksDir && <ImportDropzone compact targetDir={tasksDir} onImported={onImported} />}
       </CardContent>
     </Card>
+  )
+}
+
+function TaskHistoryStatus({
+  history,
+  loading,
+}: {
+  history?: TaskHistory
+  loading: boolean
+}) {
+  if (loading && !history) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Loader2 className="size-3 animate-spin" />
+        checking history
+      </span>
+    )
+  }
+  if (!history || history.task_run_count === 0) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <XCircle className="size-3.5" />
+        Not tested yet
+      </span>
+    )
+  }
+  const runLabel = `${history.run_count} run${history.run_count === 1 ? "" : "s"}`
+  const executionLabel = `${history.task_run_count} execution${
+    history.task_run_count === 1 ? "" : "s"
+  }`
+  return (
+    <span className="grid gap-0.5 text-xs">
+      <span className="inline-flex items-center gap-1.5 font-medium text-pass-ink">
+        <CheckCircle2 className="size-3.5" />
+        Tested
+      </span>
+      <span className="text-muted-foreground">
+        {runLabel} · {executionLabel}
+        {history.last_tested ? ` · ${fmtRelative(history.last_tested)}` : ""}
+      </span>
+    </span>
+  )
+}
+
+function TaskHistoryConfigs({
+  history,
+  runtimeLabel,
+}: {
+  history?: TaskHistory
+  runtimeLabel: (runtime: string) => string
+}) {
+  if (!history || history.configs.length === 0) {
+    return <span className="text-xs text-muted-foreground">No previous config.</span>
+  }
+  return (
+    <div className="grid gap-1">
+      {history.configs.map((config, index) => (
+        <TaskHistoryConfigLine
+          key={`${config.executor_agent ?? "agent"}-${config.executor_model ?? "model"}-${index}`}
+          config={config}
+          runtimeLabel={runtimeLabel}
+        />
+      ))}
+    </div>
+  )
+}
+
+function TaskHistoryConfigLine({
+  config,
+  runtimeLabel,
+}: {
+  config: TaskHistoryConfig
+  runtimeLabel: (runtime: string) => string
+}) {
+  const executor = config.executor_agent
+    ? `${runtimeLabel(config.executor_agent)}${config.executor_model ? ` · ${config.executor_model}` : ""}`
+    : config.executor_model || "unknown executor"
+  const judge =
+    config.evaluator_agent || config.evaluator_model
+      ? `judge ${config.evaluator_agent ? runtimeLabel(config.evaluator_agent) : "unknown"}${
+          config.evaluator_model ? ` · ${config.evaluator_model}` : ""
+        }`
+      : ""
+  const knobs = [
+    config.judge_mode,
+    config.executor_backend,
+    config.instruction_mode && config.instruction_mode !== "none" ? config.instruction_mode : "",
+    config.thinking_effort && config.thinking_effort !== "none"
+      ? `think ${config.thinking_effort}`
+      : "",
+    config.repeat && config.repeat > 1 ? `x${config.repeat}` : "",
+    config.seed !== null && config.seed !== undefined ? `seed ${config.seed}` : "",
+  ].filter((value): value is string => Boolean(value))
+
+  return (
+    <div className="rounded-md border bg-muted/30 px-2 py-1.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <span
+          className="min-w-0 truncate font-mono text-xs font-medium"
+          title={executor}
+        >
+          {executor}
+        </span>
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+          {config.task_run_count}x
+        </Badge>
+      </div>
+      <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+        {judge && <span>{judge}</span>}
+        {knobs.map((item) => (
+          <span key={item}>{item}</span>
+        ))}
+        {config.last_tested && <span>{fmtRelative(config.last_tested)}</span>}
+      </div>
+    </div>
   )
 }
 

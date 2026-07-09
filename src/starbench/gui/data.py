@@ -372,6 +372,148 @@ def list_runs(runs_dir: Path, active_run_ids: Optional[set] = None) -> List[Dict
     return [run_overview(root, active_run_ids) for root in roots]
 
 
+TASK_HISTORY_CONFIG_LIMIT = 4
+
+
+def _matches_tasks_dir(config: Dict[str, Any], tasks_dir: Optional[Path]) -> bool:
+    if tasks_dir is None:
+        return True
+    recorded = config.get("tasks_dir")
+    if not isinstance(recorded, str) or not recorded.strip():
+        # Older/corrupt run configs can still be attributed by task id.
+        return True
+    try:
+        return Path(recorded).expanduser().resolve() == tasks_dir.expanduser().resolve()
+    except OSError:
+        return recorded == str(tasks_dir)
+
+
+def _history_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "executor_agent": config.get("executor_agent"),
+        "executor_model": config.get("executor_model"),
+        "evaluator_agent": config.get("evaluator_agent"),
+        "evaluator_model": config.get("evaluator_model"),
+        "judge_mode": config.get("judge_mode"),
+        "executor_backend": config.get("executor_backend"),
+        "instruction_mode": config.get("instruction_mode"),
+        "repeat": config.get("repeat"),
+        "seed": config.get("seed"),
+        "thinking_effort": config.get("thinking_effort"),
+    }
+
+
+def _history_config_key(config: Dict[str, Any]) -> Tuple[Any, ...]:
+    shaped = _history_config(config)
+    return tuple(shaped.get(key) for key in sorted(shaped))
+
+
+def task_history(runs_dir: Path, tasks_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Per-task execution history for the New experiment task picker.
+
+    This is intentionally narrower than the coverage matrix: it answers
+    "has this task been tested, how many executions, and under which launch
+    configs?" from artifacts already on disk. Missing identities are skipped
+    rather than guessed from directory names.
+    """
+    histories: Dict[str, Dict[str, Any]] = {}
+    config_buckets: Dict[str, Dict[Tuple[Any, ...], Dict[str, Any]]] = {}
+
+    if not runs_dir.is_dir():
+        return {"tasks": {}}
+
+    run_roots = [
+        entry
+        for entry in runs_dir.iterdir()
+        if entry.is_dir()
+        and (
+            (entry / "run_config.json").exists()
+            or (entry / "summary.json").exists()
+            or (entry / "progress_events.jsonl").exists()
+        )
+    ]
+    run_roots.sort(key=lambda entry: entry.name)
+
+    for run_root in run_roots:
+        try:
+            run_config = _read_json(run_root / "run_config.json")
+            config = run_config if isinstance(run_config, dict) else {}
+            if not _matches_tasks_dir(config, tasks_dir):
+                continue
+            config_shape = _history_config(config)
+            config_key = _history_config_key(config)
+
+            for task_run_id in _task_dirs(run_root, config):
+                task_root = run_root / task_run_id
+                task_id, _, _ = _task_identity(task_root)
+                if not isinstance(task_id, str) or not task_id:
+                    continue
+                tested_at = _task_run_tested_at(task_root)
+                parsed_at = _parse_iso(tested_at)
+
+                history = histories.setdefault(
+                    task_id,
+                    {
+                        "task_id": task_id,
+                        "run_ids": set(),
+                        "task_run_count": 0,
+                        "last_tested": None,
+                        "_last_parsed": None,
+                    },
+                )
+                history["run_ids"].add(run_root.name)
+                history["task_run_count"] += 1
+                if parsed_at is not None and (
+                    history["_last_parsed"] is None or parsed_at > history["_last_parsed"]
+                ):
+                    history["_last_parsed"] = parsed_at
+                    history["last_tested"] = tested_at
+
+                bucket = config_buckets.setdefault(task_id, {}).setdefault(
+                    config_key,
+                    {
+                        **config_shape,
+                        "run_ids": set(),
+                        "task_run_count": 0,
+                        "last_tested": None,
+                        "_last_parsed": None,
+                    },
+                )
+                bucket["run_ids"].add(run_root.name)
+                bucket["task_run_count"] += 1
+                if parsed_at is not None and (
+                    bucket["_last_parsed"] is None or parsed_at > bucket["_last_parsed"]
+                ):
+                    bucket["_last_parsed"] = parsed_at
+                    bucket["last_tested"] = tested_at
+        except OSError:
+            continue
+
+    payload: Dict[str, Any] = {}
+    epoch_floor = datetime.min.replace(tzinfo=timezone.utc)
+    for task_id, history in histories.items():
+        configs = list(config_buckets.get(task_id, {}).values())
+        configs.sort(
+            key=lambda row: row.get("_last_parsed") or epoch_floor,
+            reverse=True,
+        )
+        rendered_configs: List[Dict[str, Any]] = []
+        for row in configs[:TASK_HISTORY_CONFIG_LIMIT]:
+            rendered = {key: value for key, value in row.items() if not key.startswith("_")}
+            run_ids = rendered.pop("run_ids")
+            rendered["run_count"] = len(run_ids)
+            rendered_configs.append(rendered)
+
+        payload[task_id] = {
+            "task_id": task_id,
+            "run_count": len(history["run_ids"]),
+            "task_run_count": history["task_run_count"],
+            "last_tested": history["last_tested"],
+            "configs": rendered_configs,
+        }
+    return {"tasks": payload}
+
+
 def run_detail(runs_dir: Path, run_id: str, active_run_ids: Optional[set] = None) -> Dict[str, Any]:
     run_root = resolve_run_dir(runs_dir, run_id)
     run_config = _read_json(run_root / "run_config.json")

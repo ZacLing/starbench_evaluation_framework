@@ -140,6 +140,60 @@ class GuiDataTest(unittest.TestCase):
         self.assertIsNone(rows["run_broken"]["profile"])
         self.assertIsNone(rows["run_malformed"]["profile"])
 
+    def test_task_history_groups_counts_and_configs(self) -> None:
+        run_a = make_run(
+            self.runs_dir,
+            "run_a",
+            task_specs=(
+                ("demo_task__baseline_01", "success", True),
+                ("demo_task__baseline_02", "success", True),
+            ),
+        )
+        config_a = json.loads((run_a / "run_config.json").read_text(encoding="utf-8"))
+        config_a["tasks_dir"] = str(self.tmp / "tasks")
+        config_a["repeat"] = 2
+        write_json(run_a / "run_config.json", config_a)
+
+        run_b = make_run(
+            self.runs_dir,
+            "run_b",
+            task_specs=(("demo_task__baseline_01", "success", True),),
+        )
+        config_b = json.loads((run_b / "run_config.json").read_text(encoding="utf-8"))
+        config_b.update(
+            {
+                "tasks_dir": str(self.tmp / "tasks"),
+                "executor_agent": "claude",
+                "executor_model": "claude-opus-4-8",
+                "thinking_effort": "high",
+            }
+        )
+        write_json(run_b / "run_config.json", config_b)
+
+        # Different task library: not counted for the selected folder.
+        run_other = make_run(
+            self.runs_dir,
+            "run_other",
+            task_specs=(("demo_task__baseline_01", "success", True),),
+        )
+        config_other = json.loads((run_other / "run_config.json").read_text(encoding="utf-8"))
+        config_other["tasks_dir"] = str(self.tmp / "other_tasks")
+        write_json(run_other / "run_config.json", config_other)
+
+        payload = data.task_history(self.runs_dir, self.tmp / "tasks")
+        history = payload["tasks"]["demo_task"]
+        self.assertEqual(history["run_count"], 2)
+        self.assertEqual(history["task_run_count"], 3)
+        self.assertEqual(len(history["configs"]), 2)
+        configs = {
+            (row["executor_agent"], row["executor_model"]): row
+            for row in history["configs"]
+        }
+        self.assertEqual(configs[("codex", "gpt-5.5")]["task_run_count"], 2)
+        self.assertEqual(configs[("codex", "gpt-5.5")]["run_count"], 1)
+        self.assertEqual(configs[("codex", "gpt-5.5")]["repeat"], 2)
+        self.assertEqual(configs[("claude", "claude-opus-4-8")]["thinking_effort"], "high")
+
     def test_task_run_detail_reads_all_surfaces(self) -> None:
         make_run(self.runs_dir, "run_pass")
         detail = data.task_run_detail(self.runs_dir, "run_pass", "demo_task__baseline_01")

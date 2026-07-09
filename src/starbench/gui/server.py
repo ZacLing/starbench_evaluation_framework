@@ -244,6 +244,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json(data.coverage(state.runs_dir, state.tasks_dirs, profile_id))
         elif segments == ["tasklib"]:
             self._send_json({"libraries": self._libraries()})
+        elif segments == ["tasklib", "history"]:
+            tasks_dir_arg = query.get("dir", [None])[0]
+            tasks_dir = self._registered_dir(tasks_dir_arg) if tasks_dir_arg else None
+            self._send_json(data.task_history(state.runs_dir, tasks_dir))
         elif segments == ["tasklib", "task"]:
             tasks_dir = self._registered_dir(query.get("dir", [""])[0])
             self._send_json(

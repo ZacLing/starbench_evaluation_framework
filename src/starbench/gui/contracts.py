@@ -495,6 +495,44 @@ class CoveragePayload(TypedDict):
 
 
 # ---------------------------------------------------------------------------
+# Task picker history (/api/tasklib/history)
+# ---------------------------------------------------------------------------
+
+class TaskHistoryConfig(TypedDict):
+    """One observed launch configuration for a task. Counts come from task-run
+    directories on disk; config fields are copied from ``run_config.json`` and
+    may be null for older or partial runs."""
+
+    executor_agent: Optional[str]
+    executor_model: Optional[str]
+    evaluator_agent: Optional[str]
+    evaluator_model: Optional[str]
+    judge_mode: Optional[str]
+    executor_backend: Optional[str]
+    instruction_mode: Optional[str]
+    repeat: Optional[int]
+    seed: Optional[int]
+    thinking_effort: Optional[str]
+    run_count: int
+    task_run_count: int
+    last_tested: Optional[str]
+
+
+class TaskHistory(TypedDict):
+    """Execution history for one task id in the selected task folder."""
+
+    task_id: str
+    run_count: int
+    task_run_count: int
+    last_tested: Optional[str]
+    configs: List[TaskHistoryConfig]
+
+
+class TaskHistoryPayload(TypedDict):
+    tasks: Dict[str, TaskHistory]
+
+
+# ---------------------------------------------------------------------------
 # Profile snapshot (run detail): the measurement contract a run was launched
 # under. Mirrors schemas/starbench/v1/profile_snapshot.schema.json — the file
 # system copy (<run>/profile_snapshot.json) is the truth; absent file = null.
@@ -716,6 +754,9 @@ GENERATED_TYPES = [
     "CoverageRow",
     "CoverageProfile",
     "CoveragePayload",
+    "TaskHistoryConfig",
+    "TaskHistory",
+    "TaskHistoryPayload",
     "ProfileSnapshotProfile",
     "ProfileSnapshotContender",
     "ProfileSnapshotInstrument",

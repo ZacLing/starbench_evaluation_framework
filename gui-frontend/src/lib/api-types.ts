@@ -326,6 +326,34 @@ export interface CoveragePayload {
   generated_at: string
 }
 
+export interface TaskHistoryConfig {
+  executor_agent: string | null
+  executor_model: string | null
+  evaluator_agent: string | null
+  evaluator_model: string | null
+  judge_mode: string | null
+  executor_backend: string | null
+  instruction_mode: string | null
+  repeat: number | null
+  seed: number | null
+  thinking_effort: string | null
+  run_count: number
+  task_run_count: number
+  last_tested: string | null
+}
+
+export interface TaskHistory {
+  task_id: string
+  run_count: number
+  task_run_count: number
+  last_tested: string | null
+  configs: TaskHistoryConfig[]
+}
+
+export interface TaskHistoryPayload {
+  tasks: Record<string, TaskHistory>
+}
+
 export interface ProfileSnapshotProfile {
   id: string
   rev: number
