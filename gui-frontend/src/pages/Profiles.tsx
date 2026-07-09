@@ -237,6 +237,43 @@ function SummaryPill({
   )
 }
 
+function ProviderCredentialSummary({ provider }: { provider?: AiProvider }) {
+  if (!provider) {
+    return (
+      <div className="flex min-h-9 items-center rounded-md border border-warn-ink/30 bg-warn-soft/40 px-3 text-sm text-warn-ink">
+        Provider reference not found; this profile cannot resolve judge credentials.
+      </div>
+    )
+  }
+
+  const mode = provider.auth === "cli_login" ? "global" : "env"
+  const keyLabel = provider.api_key_env || "API key env"
+
+  return (
+    <div className="flex min-h-9 flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 text-sm">
+      <ProviderIcon provider={provider} size={14} />
+      <span className="font-medium">{provider.name}</span>
+      <span className="font-mono text-xs text-muted-foreground">{mode}</span>
+      {provider.auth === "api_key" ? (
+        <span
+          className={cn(
+            "rounded px-1.5 py-0.5 font-mono text-[11px]",
+            provider.key_present
+              ? "bg-pass-soft text-pass-ink"
+              : "bg-warn-soft text-warn-ink",
+          )}
+        >
+          {keyLabel} {provider.key_present ? "set" : "missing"}
+        </span>
+      ) : (
+        <span className="rounded bg-live-soft px-1.5 py-0.5 text-[11px] text-live-ink">
+          CLI login
+        </span>
+      )}
+    </div>
+  )
+}
+
 /* Resolve a profile's tasks_dir (often a repo-relative string like
    "examples/tasks") to a known library, without rewriting the stored value:
    exact match first, then a path suffix, then the trailing folder name. */
@@ -755,6 +792,10 @@ function ProfileEditor({
   const judgeModes = meta?.judge_modes ?? ["single", "parallel"]
   const authModes = meta?.auth_modes ?? ["env", "global"]
   const backends = meta?.backends ?? ["local", "docker"]
+  const evaluatorProviderId = String(value.shared.evaluator_provider_id ?? "")
+  const evaluatorProvider = evaluatorProviderId
+    ? providers.find((provider) => provider.id === evaluatorProviderId)
+    : undefined
 
   const providersFor = (agent: string): AiProvider[] => {
     const filter = filters[agent]
@@ -1073,7 +1114,16 @@ function ProfileEditor({
               >
                 <Select
                   value={String(value.shared.evaluator_agent ?? "")}
-                  onValueChange={(evaluator_agent) => patchShared({ evaluator_agent })}
+                  onValueChange={(evaluator_agent) =>
+                    patchShared({
+                      evaluator_agent,
+                      evaluator_provider_id: undefined,
+                      evaluator_model: "",
+                      evaluator_auth_mode: "env",
+                      evaluator_gateway: null,
+                      judge_env: null,
+                    })
+                  }
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
@@ -1098,17 +1148,16 @@ function ProfileEditor({
                       ? (provider) => provider.kind === "openai"
                       : undefined
                   }
-                  providerId={
-                    String(value.shared.evaluator_provider_id ?? "") ||
-                    // Older profiles stored only the model id: infer the provider
-                    // whose catalog carries it so the picker starts usable.
-                    providersFor(String(value.shared.evaluator_agent ?? "")).find((provider) =>
-                      provider.models.includes(String(value.shared.evaluator_model ?? "")),
-                    )?.id
-                  }
+                  providerId={evaluatorProviderId || undefined}
                   model={String(value.shared.evaluator_model ?? "")}
                   onChange={({ provider, model }) =>
-                    patchShared({ evaluator_provider_id: provider.id, evaluator_model: model })
+                    patchShared({
+                      evaluator_provider_id: provider.id,
+                      evaluator_model: model,
+                      evaluator_auth_mode: undefined,
+                      evaluator_gateway: null,
+                      judge_env: null,
+                    })
                   }
                 />
               </Field>
@@ -1139,20 +1188,27 @@ function ProfileEditor({
                   onChange={(event) => patchShared({ evaluator_timeout_seconds: event.target.value })}
                 />
               </Field>
-              <Field label="Evaluator credentials">
-                <Select
-                  value={String(value.shared.evaluator_auth_mode ?? "env")}
-                  onValueChange={(evaluator_auth_mode) => patchShared({ evaluator_auth_mode })}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue>{String(value.shared.evaluator_auth_mode ?? "env")}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {authModes.map((mode) => (
-                      <GlossSelectItem key={mode} value={mode} gloss={AUTH_MODE_GLOSS[mode]} />
-                    ))}
-                  </SelectContent>
-                </Select>
+              <Field
+                label="Evaluator credentials"
+                gloss={evaluatorProviderId ? "from selected provider" : "explicit mode"}
+              >
+                {evaluatorProviderId ? (
+                  <ProviderCredentialSummary provider={evaluatorProvider} />
+                ) : (
+                  <Select
+                    value={String(value.shared.evaluator_auth_mode ?? "env")}
+                    onValueChange={(evaluator_auth_mode) => patchShared({ evaluator_auth_mode })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue>{String(value.shared.evaluator_auth_mode ?? "env")}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {authModes.map((mode) => (
+                        <GlossSelectItem key={mode} value={mode} gloss={AUTH_MODE_GLOSS[mode]} />
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </Field>
             </div>
           </section>
