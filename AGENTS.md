@@ -16,8 +16,9 @@ StarBench is a benchmark runner for isolated coding-agent task execution and rub
 
 - Codex remains the Docker-backed default runtime and uses `$CODEX_HOME/skills/` for selected executor skills.
 - Claude Code, OpenCode, Grok Build, and Gemini CLI executor support is host-local unless explicitly documented otherwise.
+- When running tests locally, never use the Claude Code CLI login as the executor model credential. If Claude Code is the executor, it must run in API mode: `--executor-auth-mode env` with `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, never `global` or `copy-auth`. The CLI login is the operator's personal subscription identity; benchmark executor traffic must not ride on it.
 - Grok Build reads this `AGENTS.md` natively.
-- Gemini CLI reads `GEMINI.md`; this repo keeps `GEMINI.md` as a thin import of this file so runtime guidance has one maintained source.
+- Gemini CLI reads `GEMINI.md`; this repo keeps `GEMINI.md` as a thin import of this file so runtime guidance has one maintained source. `CLAUDE.md` is the same thin import for Claude Code.
 
 <!-- memory-connector:start -->
 ## Friday Memory
