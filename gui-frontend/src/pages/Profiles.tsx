@@ -1,0 +1,1221 @@
+import { useMemo, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
+import {
+  AlertTriangle,
+  Columns3,
+  Copy,
+  Library,
+  ListChecks,
+  Pencil,
+  Plus,
+  Repeat,
+  Ruler,
+  Scale,
+  SlidersHorizontal,
+  Star,
+  Trash2,
+} from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
+import {
+  AgentIcon,
+  compatibleProviders,
+  ProviderIcon,
+  runtimeFilters,
+} from "@/components/brand"
+import { ErrorNote } from "@/pages/Dashboard"
+import {
+  api,
+  type AgentsPayload,
+  type AiProvider,
+  type Meta,
+  type ProfilesPayload,
+  type SharedConfig,
+  type TaskLibrary,
+} from "@/lib/api"
+import { shortDir } from "@/lib/format"
+import { cn } from "@/lib/utils"
+
+/* ---------- profile shape ----------
+   The generated `Profile` in api.ts only types the fields the New-experiment
+   wizard reads (id/name/shared/per_contender_fields). A profile on disk can
+   also carry a server-assigned `rev` and the two blocks that make it a full,
+   launchable measurement contract: `roster` (the contender columns) and
+   `task_set`. We type them here and read the payload structurally rather than
+   editing the generated contract. */
+interface RosterEntry {
+  agent: string
+  model?: string
+  label?: string
+  provider_id?: string
+  thinking_effort?: string
+}
+
+interface TaskSet {
+  tasks_dir: string
+  task_ids: string[]
+}
+
+interface FullProfile {
+  id: string
+  name: string
+  rev?: number
+  shared: Partial<SharedConfig>
+  per_contender_fields: string[]
+  roster?: RosterEntry[]
+  task_set?: TaskSet
+}
+
+interface FullProfilesPayload {
+  default_profile_id: string | null
+  profiles: FullProfile[]
+  persisted?: boolean
+}
+
+/* Editor state: a profile plus the two flags that decide whether the optional
+   `roster`/`task_set` keys are written at all, so a profile that never declared
+   them is not given empty ones by accident. */
+interface Draft extends FullProfile {
+  hasRoster: boolean
+  hasTaskSet: boolean
+}
+
+const PER_CONTENDER_FIELDS: { id: string; label: string; hint: string }[] = [
+  { id: "model", label: "Model", hint: "each contender picks its own model id" },
+  { id: "credentials", label: "Credentials", hint: "each contender wires its own key" },
+  { id: "gateway", label: "Gateway", hint: "per-contender endpoint override" },
+  { id: "thinking_effort", label: "Thinking effort", hint: "per-contender reasoning level" },
+]
+
+const NUMERIC_SHARED: (keyof SharedConfig)[] = [
+  "seed",
+  "batch_size",
+  "repeat",
+  "evaluator_timeout_seconds",
+  "max_evaluator_parallel",
+  "claude_max_turns",
+]
+
+/* Runtimes that can be judge or contender: built-ins plus custom specs that
+   loaded cleanly. Errored custom specs are dropped, not shown as choices. */
+interface RuntimeRef {
+  id: string
+  label: string
+  icon?: string | null
+}
+
+function runtimeRefs(agents?: AgentsPayload): RuntimeRef[] {
+  return [
+    ...(agents?.builtin ?? []).map((r) => ({ id: r.id, label: r.label })),
+    ...(agents?.custom ?? [])
+      .filter((r) => !r.error)
+      .map((r) => ({ id: r.id, label: r.label ?? r.spec_id, icon: r.icon })),
+  ]
+}
+
+function runtimeLabelOf(refs: RuntimeRef[], id: string | undefined): string {
+  if (!id) return "–"
+  return refs.find((r) => r.id === id)?.label ?? id
+}
+
+/* Resolve a profile's tasks_dir (often a repo-relative string like
+   "examples/tasks") to a known library, without rewriting the stored value:
+   exact match first, then a path suffix, then the trailing folder name. */
+function resolveLibrary(
+  tasksDir: string,
+  libraries: TaskLibrary[],
+): TaskLibrary | undefined {
+  if (!tasksDir) return undefined
+  return (
+    libraries.find((l) => l.dir === tasksDir) ??
+    libraries.find((l) => l.dir.endsWith("/" + tasksDir)) ??
+    libraries.find((l) => l.dir.split("/").pop() === tasksDir.split("/").pop())
+  )
+}
+
+function toDraft(profile: FullProfile): Draft {
+  return {
+    id: profile.id,
+    name: profile.name,
+    rev: profile.rev,
+    shared: { ...profile.shared },
+    per_contender_fields: [...(profile.per_contender_fields ?? [])],
+    roster: (profile.roster ?? []).map((e) => ({ ...e })),
+    task_set: profile.task_set
+      ? { tasks_dir: profile.task_set.tasks_dir, task_ids: [...profile.task_set.task_ids] }
+      : undefined,
+    hasRoster: profile.roster !== undefined,
+    hasTaskSet: profile.task_set !== undefined,
+  }
+}
+
+function newDraft(): Draft {
+  return {
+    id: "",
+    name: "",
+    shared: {
+      evaluator_agent: "codex",
+      evaluator_model: "",
+      evaluator_auth_mode: "env",
+      judge_mode: "single",
+      evaluator_timeout_seconds: 900,
+      executor_backend: "local",
+      executor_auth_mode: "env",
+      seed: 123,
+      batch_size: 1,
+      repeat: 1,
+    },
+    per_contender_fields: ["model", "credentials", "gateway"],
+    roster: [],
+    hasRoster: true,
+    hasTaskSet: false,
+  }
+}
+
+/* A draft minus the editor-only flags, with the optional blocks written only
+   when declared and numeric fields coerced so an unchanged save round-trips to
+   the same content (the server bumps `rev` on any content change). */
+function fromDraft(draft: Draft): FullProfile {
+  const shared: Record<string, unknown> = { ...draft.shared }
+  for (const key of NUMERIC_SHARED) {
+    const value = shared[key]
+    if (value !== undefined && value !== null && value !== "") {
+      const n = Math.trunc(Number(value))
+      if (Number.isFinite(n)) shared[key] = n
+    }
+  }
+  const roster = (draft.roster ?? []).map((entry) => {
+    const out: RosterEntry = { agent: entry.agent }
+    if (entry.model) out.model = entry.model
+    if (entry.provider_id) out.provider_id = entry.provider_id
+    if (entry.label) out.label = entry.label
+    if (entry.thinking_effort) out.thinking_effort = entry.thinking_effort
+    return out
+  })
+  const profile: FullProfile = {
+    id: draft.id.trim(),
+    name: draft.name.trim(),
+    shared: shared as Partial<SharedConfig>,
+    per_contender_fields: draft.per_contender_fields,
+  }
+  if (draft.hasRoster || roster.length > 0) profile.roster = roster
+  if (draft.hasTaskSet && draft.task_set?.tasks_dir) {
+    profile.task_set = { tasks_dir: draft.task_set.tasks_dir, task_ids: draft.task_set.task_ids }
+  }
+  return profile
+}
+
+export default function Profiles() {
+  const queryClient = useQueryClient()
+  const profilesQuery = useQuery({
+    queryKey: ["profiles"],
+    queryFn: async () => (await api.profiles()) as unknown as FullProfilesPayload,
+  })
+  const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
+  const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
+  const tasklibQuery = useQuery({ queryKey: ["tasklib"], queryFn: api.tasklib })
+  const metaQuery = useQuery({ queryKey: ["meta"], queryFn: api.meta })
+
+  const [editing, setEditing] = useState<Draft | null>(null)
+  const [isNew, setIsNew] = useState(false)
+  /* The id of the profile a non-new edit replaces (its id field is locked, so
+     this equals editing.id, but keeping it explicit guards a rename). */
+  const [editingOriginalId, setEditingOriginalId] = useState<string | null>(null)
+
+  const refs = useMemo(() => runtimeRefs(agentsQuery.data), [agentsQuery.data])
+  const filters = useMemo(() => runtimeFilters(agentsQuery.data), [agentsQuery.data])
+
+  if (profilesQuery.isPending) return <Skeleton className="h-96" />
+  if (profilesQuery.isError)
+    return <ErrorNote message={(profilesQuery.error as Error).message} />
+
+  const payload = profilesQuery.data
+  const profiles = payload.profiles
+  const persisted = Boolean(payload.persisted)
+  const providers = providersQuery.data?.providers ?? []
+  const libraries = (tasklibQuery.data?.libraries ?? []).filter((l) => l.exists)
+  const meta = metaQuery.data
+  /* The wizard uses default_profile_id, falling back to the first profile when
+     none is set. We render the same effective default rather than invent one. */
+  const effectiveDefaultId = payload.default_profile_id ?? profiles[0]?.id ?? null
+  const explicitDefault = payload.default_profile_id !== null
+
+  const profilesJsonPath = meta ? `${meta.runs_dir}/profiles.json` : null
+
+  const persistAll = async (next: FullProfile[], defaultId: string | null, message: string) => {
+    await api.saveProfiles({
+      default_profile_id: defaultId,
+      profiles: next,
+    } as unknown as ProfilesPayload)
+    await queryClient.invalidateQueries({ queryKey: ["profiles"] })
+    toast.success(message)
+  }
+
+  const openEdit = (profile: FullProfile) => {
+    setIsNew(false)
+    setEditingOriginalId(profile.id)
+    setEditing(toDraft(profile))
+  }
+
+  const openNew = () => {
+    setIsNew(true)
+    setEditingOriginalId(null)
+    setEditing(newDraft())
+  }
+
+  const openDuplicate = (profile: FullProfile) => {
+    let id = `${profile.id}-copy`
+    let n = 2
+    while (profiles.some((p) => p.id === id)) id = `${profile.id}-copy-${n++}`
+    setIsNew(true)
+    setEditingOriginalId(null)
+    setEditing({ ...toDraft(profile), id, name: `${profile.name} (copy)`, rev: undefined })
+  }
+
+  const makeDefault = async (profile: FullProfile) => {
+    try {
+      await persistAll(
+        profiles,
+        profile.id,
+        `"${profile.name || profile.id}" is now the default for new experiments.`,
+      )
+    } catch (error) {
+      toast.error((error as Error).message)
+    }
+  }
+
+  const removeProfile = async (profile: FullProfile) => {
+    const next = profiles.filter((p) => p.id !== profile.id)
+    const nextDefault =
+      payload.default_profile_id === profile.id ? null : payload.default_profile_id
+    try {
+      await persistAll(next, nextDefault, `Profile "${profile.name || profile.id}" removed.`)
+    } catch (error) {
+      toast.error((error as Error).message)
+    }
+  }
+
+  /* Save from the editor. Client guards throw so the Sheet shows them inline,
+     the same channel as the server's own validation (fail closed). */
+  const saveDraft = async (draft: Draft) => {
+    const id = draft.id.trim()
+    if (!id) throw new Error("Give the profile an id.")
+    if (!/^[A-Za-z0-9._-]+$/.test(id))
+      throw new Error("Profile id may use letters, digits, dot, underscore and hyphen only.")
+    if (!draft.name.trim()) throw new Error("Give the profile a name.")
+    if (isNew && profiles.some((p) => p.id === id))
+      throw new Error(`A profile with id "${id}" already exists.`)
+
+    const built = fromDraft({ ...draft, id })
+    const next = isNew
+      ? [...profiles, built]
+      : profiles.map((p) => (p.id === editingOriginalId ? built : p))
+    await persistAll(next, payload.default_profile_id, `Profile "${built.name}" saved.`)
+    setEditing(null)
+  }
+
+  return (
+    <div className="grid gap-6">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1 basis-72">
+          <h1 className="text-xl font-semibold tracking-tight">Profiles</h1>
+          <p className="max-w-2xl text-sm text-muted-foreground">
+            A profile is a measurement contract: the roster it measures, the judge and
+            settings it measures with, and the tasks it runs. Every run launched from a
+            profile carries a frozen snapshot of the contract as it stood at launch.
+          </p>
+        </div>
+        <Button className="ml-auto" onClick={openNew}>
+          <Plus /> New profile
+        </Button>
+      </div>
+
+      {!persisted && (
+        <Card className="border-live-ink/30 bg-live-soft/40 py-3">
+          <CardContent className="flex items-start gap-2 px-4">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-live-ink" />
+            <p className="text-xs text-live-ink">
+              These are the built-in templates. Nothing is on disk yet, so
+              <code className="mx-1 font-mono">profiles.json</code>
+              is created the first time you save one.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-3">
+        {profiles.map((profile) => (
+          <ProfileCard
+            key={profile.id}
+            profile={profile}
+            refs={refs}
+            isDefault={profile.id === effectiveDefaultId}
+            explicitDefault={explicitDefault}
+            canDelete={persisted && profiles.length > 1}
+            libraries={libraries}
+            onEdit={() => openEdit(profile)}
+            onDuplicate={() => openDuplicate(profile)}
+            onMakeDefault={profile.id === effectiveDefaultId ? undefined : () => makeDefault(profile)}
+            onDelete={() => removeProfile(profile)}
+          />
+        ))}
+      </div>
+
+      {profilesJsonPath && (
+        <p className="truncate font-mono text-[11px] text-muted-foreground" title={profilesJsonPath}>
+          Contracts · {shortDir(profilesJsonPath)}
+        </p>
+      )}
+
+      <ProfileEditor
+        key={editing ? (isNew ? "__new" : editingOriginalId) : "__closed"}
+        draft={editing}
+        isNew={isNew}
+        refs={refs}
+        providers={providers}
+        filters={filters}
+        libraries={libraries}
+        meta={meta}
+        canDelete={!isNew && persisted && profiles.length > 1}
+        onClose={() => setEditing(null)}
+        onSave={saveDraft}
+        onDelete={
+          isNew || !editing
+            ? undefined
+            : () => {
+                const target = profiles.find((p) => p.id === editingOriginalId)
+                if (target) removeProfile(target)
+                setEditing(null)
+              }
+        }
+      />
+    </div>
+  )
+}
+
+/* ---------- list row ---------- */
+
+function ProfileCard({
+  profile,
+  refs,
+  isDefault,
+  explicitDefault,
+  canDelete,
+  libraries,
+  onEdit,
+  onDuplicate,
+  onMakeDefault,
+  onDelete,
+}: {
+  profile: FullProfile
+  refs: RuntimeRef[]
+  isDefault: boolean
+  explicitDefault: boolean
+  canDelete: boolean
+  libraries: TaskLibrary[]
+  onEdit: () => void
+  onDuplicate: () => void
+  onMakeDefault?: () => void
+  onDelete: () => void
+}) {
+  const shared = profile.shared
+  const roster = profile.roster ?? []
+  const repeat = shared.repeat ?? 1
+  const taskSet = profile.task_set
+  const lib = taskSet ? resolveLibrary(taskSet.tasks_dir, libraries) : undefined
+  const taskCount = taskSet
+    ? taskSet.task_ids.length > 0
+      ? `${taskSet.task_ids.length} task${taskSet.task_ids.length === 1 ? "" : "s"}`
+      : lib
+        ? `all ${lib.tasks.length} tasks`
+        : "all tasks"
+    : null
+
+  return (
+    <Card className="py-0">
+      <CardContent className="grid gap-4 p-4">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
+          <span className="text-base font-semibold tracking-tight">{profile.name}</span>
+          <span className="font-mono text-xs text-muted-foreground">{profile.id}</span>
+          {profile.rev !== undefined && (
+            <span
+              className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+              title="Server-assigned revision. It bumps when the contract's content changes; run snapshots cite it."
+            >
+              rev {profile.rev}
+            </span>
+          )}
+          {isDefault && (
+            <Badge
+              className="gap-1 border-transparent bg-accent text-accent-foreground"
+              title={
+                explicitDefault
+                  ? "Pre-fills the New experiment wizard."
+                  : "First profile; pre-fills New experiment until you set a default."
+              }
+            >
+              <Star className="size-3" fill="currentColor" /> Default
+            </Badge>
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            {onMakeDefault && (
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onMakeDefault}>
+                <Star /> Make default
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" onClick={onDuplicate}>
+              <Copy /> Duplicate
+            </Button>
+            <Button variant="outline" size="sm" onClick={onEdit}>
+              <Pencil /> Edit
+            </Button>
+          </div>
+        </div>
+
+        <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+          <ContractCell icon={Columns3} label="Roster">
+            {roster.length === 0 ? (
+              <span className="text-muted-foreground">No contenders yet</span>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <span className="text-sm">
+                  {roster.length} contender{roster.length === 1 ? "" : "s"}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  {roster.map((entry, index) => (
+                    <span
+                      key={index}
+                      className="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5"
+                      title={`${runtimeLabelOf(refs, entry.agent)}${entry.model ? ` · ${entry.model}` : ""}`}
+                    >
+                      <AgentIcon agent={entry.agent} size={13} />
+                      <span className="font-mono text-[11px]">{entry.model ?? entry.agent}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </ContractCell>
+
+          <ContractCell icon={Scale} label="Instrument">
+            <div className="flex items-center gap-1.5">
+              <AgentIcon agent={String(shared.evaluator_agent ?? "")} size={15} />
+              <span className="truncate">
+                {runtimeLabelOf(refs, shared.evaluator_agent)}
+                {shared.evaluator_model ? (
+                  <span className="font-mono text-muted-foreground"> · {shared.evaluator_model}</span>
+                ) : null}
+              </span>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {shared.judge_mode ?? "single"} judge
+            </span>
+          </ContractCell>
+
+          <ContractCell icon={SlidersHorizontal} label="Execution">
+            <div className="flex items-center gap-1.5">
+              <span
+                className="inline-flex items-center gap-0.5 rounded bg-accent px-1.5 py-0.5 font-mono text-accent-foreground"
+                title="Repeats per cell. A single execution is a sample, not a score."
+              >
+                <Repeat className="size-3" /> ×{repeat}
+              </span>
+            </div>
+            <span className="font-mono text-xs text-muted-foreground">
+              seed {shared.seed ?? "–"} · batch {shared.batch_size ?? "–"} · {shared.executor_backend ?? "local"}
+            </span>
+          </ContractCell>
+
+          <ContractCell icon={Library} label="Task set">
+            {taskSet ? (
+              <>
+                <span className="truncate font-mono text-[13px]" title={taskSet.tasks_dir}>
+                  {shortDir(taskSet.tasks_dir)}
+                </span>
+                <span className="text-xs text-muted-foreground">{taskCount}</span>
+              </>
+            ) : (
+              <span className="text-muted-foreground">Chosen at launch</span>
+            )}
+          </ContractCell>
+        </div>
+
+        {(profile.per_contender_fields.length > 0 || canDelete) && (
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+            {profile.per_contender_fields.length > 0 && (
+              <>
+                <span className="text-[11px] text-muted-foreground">Per contender:</span>
+                {profile.per_contender_fields.map((field) => (
+                  <Badge key={field} variant="outline" className="text-[11px] text-muted-foreground">
+                    {PER_CONTENDER_FIELDS.find((f) => f.id === field)?.label ?? field}
+                  </Badge>
+                ))}
+              </>
+            )}
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto text-muted-foreground hover:text-fail-ink"
+                onClick={onDelete}
+              >
+                <Trash2 /> Delete
+              </Button>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ContractCell({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: typeof Columns3
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <span className="flex items-center gap-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+        <Icon className="size-3.5" /> {label}
+      </span>
+      <div className="grid gap-0.5 text-sm">{children}</div>
+    </div>
+  )
+}
+
+/* ---------- editor ---------- */
+
+function ProfileEditor({
+  draft,
+  isNew,
+  refs,
+  providers,
+  filters,
+  libraries,
+  meta,
+  canDelete,
+  onClose,
+  onSave,
+  onDelete,
+}: {
+  draft: Draft | null
+  isNew: boolean
+  refs: RuntimeRef[]
+  providers: AiProvider[]
+  filters: Record<string, { kinds: string[]; accepts_anthropic_endpoint: boolean; accepts_gemini_endpoint: boolean }>
+  libraries: TaskLibrary[]
+  meta?: Meta
+  canDelete: boolean
+  onClose: () => void
+  onSave: (draft: Draft) => Promise<void>
+  onDelete?: () => void
+}) {
+  const [form, setForm] = useState<Draft | null>(draft)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const value = form ?? draft
+
+  if (!value) {
+    return (
+      <Sheet open={false} onOpenChange={() => onClose()}>
+        <SheetContent />
+      </Sheet>
+    )
+  }
+
+  const patch = (next: Partial<Draft>) => setForm({ ...value, ...next })
+  const patchShared = (next: Partial<SharedConfig>) =>
+    setForm({ ...value, shared: { ...value.shared, ...next } })
+
+  const judgeModes = meta?.judge_modes ?? ["single", "parallel"]
+  const authModes = meta?.auth_modes ?? ["env", "global"]
+  const backends = meta?.backends ?? ["local", "docker"]
+
+  const providersFor = (agent: string): AiProvider[] => {
+    const filter = filters[agent]
+    const compatible = compatibleProviders(filter, providers, agent)
+    return compatible.length > 0 ? compatible : providers
+  }
+
+  const setRoster = (roster: RosterEntry[]) => patch({ roster, hasRoster: true })
+  const updateRoster = (index: number, next: Partial<RosterEntry>) =>
+    setRoster((value.roster ?? []).map((entry, i) => (i === index ? { ...entry, ...next } : entry)))
+  const addContender = () => {
+    const agent = refs[0]?.id ?? "claude"
+    const provider = providersFor(agent)[0]?.id
+    setRoster([...(value.roster ?? []), { agent, model: "", provider_id: provider }])
+  }
+  const removeContender = (index: number) =>
+    setRoster((value.roster ?? []).filter((_, i) => i !== index))
+
+  const taskSet = value.task_set
+  const matchedLib = taskSet ? resolveLibrary(taskSet.tasks_dir, libraries) : undefined
+  const libSelectValue = matchedLib ? matchedLib.dir : taskSet?.tasks_dir ? "__unmatched" : undefined
+
+  const submit = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave(value)
+    } catch (submitError) {
+      setError((submitError as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Sheet
+      open={Boolean(draft)}
+      onOpenChange={(open) => {
+        if (!open) {
+          setForm(null)
+          setError(null)
+          onClose()
+        }
+      }}
+    >
+      <SheetContent className="w-full gap-0 overflow-y-auto p-0 sm:max-w-2xl">
+        <SheetHeader className="border-b">
+          <SheetTitle className="flex items-center gap-2">
+            <Ruler className="size-4 text-primary" />
+            {isNew ? "New profile" : `Edit ${draft?.name ?? ""}`}
+          </SheetTitle>
+          <SheetDescription>
+            {isNew
+              ? "Define the contract this profile measures. It is saved to profiles.json when you save."
+              : "Edits apply to future runs only. Runs already launched keep their frozen snapshot."}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="grid gap-6 p-4">
+          {/* identity */}
+          <section className="grid gap-3">
+            <div className="grid gap-1.5 sm:grid-cols-[1fr_auto] sm:items-end sm:gap-3">
+              <div className="grid gap-1.5">
+                <Label htmlFor="profile-name">Name</Label>
+                <Input
+                  id="profile-name"
+                  value={value.name}
+                  placeholder="Frontier sweep"
+                  onChange={(event) => patch({ name: event.target.value })}
+                />
+              </div>
+              {value.rev !== undefined && (
+                <span
+                  className="mb-1 self-center rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground sm:mb-2"
+                  title="Server-assigned. It bumps when the contract's content changes; you cannot edit it."
+                >
+                  rev {value.rev}
+                </span>
+              )}
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="profile-id">Id</Label>
+              <Input
+                id="profile-id"
+                className="font-mono"
+                value={value.id}
+                disabled={!isNew}
+                placeholder="frontier-sweep"
+                onChange={(event) => patch({ id: event.target.value })}
+              />
+              {!isNew && (
+                <p className="text-xs text-muted-foreground">
+                  The id is fixed once created; run snapshots reference it.
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* roster */}
+          <section className="grid gap-3">
+            <SectionHeading icon={Columns3} title="Roster">
+              The contender columns this profile measures: the coverage matrix's columns.
+            </SectionHeading>
+            {(value.roster ?? []).length === 0 ? (
+              <p className="rounded-md border border-dashed px-3 py-4 text-center text-xs text-muted-foreground">
+                No contenders yet. Add the agent × model cells you want to measure.
+              </p>
+            ) : (
+              <div className="grid gap-2">
+                {(value.roster ?? []).map((entry, index) => (
+                  <div
+                    key={index}
+                    className="grid items-center gap-2 rounded-md border p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] sm:rounded-none sm:border-0 sm:p-0"
+                  >
+                    <Select value={entry.agent} onValueChange={(agent) => {
+                      const provider = providersFor(agent)[0]?.id
+                      updateRoster(index, { agent, provider_id: provider })
+                    }}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {refs.map((ref) => (
+                          <SelectItem key={ref.id} value={ref.id}>
+                            <span className="flex items-center gap-2">
+                              <AgentIcon agent={ref.id} icon={ref.icon} size={15} /> {ref.label}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={entry.provider_id}
+                      onValueChange={(provider_id) => updateRoster(index, { provider_id })}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="provider" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {providersFor(entry.agent).map((provider) => (
+                          <SelectItem key={provider.id} value={provider.id}>
+                            <span className="flex items-center gap-2">
+                              <ProviderIcon provider={provider} size={14} /> {provider.name}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      className="font-mono"
+                      value={entry.model ?? ""}
+                      placeholder="model id"
+                      onChange={(event) => updateRoster(index, { model: event.target.value })}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:text-fail-ink"
+                      aria-label={`Remove contender ${index + 1}`}
+                      onClick={() => removeContender(index)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div>
+              <Button variant="outline" size="sm" onClick={addContender}>
+                <Plus /> Add contender
+              </Button>
+            </div>
+          </section>
+
+          {/* instrument */}
+          <section className="grid gap-3">
+            <SectionHeading icon={Scale} title="Instrument">
+              The judge and how it scores, shared across every contender.
+            </SectionHeading>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Evaluator runtime">
+                <Select
+                  value={String(value.shared.evaluator_agent ?? "")}
+                  onValueChange={(evaluator_agent) => patchShared({ evaluator_agent })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {refs.map((ref) => (
+                      <SelectItem key={ref.id} value={ref.id}>
+                        <span className="flex items-center gap-2">
+                          <AgentIcon agent={ref.id} icon={ref.icon} size={15} /> {ref.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Evaluator model">
+                <Input
+                  className="font-mono"
+                  value={String(value.shared.evaluator_model ?? "")}
+                  placeholder="gpt-5.5"
+                  onChange={(event) => patchShared({ evaluator_model: event.target.value })}
+                />
+              </Field>
+              <Field label="Judge mode">
+                <Select
+                  value={String(value.shared.judge_mode ?? "single")}
+                  onValueChange={(judge_mode) => patchShared({ judge_mode })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {judgeModes.map((mode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {mode}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Evaluator credentials">
+                <Select
+                  value={String(value.shared.evaluator_auth_mode ?? "env")}
+                  onValueChange={(evaluator_auth_mode) => patchShared({ evaluator_auth_mode })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {authModes.map((mode) => (
+                      <SelectItem key={mode} value={mode}>
+                        {mode}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Judge timeout (s)">
+                <Input
+                  type="number"
+                  className="font-mono"
+                  value={numValue(value.shared.evaluator_timeout_seconds)}
+                  onChange={(event) => patchShared({ evaluator_timeout_seconds: event.target.value })}
+                />
+              </Field>
+            </div>
+          </section>
+
+          {/* execution */}
+          <section className="grid gap-3">
+            <SectionHeading icon={SlidersHorizontal} title="Execution">
+              How each cell is run. Repeat is the measurement's backbone.
+            </SectionHeading>
+            <div className="rounded-lg border bg-accent/40 p-3">
+              <Label htmlFor="profile-repeat" className="flex items-center gap-1.5">
+                <Repeat className="size-3.5 text-accent-foreground" /> Repeats per cell
+              </Label>
+              <div className="mt-1.5 flex items-center gap-3">
+                <Input
+                  id="profile-repeat"
+                  type="number"
+                  min={1}
+                  className="w-24 font-mono text-base"
+                  value={numValue(value.shared.repeat)}
+                  onChange={(event) => patchShared({ repeat: event.target.value })}
+                />
+                <p className="text-xs text-accent-foreground/90">
+                  A single execution is a sample, not a score. Frontier sweeps repeat each cell
+                  so pass rates mean something.
+                </p>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Field label="Seed">
+                <Input
+                  type="number"
+                  className="font-mono"
+                  value={numValue(value.shared.seed)}
+                  onChange={(event) => patchShared({ seed: event.target.value })}
+                />
+              </Field>
+              <Field label="Batch size">
+                <Input
+                  type="number"
+                  min={1}
+                  className="font-mono"
+                  value={numValue(value.shared.batch_size)}
+                  onChange={(event) => patchShared({ batch_size: event.target.value })}
+                />
+              </Field>
+              <Field label="Executor backend">
+                <Select
+                  value={String(value.shared.executor_backend ?? "local")}
+                  onValueChange={(executor_backend) => patchShared({ executor_backend })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {backends.map((backend) => (
+                      <SelectItem key={backend} value={backend}>
+                        {backend}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+          </section>
+
+          {/* task set */}
+          <section className="grid gap-3">
+            <SectionHeading icon={Library} title="Task set">
+              The tasks this contract runs. Pin them here, or leave it open and choose at launch.
+            </SectionHeading>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={value.hasTaskSet}
+                onCheckedChange={(checked) =>
+                  patch({
+                    hasTaskSet: Boolean(checked),
+                    task_set: checked
+                      ? value.task_set ?? { tasks_dir: libraries[0]?.dir ?? "", task_ids: [] }
+                      : value.task_set,
+                  })
+                }
+              />
+              Pin a task set to this profile
+            </label>
+            {value.hasTaskSet && (
+              <div className="grid gap-3">
+                <Field label="Tasks directory">
+                  <Select
+                    value={libSelectValue}
+                    onValueChange={(dir) => {
+                      if (dir === "__unmatched") return
+                      const lib = libraries.find((l) => l.dir === dir)
+                      const validIds = new Set(lib?.tasks.map((t) => t.id) ?? [])
+                      patch({
+                        task_set: {
+                          tasks_dir: dir,
+                          task_ids: (value.task_set?.task_ids ?? []).filter((id) => validIds.has(id)),
+                        },
+                      })
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choose a task library" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {taskSet && !matchedLib && taskSet.tasks_dir && (
+                        <SelectItem value="__unmatched" disabled>
+                          {taskSet.tasks_dir} · not in the task library
+                        </SelectItem>
+                      )}
+                      {libraries.map((lib) => (
+                        <SelectItem key={lib.dir} value={lib.dir}>
+                          {shortDir(lib.dir)} · {lib.tasks.length} task{lib.tasks.length === 1 ? "" : "s"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+
+                {matchedLib ? (
+                  <div className="grid gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">
+                        {(taskSet?.task_ids.length ?? 0) === 0
+                          ? "None selected runs every task in the directory."
+                          : `${taskSet?.task_ids.length} of ${matchedLib.tasks.length} selected.`}
+                      </span>
+                      {(taskSet?.task_ids.length ?? 0) > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-auto px-1 py-0 text-xs text-muted-foreground"
+                          onClick={() =>
+                            patch({ task_set: { tasks_dir: taskSet!.tasks_dir, task_ids: [] } })
+                          }
+                        >
+                          Select all
+                        </Button>
+                      )}
+                    </div>
+                    <div className="grid gap-1 rounded-md border p-2">
+                      {matchedLib.tasks.length === 0 ? (
+                        <span className="px-1 py-2 text-xs text-muted-foreground">
+                          This directory has no task packages.
+                        </span>
+                      ) : (
+                        matchedLib.tasks.map((task) => {
+                          const checked =
+                            (taskSet?.task_ids.length ?? 0) === 0 ||
+                            (taskSet?.task_ids ?? []).includes(task.id)
+                          const explicit = (taskSet?.task_ids ?? []).includes(task.id)
+                          return (
+                            <label
+                              key={task.id}
+                              className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-muted/60"
+                            >
+                              <Checkbox
+                                checked={explicit || (taskSet?.task_ids.length ?? 0) === 0}
+                                onCheckedChange={(next) => {
+                                  const current = taskSet?.task_ids ?? []
+                                  /* Empty means "all"; the first explicit pick
+                                     materializes the full list minus/plus this one. */
+                                  const base =
+                                    current.length === 0
+                                      ? matchedLib.tasks.map((t) => t.id)
+                                      : current
+                                  const ids = next
+                                    ? Array.from(new Set([...base, task.id]))
+                                    : base.filter((id) => id !== task.id)
+                                  patch({
+                                    task_set: { tasks_dir: taskSet!.tasks_dir, task_ids: ids },
+                                  })
+                                }}
+                              />
+                              <span className="font-mono text-[13px]">{task.id}</span>
+                              {!explicit && checked && (
+                                <span className="text-[11px] text-muted-foreground">(all)</span>
+                              )}
+                            </label>
+                          )
+                        })
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  taskSet?.tasks_dir && (
+                    <div className="grid gap-1 rounded-md border border-warn-ink/30 bg-warn-soft/40 p-2">
+                      <span className="flex items-center gap-1.5 text-xs text-warn-ink">
+                        <AlertTriangle className="size-3.5" /> Directory not in the task library
+                      </span>
+                      {taskSet.task_ids.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {taskSet.task_ids.map((id) => (
+                            <Badge key={id} variant="outline" className="font-mono text-[11px]">
+                              {id}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* per-contender fields */}
+          <section className="grid gap-3">
+            <SectionHeading icon={ListChecks} title="Per-contender fields">
+              What the wizard collects for each contender individually, instead of sharing.
+            </SectionHeading>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {PER_CONTENDER_FIELDS.map((field) => {
+                const checked = value.per_contender_fields.includes(field.id)
+                return (
+                  <label
+                    key={field.id}
+                    className={cn(
+                      "flex cursor-pointer items-start gap-2.5 rounded-md border p-2.5",
+                      checked ? "border-primary bg-accent/50" : "hover:border-primary/40",
+                    )}
+                  >
+                    <Checkbox
+                      className="mt-0.5"
+                      checked={checked}
+                      onCheckedChange={(next) =>
+                        patch({
+                          per_contender_fields: next
+                            ? [...value.per_contender_fields, field.id]
+                            : value.per_contender_fields.filter((id) => id !== field.id),
+                        })
+                      }
+                    />
+                    <span>
+                      <span className="block text-sm font-medium">{field.label}</span>
+                      <span className="block text-xs text-muted-foreground">{field.hint}</span>
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+          </section>
+
+          {error && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-md border border-fail-ink/30 bg-fail-soft/50 px-3 py-2.5"
+            >
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-fail-ink" />
+              <div className="grid gap-0.5">
+                <span className="text-sm font-medium text-fail-ink">This profile was not saved</span>
+                <span className="text-xs text-fail-ink/90">{error}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 border-t pt-4">
+            {canDelete && onDelete && (
+              <Button
+                variant="ghost"
+                className="text-muted-foreground hover:text-fail-ink"
+                onClick={onDelete}
+              >
+                <Trash2 /> Delete
+              </Button>
+            )}
+            <div className="ml-auto flex gap-2">
+              <Button variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button disabled={saving} onClick={submit}>
+                {saving ? "Saving…" : isNew ? "Create profile" : "Save profile"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function SectionHeading({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: typeof Columns3
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="grid gap-0.5">
+      <span className="flex items-center gap-2 text-sm font-semibold">
+        <Icon className="size-4 text-muted-foreground" /> {title}
+      </span>
+      <p className="text-xs text-muted-foreground">{children}</p>
+    </div>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-1.5">
+      <Label>{label}</Label>
+      {children}
+    </div>
+  )
+}
+
+/* Numeric shared fields are edited as text so an empty box does not snap to 0;
+   the value is coerced back to an int on save. */
+function numValue(value: unknown): string | number {
+  if (value === null || value === undefined) return ""
+  return value as string | number
+}

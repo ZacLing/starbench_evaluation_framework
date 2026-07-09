@@ -1,5 +1,5 @@
 import { Link, NavLink, useLocation } from "react-router-dom"
-import { Bot, Boxes, Gauge, Grid3X3, Library, ListChecks, Plus, Puzzle, Star, type LucideIcon } from "lucide-react"
+import { Bot, Boxes, Gauge, Grid3X3, Library, ListChecks, Plus, Puzzle, Ruler, Star, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Sidebar,
@@ -30,6 +30,7 @@ const PRIMARY_NAV: NavEntry[] = [
 
 // Setup: the fixtures you configure once, then rarely touch mid-investigation.
 const SETUP_NAV: NavEntry[] = [
+  { to: "/profiles", label: "Profiles", icon: Ruler, end: true },
   { to: "/agents", label: "Agents", icon: Bot, end: true },
   { to: "/providers", label: "AI providers", icon: Boxes, end: true },
   { to: "/skills", label: "Skills", icon: Puzzle, end: true },
@@ -128,6 +129,7 @@ function Crumbs({ pathname }: { pathname: string }) {
   else if (segments[0] === "new") crumbs.push({ label: "New experiment" })
   else if (segments[0] === "coverage") crumbs.push({ label: "Coverage" })
   else if (segments[0] === "tasks") crumbs.push({ label: "Task library" })
+  else if (segments[0] === "profiles") crumbs.push({ label: "Profiles" })
   else if (segments[0] === "agents") crumbs.push({ label: "Agents" })
   else if (segments[0] === "skills") crumbs.push({ label: "Skills" })
   else if (segments[0] === "providers") crumbs.push({ label: "AI providers" })

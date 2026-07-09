@@ -6,6 +6,7 @@ import Tasks from "@/pages/Tasks"
 import Agents from "@/pages/Agents"
 import Skills from "@/pages/Skills"
 import Providers from "@/pages/Providers"
+import Profiles from "@/pages/Profiles"
 import Runs from "@/pages/Runs"
 import RunDetail from "@/pages/RunDetail"
 import TaskDetail from "@/pages/TaskDetail"
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/coverage" element={<Coverage />} />
         <Route path="/tasks" element={<Tasks />} />
+        <Route path="/profiles" element={<Profiles />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/skills" element={<Skills />} />
         <Route path="/providers" element={<Providers />} />
