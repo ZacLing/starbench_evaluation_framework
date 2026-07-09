@@ -19,7 +19,15 @@ skills:
 - 完工前 `cd gui-frontend && npx tsc --noEmit` 必须干净。
 - 结束时杀掉自己起的 dev server。
 
+## 复用铁律（动手前必查）
+- 写任何控件前先清点 `gui-frontend/src/components/*.tsx` 的共享组件
+  （ProviderModelPicker、AgentIcon、verdict 徽章族、task-badges 等）——
+  已有的必须复用；确有缺口需要新建通用控件时，建到 components/ 并在汇报中说明，
+  不许在页面文件里重写一份既有能力（这是本仓库被维护者点名过的失误模式）。
+- 任务 spec 若与"复用现有组件"冲突（如 spec 说"文本输入"但共享选择器已存在），
+  以复用为准并在汇报中标注偏离。
+
 ## 禁令
-- 只改任务指定的文件；需要的辅助函数写在页面文件内，不改共享文件（除非任务明确允许）。
+- 只改任务指定的文件；页面私有的辅助函数写在页面文件内。
 - 不跑 `npm run build`（编排者统一构建）。
 - 不 commit，不动 Python，不改后端契约。

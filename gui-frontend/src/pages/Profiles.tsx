@@ -40,9 +40,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   AgentIcon,
   compatibleProviders,
-  ProviderIcon,
   runtimeFilters,
 } from "@/components/brand"
+import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/pages/Dashboard"
 import {
   api,
@@ -767,7 +767,7 @@ function ProfileEditor({
                 {(value.roster ?? []).map((entry, index) => (
                   <div
                     key={index}
-                    className="grid items-center gap-2 rounded-md border p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.1fr)_auto] sm:rounded-none sm:border-0 sm:p-0"
+                    className="grid items-center gap-2 rounded-md border p-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,2.2fr)_auto] sm:rounded-none sm:border-0 sm:p-0"
                   >
                     <Select value={entry.agent} onValueChange={(agent) => {
                       const provider = providersFor(agent)[0]?.id
@@ -786,28 +786,14 @@ function ProfileEditor({
                         ))}
                       </SelectContent>
                     </Select>
-                    <Select
-                      value={entry.provider_id}
-                      onValueChange={(provider_id) => updateRoster(index, { provider_id })}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="provider" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {providersFor(entry.agent).map((provider) => (
-                          <SelectItem key={provider.id} value={provider.id}>
-                            <span className="flex items-center gap-2">
-                              <ProviderIcon provider={provider} size={14} /> {provider.name}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      className="font-mono"
-                      value={entry.model ?? ""}
-                      placeholder="model id"
-                      onChange={(event) => updateRoster(index, { model: event.target.value })}
+                    <ProviderModelPicker
+                      providerId={entry.provider_id}
+                      model={entry.model ?? ""}
+                      onChange={({ provider, model }) =>
+                        updateRoster(index, { provider_id: provider.id, model })
+                      }
+                      providerFilter={filters[entry.agent]}
+                      runtimeId={entry.agent}
                     />
                     <Button
                       variant="ghost"
@@ -854,12 +840,27 @@ function ProfileEditor({
                   </SelectContent>
                 </Select>
               </Field>
-              <Field label="Evaluator model">
-                <Input
-                  className="font-mono"
-                  value={String(value.shared.evaluator_model ?? "")}
-                  placeholder="gpt-5.5"
-                  onChange={(event) => patchShared({ evaluator_model: event.target.value })}
+              <Field label="Evaluator model" className="sm:col-span-2">
+                <ProviderModelPicker
+                  providerFilter={filters[String(value.shared.evaluator_agent ?? "")]}
+                  runtimeId={String(value.shared.evaluator_agent ?? "")}
+                  filter={
+                    value.shared.evaluator_agent === "codex"
+                      ? (provider) => provider.kind === "openai"
+                      : undefined
+                  }
+                  providerId={
+                    String(value.shared.evaluator_provider_id ?? "") ||
+                    // Older profiles stored only the model id: infer the provider
+                    // whose catalog carries it so the picker starts usable.
+                    providersFor(String(value.shared.evaluator_agent ?? "")).find((provider) =>
+                      provider.models.includes(String(value.shared.evaluator_model ?? "")),
+                    )?.id
+                  }
+                  model={String(value.shared.evaluator_model ?? "")}
+                  onChange={({ provider, model }) =>
+                    patchShared({ evaluator_provider_id: provider.id, evaluator_model: model })
+                  }
                 />
               </Field>
               <Field label="Judge mode">
@@ -1204,9 +1205,17 @@ function SectionHeading({
   )
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  children,
+  className,
+}: {
+  label: string
+  children: React.ReactNode
+  className?: string
+}) {
   return (
-    <div className="grid gap-1.5">
+    <div className={cn("grid gap-1.5", className)}>
       <Label>{label}</Label>
       {children}
     </div>

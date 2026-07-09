@@ -67,7 +67,7 @@ export function ProviderModelPicker({
 
       <Select
         value={model || RUNTIME_DEFAULT}
-        disabled={!provider}
+        disabled={!provider && !model}
         onValueChange={(value) => {
           if (provider) onChange({ provider, model: value === RUNTIME_DEFAULT ? "" : value })
         }}
@@ -81,6 +81,17 @@ export function ProviderModelPicker({
               {item}
             </SelectItem>
           ))}
+          {/* A stored model id outside the provider's catalog (or with no
+              provider selected at all) stays visible instead of blanking the
+              control: the value is the truth, the catalog is a convenience. */}
+          {model && (!provider || !provider.models.includes(model)) && (
+            <SelectItem value={model} className="font-mono text-xs">
+              {model}{" "}
+              <span className="font-sans text-muted-foreground">
+                {provider ? "· not in catalog" : "· stored value"}
+              </span>
+            </SelectItem>
+          )}
           <SelectItem value={RUNTIME_DEFAULT} className="text-xs text-muted-foreground">
             (runtime default)
           </SelectItem>
