@@ -40,6 +40,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   AgentIcon,
   compatibleProviders,
+  ProviderIcon,
   runtimeFilters,
 } from "@/components/brand"
 import { Hint } from "@/components/hint"
@@ -155,6 +156,8 @@ const BACKEND_GLOSS: Record<string, string> = {
   docker: "each task isolated in its own container",
 }
 
+const RUNTIME_DEFAULT = "__runtime_default__"
+
 function GlossSelectItem({ value, gloss }: { value: string; gloss?: string }) {
   return (
     <SelectItem value={value}>
@@ -169,6 +172,51 @@ function GlossSelectItem({ value, gloss }: { value: string; gloss?: string }) {
 function runtimeLabelOf(refs: RuntimeRef[], id: string | undefined): string {
   if (!id) return "–"
   return refs.find((r) => r.id === id)?.label ?? id
+}
+
+function ProfileSummaryStrip({ value }: { value: Draft }) {
+  const rosterCount = value.roster?.length ?? 0
+  const taskText = value.hasTaskSet
+    ? `${value.task_set?.task_ids?.length || "all"} tasks`
+    : "tasks chosen at launch"
+  const judge = String(value.shared.evaluator_agent ?? "?")
+  const judgeModel = value.shared.evaluator_model
+    ? ` · ${value.shared.evaluator_model}`
+    : ""
+
+  return (
+    <div className="border-b bg-muted/40 px-4 py-3 sm:px-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <SummaryPill
+          label="Roster"
+          value={`${rosterCount} contender${rosterCount === 1 ? "" : "s"}`}
+        />
+        <SummaryPill label="Tasks" value={taskText} />
+        <SummaryPill label="Judge" value={`${judge}${judgeModel}`} mono />
+        <SummaryPill label="Repeat" value={`×${numValue(value.shared.repeat) || "1"}`} mono />
+        <SummaryPill label="Seed" value={String(numValue(value.shared.seed) || "–")} mono />
+      </div>
+    </div>
+  )
+}
+
+function SummaryPill({
+  label,
+  value,
+  mono,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <span className="inline-flex max-w-full items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-xs">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className={cn("min-w-0 truncate font-medium text-foreground", mono && "font-mono")}>
+        {value}
+      </span>
+    </span>
+  )
 }
 
 /* Resolve a profile's tasks_dir (often a repo-relative string like
@@ -733,7 +781,7 @@ function ProfileEditor({
         }
       }}
     >
-      <SheetContent className="w-full gap-0 overflow-y-auto p-0 sm:max-w-2xl">
+      <SheetContent className="w-full gap-0 overflow-hidden p-0 sm:max-w-4xl">
         <SheetHeader className="border-b">
           <SheetTitle className="flex items-center gap-2">
             <Ruler className="size-4 text-primary" />
@@ -746,28 +794,10 @@ function ProfileEditor({
           </SheetDescription>
         </SheetHeader>
 
-        {/* The whole form, translated live into the same recipe sentence the
-            run detail card speaks: edit a field, watch the sentence change. */}
-        <div className="border-b bg-muted/40 px-4 py-2.5 font-mono text-[13px] leading-6 text-muted-foreground">
-          <span className="font-medium text-foreground">{(value.roster ?? []).length}</span>{" "}
-          contender{(value.roster ?? []).length === 1 ? "" : "s"}
-          <span className="mx-1.5 text-muted-foreground/60">×</span>
-          {value.hasTaskSet
-            ? `${value.task_set?.task_ids?.length || "all"} tasks`
-            : "tasks chosen at launch"}
-          <span className="mx-1.5 text-muted-foreground/60">×</span>
-          judge{" "}
-          <span className="text-foreground">
-            {String(value.shared.evaluator_agent ?? "?")}
-            {value.shared.evaluator_model ? `(${value.shared.evaluator_model})` : ""}
-          </span>
-          <span className="mx-1.5 text-muted-foreground/60">·</span>×
-          <span className="tabular-nums text-foreground">{numValue(value.shared.repeat) || "1"}</span>
-          <span className="mx-1.5 text-muted-foreground/60">·</span>seed{" "}
-          <span className="tabular-nums">{numValue(value.shared.seed) || "–"}</span>
-        </div>
+        <ProfileSummaryStrip value={value} />
 
-        <div className="grid gap-6 p-4">
+        <div className="flex-1 overflow-y-auto">
+          <div className="grid gap-6 p-4 sm:p-5">
           {/* identity */}
           <section className="grid gap-3">
             <div className="grid gap-1.5 sm:grid-cols-[1fr_auto] sm:items-end sm:gap-3">
@@ -817,49 +847,145 @@ function ProfileEditor({
                 No contenders yet. Add the agent × model cells you want to measure.
               </p>
             ) : (
-              <div className="grid gap-2">
-                {(value.roster ?? []).map((entry, index) => (
-                  <div
-                    key={index}
-                    className="grid items-center gap-2 rounded-md border p-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,2.2fr)_auto] sm:rounded-none sm:border-0 sm:p-0"
-                  >
-                    <Select value={entry.agent} onValueChange={(agent) => {
-                      const provider = providersFor(agent)[0]?.id
-                      updateRoster(index, { agent, provider_id: provider })
-                    }}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {refs.map((ref) => (
-                          <SelectItem key={ref.id} value={ref.id}>
-                            <span className="flex items-center gap-2">
-                              <AgentIcon agent={ref.id} icon={ref.icon} size={15} /> {ref.label}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <ProviderModelPicker
-                      providerId={entry.provider_id}
-                      model={entry.model ?? ""}
-                      onChange={({ provider, model }) =>
-                        updateRoster(index, { provider_id: provider.id, model })
-                      }
-                      providerFilter={filters[entry.agent]}
-                      runtimeId={entry.agent}
-                    />
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-muted-foreground hover:text-fail-ink"
-                      aria-label={`Remove contender ${index + 1}`}
-                      onClick={() => removeContender(index)}
-                    >
-                      <Trash2 />
-                    </Button>
-                  </div>
-                ))}
+              <div className="overflow-hidden rounded-lg border">
+                <div className="hidden grid-cols-[2.25rem_minmax(10rem,0.95fr)_minmax(13rem,1fr)_minmax(14rem,1fr)_2.5rem] gap-2 border-b bg-muted/50 px-3 py-2 text-[11px] font-medium text-muted-foreground lg:grid">
+                  <span>#</span>
+                  <span>Agent runtime</span>
+                  <span>Provider</span>
+                  <span>Model</span>
+                  <span className="sr-only">Actions</span>
+                </div>
+                <div className="divide-y">
+                  {(value.roster ?? []).map((entry, index) => {
+                    const rosterProviders = providersFor(entry.agent)
+                    const provider = rosterProviders.find((item) => item.id === entry.provider_id)
+                    return (
+                      <div
+                        key={index}
+                        className="grid gap-3 px-3 py-3 lg:grid-cols-[2.25rem_minmax(10rem,0.95fr)_minmax(13rem,1fr)_minmax(14rem,1fr)_2.5rem] lg:items-center lg:gap-2"
+                      >
+                        <div className="flex items-center justify-between lg:block">
+                          <span className="font-mono text-xs text-muted-foreground">
+                            {String(index + 1).padStart(2, "0")}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-muted-foreground hover:text-fail-ink lg:hidden"
+                            aria-label={`Remove contender ${index + 1}`}
+                            onClick={() => removeContender(index)}
+                          >
+                            <Trash2 />
+                          </Button>
+                        </div>
+
+                        <Field label="Agent" className="gap-1 lg:[&>div:first-child]:sr-only">
+                          <Select
+                            value={entry.agent}
+                            onValueChange={(agent) => {
+                              const nextProvider = providersFor(agent)[0]
+                              updateRoster(index, {
+                                agent,
+                                provider_id: nextProvider?.id,
+                                model: nextProvider?.models[0] ?? "",
+                              })
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {refs.map((ref) => (
+                                <SelectItem key={ref.id} value={ref.id}>
+                                  <span className="flex items-center gap-2">
+                                    <AgentIcon agent={ref.id} icon={ref.icon} size={15} /> {ref.label}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
+
+                        <Field label="Provider" className="gap-1 lg:[&>div:first-child]:sr-only">
+                          <Select
+                            value={entry.provider_id}
+                            disabled={rosterProviders.length === 0}
+                            onValueChange={(providerId) => {
+                              const nextProvider = rosterProviders.find((item) => item.id === providerId)
+                              if (nextProvider) {
+                                updateRoster(index, {
+                                  provider_id: nextProvider.id,
+                                  model: nextProvider.models[0] ?? "",
+                                })
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue placeholder="Provider…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {rosterProviders.map((item) => (
+                                <SelectItem key={item.id} value={item.id}>
+                                  <span className="flex items-center gap-2">
+                                    <ProviderIcon provider={item} size={14} />
+                                    <span className="min-w-0 truncate">{item.name}</span>
+                                    {item.auth === "api_key" && !item.key_present && (
+                                      <span className="text-xs text-warn-ink">· key missing</span>
+                                    )}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
+
+                        <Field label="Model" className="gap-1 lg:[&>div:first-child]:sr-only">
+                          <Select
+                            value={entry.model || RUNTIME_DEFAULT}
+                            disabled={!provider && !entry.model}
+                            onValueChange={(model) => {
+                              updateRoster(index, {
+                                model: model === RUNTIME_DEFAULT ? "" : model,
+                              })
+                            }}
+                          >
+                            <SelectTrigger className="w-full font-mono text-xs">
+                              <SelectValue placeholder="Model…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(provider?.models ?? []).map((model) => (
+                                <SelectItem key={model} value={model} className="font-mono text-xs">
+                                  {model}
+                                </SelectItem>
+                              ))}
+                              {entry.model && (!provider || !provider.models.includes(entry.model)) && (
+                                <SelectItem value={entry.model} className="font-mono text-xs">
+                                  {entry.model}{" "}
+                                  <span className="font-sans text-muted-foreground">
+                                    {provider ? "· not in catalog" : "· stored value"}
+                                  </span>
+                                </SelectItem>
+                              )}
+                              <SelectItem value={RUNTIME_DEFAULT} className="text-xs text-muted-foreground">
+                                (runtime default)
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </Field>
+
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="hidden text-muted-foreground hover:text-fail-ink lg:inline-flex"
+                          aria-label={`Remove contender ${index + 1}`}
+                          onClick={() => removeContender(index)}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             )}
             <div>
@@ -1226,24 +1352,26 @@ function ProfileEditor({
             </div>
           )}
 
-          <div className="flex items-center gap-2 border-t pt-4">
-            {canDelete && onDelete && (
-              <Button
-                variant="ghost"
-                className="text-muted-foreground hover:text-fail-ink"
-                onClick={onDelete}
-              >
-                <Trash2 /> Delete
-              </Button>
-            )}
-            <div className="ml-auto flex gap-2">
-              <Button variant="outline" onClick={onClose}>
-                Cancel
-              </Button>
-              <Button disabled={saving} onClick={submit}>
-                {saving ? "Saving…" : isNew ? "Create profile" : "Save profile"}
-              </Button>
-            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 border-t bg-background px-4 py-3 sm:px-5">
+          {canDelete && onDelete && (
+            <Button
+              variant="ghost"
+              className="text-muted-foreground hover:text-fail-ink"
+              onClick={onDelete}
+            >
+              <Trash2 /> Delete
+            </Button>
+          )}
+          <div className="ml-auto flex gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button disabled={saving} onClick={submit}>
+              {saving ? "Saving…" : isNew ? "Create profile" : "Save profile"}
+            </Button>
           </div>
         </div>
       </SheetContent>
