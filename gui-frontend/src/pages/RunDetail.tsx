@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react"
+import { Fragment, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -16,9 +16,11 @@ import {
   Tooltip as ChartTooltip,
 } from "recharts"
 import {
+  Check,
   CheckCircle2,
   ChevronDown,
   Circle,
+  Copy,
   LoaderCircle,
   OctagonX,
   Scale,
@@ -268,7 +270,7 @@ export default function RunDetail() {
 
       {run.ablation?.groups?.length ? <AblationCard groups={run.ablation.groups} /> : null}
 
-      {run.config && <ConfigCard config={run.config} />}
+      {run.config && <ConfigCard config={run.config} taskCount={run.task_count} />}
     </div>
   )
 }
@@ -858,34 +860,335 @@ function DeltaCell({ value }: { value: number | null | undefined }) {
   )
 }
 
-function ConfigCard({ config }: { config: Record<string, unknown> }) {
-  const skip = new Set(["instruction_variants", "task_order"])
-  const entries = Object.entries(config).filter(([key]) => !skip.has(key))
+/* ---------- Run configuration → measurement recipe ----------
+   The launcher writes ~34 flat keys per run. As an alphabetical env dump they
+   make every run look identical; the operator's real question is "what did this
+   run measure, and how". So the card leads with a one-line recipe, then groups
+   the keys by the role each plays — who executed, what judged, what varied, what
+   pins a rerun. Keys stay literal (mono, lower-case, grep-able) and the complete
+   raw config is one click away: the file system is still the truth. */
+
+type ConfigGroupId = "executor" | "judge" | "variables" | "repro"
+
+const CONFIG_GROUPS: { id: ConfigGroupId; label: string; gloss: string }[] = [
+  { id: "executor", label: "Executor", gloss: "how tasks were run" },
+  { id: "judge", label: "Judge", gloss: "how outputs were scored" },
+  { id: "variables", label: "Variables", gloss: "what changed across tasks" },
+  { id: "repro", label: "Reproducibility", gloss: "what pins an exact rerun" },
+]
+
+// task_order duplicates the task table above and can run long; keep it to Raw.
+const CONFIG_SKIP = new Set(["task_order"])
+
+/* First match wins; every non-skipped key lands in exactly one group. Anything
+   unrecognized (a future launcher flag) falls through to Reproducibility and is
+   always visible under Raw, so no key is silently dropped. */
+function classifyConfigKey(key: string): ConfigGroupId {
+  if (
+    key === "run_id" ||
+    key === "seed" ||
+    key === "docker_image" ||
+    key === "claude_thinking_effort"
+  )
+    return "repro"
+  if (key.endsWith("_bin")) return "repro"
+  if (key.startsWith("requested_")) return "variables"
+  if (key.startsWith("evaluator_") || key === "judge_mode" || key === "max_evaluator_parallel")
+    return "judge"
+  if (key.startsWith("instruction_") || key.startsWith("rigor_") || key === "batch_size")
+    return "variables"
+  if (key.startsWith("executor_") || key === "auth_mode") return "executor"
+  if (
+    key.endsWith("_base_url") ||
+    key.endsWith("_provider") ||
+    key.endsWith("_api_key_env") ||
+    key.endsWith("_api_key") ||
+    key.endsWith("_endpoint")
+  )
+    return "executor"
+  return "repro"
+}
+
+// A value is "empty" when it carries no measurement decision: null, [], "", or
+// the literal sentinels the launcher writes for an unset flag ("-", "none").
+function isEmptyConfigValue(value: unknown): boolean {
+  if (value === null || value === undefined) return true
+  if (Array.isArray(value)) return value.length === 0
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase()
+    return v === "" || v === "-" || v === "–" || v === "none" || v === "null"
+  }
+  return false
+}
+
+function formatConfigValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "–"
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "[]"
+  return String(value)
+}
+
+/* One-line recipe. Each piece is emitted only when its source field is present,
+   so a sparse config degrades to a shorter (still honest) line rather than
+   inventing "none"/"-" placeholders. */
+type CrossUnit =
+  | { type: "agent"; prefix?: string; agent: string; model: string | null }
+  | { type: "count"; value: number }
+interface RecipeMeta {
+  label: string
+  value: string
+}
+
+function readConfigStr(config: Record<string, unknown>, key: string): string | null {
+  const v = config[key]
+  if (typeof v === "number") return String(v)
+  if (typeof v === "string") {
+    const t = v.trim()
+    return t && t.toLowerCase() !== "none" ? t : null
+  }
+  return null
+}
+
+function buildRecipe(
+  config: Record<string, unknown>,
+  taskCount: number | null,
+): { cross: CrossUnit[]; meta: RecipeMeta[]; text: string } | null {
+  const cross: CrossUnit[] = []
+  const executorAgent = readConfigStr(config, "executor_agent")
+  if (executorAgent)
+    cross.push({ type: "agent", agent: executorAgent, model: readConfigStr(config, "executor_model") })
+  const orderLen = Array.isArray(config.task_order) ? config.task_order.length : null
+  const count = taskCount ?? orderLen
+  if (count !== null && count !== undefined) cross.push({ type: "count", value: count })
+  const evaluatorAgent = readConfigStr(config, "evaluator_agent")
+  if (evaluatorAgent)
+    cross.push({
+      type: "agent",
+      prefix: "judge",
+      agent: evaluatorAgent,
+      model: readConfigStr(config, "evaluator_model"),
+    })
+
+  const meta: RecipeMeta[] = []
+  const seed = readConfigStr(config, "seed")
+  if (seed !== null) meta.push({ label: "seed", value: seed })
+  const backend = readConfigStr(config, "executor_backend")
+  if (backend) meta.push({ label: "", value: backend })
+
+  if (!cross.length && !meta.length) return null
+
+  const unitText = (u: CrossUnit) =>
+    u.type === "count"
+      ? `${u.value} task${u.value === 1 ? "" : "s"}`
+      : `${u.prefix ? `${u.prefix} ` : ""}${u.agent}${u.model ? `(${u.model})` : ""}`
+  const text =
+    cross.map(unitText).join(" × ") +
+    meta.map((m) => ` · ${m.label ? `${m.label} ` : ""}${m.value}`).join("")
+  return { cross, meta, text }
+}
+
+function CopyRecipeButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), [])
+  const onCopy = () => {
+    const done = () => {
+      setCopied(true)
+      toast.success("Recipe copied")
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => setCopied(false), 1400)
+    }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => toast.error("Copy failed"))
+    } else {
+      toast.error("Clipboard unavailable")
+    }
+  }
   return (
-    <Collapsible>
-      <Card className="gap-3">
-        <CollapsibleTrigger className="group flex w-full items-center gap-2 px-6 text-left">
-          <CardTitle className="text-base">Run configuration</CardTitle>
-          <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-        </CollapsibleTrigger>
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      onClick={onCopy}
+      aria-label={copied ? "Recipe copied" : "Copy recipe"}
+      title="Copy recipe"
+      className="shrink-0 text-muted-foreground hover:text-foreground"
+    >
+      {copied ? <Check className="text-pass-ink" /> : <Copy />}
+    </Button>
+  )
+}
+
+function ConfigGroup({
+  label,
+  gloss,
+  rows,
+  showEmpty,
+}: {
+  label: string
+  gloss: string
+  rows: [string, unknown][]
+  showEmpty: boolean
+}) {
+  const visible = showEmpty ? rows : rows.filter(([, v]) => !isEmptyConfigValue(v))
+  const hiddenEmpty = rows.length - visible.length
+  return (
+    <section className="min-w-0">
+      <div className="mb-2.5 flex items-baseline gap-2 border-b border-border/70 pb-1.5">
+        <h3 className="text-sm font-medium text-foreground">{label}</h3>
+        <span className="text-xs text-muted-foreground">{gloss}</span>
+      </div>
+      {visible.length ? (
+        <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
+          {visible.map(([key, value]) => {
+            const empty = isEmptyConfigValue(value)
+            return (
+              <Fragment key={key}>
+                <dt className="font-mono text-[13px] leading-5 text-muted-foreground">{key}</dt>
+                <dd
+                  className={cn(
+                    "min-w-0 break-all font-mono text-[13px] leading-5",
+                    empty ? "text-muted-foreground" : "text-foreground",
+                  )}
+                >
+                  {formatConfigValue(value)}
+                </dd>
+              </Fragment>
+            )
+          })}
+        </dl>
+      ) : (
+        <p className="text-[13px] text-muted-foreground">
+          {hiddenEmpty ? `${hiddenEmpty} empty field${hiddenEmpty === 1 ? "" : "s"}` : "none set"}
+        </p>
+      )}
+    </section>
+  )
+}
+
+function RawConfig({ config }: { config: Record<string, unknown> }) {
+  const entries = Object.entries(config).sort(([a], [b]) => a.localeCompare(b))
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-muted/40 p-4">
+      <dl className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-6 gap-y-2">
+        {entries.map(([key, value]) => (
+          <div key={key} className="min-w-0">
+            <dt className="font-mono text-[11px] text-muted-foreground">{key}</dt>
+            <dd className="break-all font-mono text-[13px] text-foreground">
+              {formatConfigValue(value)}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
+function ConfigCard({
+  config,
+  taskCount,
+}: {
+  config: Record<string, unknown>
+  taskCount: number | null
+}) {
+  const [showEmpty, setShowEmpty] = useState(false)
+  const [showRaw, setShowRaw] = useState(false)
+
+  const { grouped, emptyTotal } = useMemo(() => {
+    const grouped = new Map<ConfigGroupId, [string, unknown][]>(
+      CONFIG_GROUPS.map((g) => [g.id, [] as [string, unknown][]]),
+    )
+    let emptyTotal = 0
+    for (const [key, value] of Object.entries(config)) {
+      if (CONFIG_SKIP.has(key)) continue
+      grouped.get(classifyConfigKey(key))!.push([key, value])
+      if (isEmptyConfigValue(value)) emptyTotal += 1
+    }
+    for (const rows of grouped.values()) rows.sort(([a], [b]) => a.localeCompare(b))
+    return { grouped, emptyTotal }
+  }, [config])
+
+  const recipe = useMemo(() => buildRecipe(config, taskCount), [config, taskCount])
+  const rawKeyCount = Object.keys(config).length
+
+  return (
+    <Collapsible defaultOpen>
+      <Card className="gap-0 py-5">
+        <div className="flex flex-col gap-3 px-6">
+          <CollapsibleTrigger className="group flex items-center gap-2 self-start rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+            <CardTitle className="text-base">Run configuration</CardTitle>
+            <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+          </CollapsibleTrigger>
+          {recipe && (
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 py-2.5 pl-3.5 pr-2">
+              <code className="min-w-0 flex-1 break-words font-mono text-sm leading-6">
+                {recipe.cross.map((u, i) => (
+                  <Fragment key={i}>
+                    {i > 0 && <span className="mx-1.5 text-muted-foreground/60">×</span>}
+                    {u.type === "count" ? (
+                      <span>
+                        <span className="tabular-nums text-foreground">{u.value}</span>
+                        <span className="text-muted-foreground"> task{u.value === 1 ? "" : "s"}</span>
+                      </span>
+                    ) : (
+                      <span>
+                        {u.prefix && <span className="text-muted-foreground">{u.prefix} </span>}
+                        <span className="font-medium text-foreground">{u.agent}</span>
+                        {u.model && <span className="text-muted-foreground">({u.model})</span>}
+                      </span>
+                    )}
+                  </Fragment>
+                ))}
+                {recipe.meta.map((m, i) => (
+                  <Fragment key={`m${i}`}>
+                    <span className="mx-1.5 text-muted-foreground/60">·</span>
+                    {m.label && <span className="text-muted-foreground">{m.label} </span>}
+                    <span className="text-foreground">{m.value}</span>
+                  </Fragment>
+                ))}
+              </code>
+              <CopyRecipeButton text={recipe.text} />
+            </div>
+          )}
+        </div>
+
         <CollapsibleContent>
-          <CardContent>
-            <dl className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-6 gap-y-3">
-              {entries.map(([key, value]) => (
-                <div key={key} className="min-w-0">
-                  <dt className="text-xs uppercase tracking-wide text-muted-foreground">{key}</dt>
-                  <dd className="break-all font-mono text-sm">
-                    {Array.isArray(value)
-                      ? value.length
-                        ? value.join(", ")
-                        : "[]"
-                      : value === null || value === ""
-                        ? "–"
-                        : String(value)}
-                  </dd>
-                </div>
+          <CardContent className="pt-5">
+            <div className="grid gap-x-10 gap-y-6 md:grid-cols-2">
+              {CONFIG_GROUPS.map((group) => (
+                <ConfigGroup
+                  key={group.id}
+                  label={group.label}
+                  gloss={group.gloss}
+                  rows={grouped.get(group.id)!}
+                  showEmpty={showEmpty}
+                />
               ))}
-            </dl>
+            </div>
+
+            <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/70 pt-3">
+              {emptyTotal > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowEmpty((v) => !v)}
+                  aria-expanded={showEmpty}
+                  className="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                >
+                  <ChevronDown className={cn("size-3.5 transition-transform", showEmpty && "rotate-180")} />
+                  {emptyTotal} empty field{emptyTotal === 1 ? "" : "s"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowRaw((v) => !v)}
+                aria-expanded={showRaw}
+                className="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              >
+                <ChevronDown className={cn("size-3.5 transition-transform", showRaw && "rotate-180")} />
+                Raw config · {rawKeyCount} keys
+              </button>
+            </div>
+
+            {showRaw && <RawConfig config={config} />}
           </CardContent>
         </CollapsibleContent>
       </Card>

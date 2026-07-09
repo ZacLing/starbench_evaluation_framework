@@ -1,29 +1,38 @@
 import { Link, NavLink, useLocation } from "react-router-dom"
-import { Bot, Boxes, Gauge, Library, ListChecks, Plus, Puzzle, Star } from "lucide-react"
+import { Bot, Boxes, Gauge, Grid3X3, Library, ListChecks, Plus, Puzzle, Star, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
 
-const NAV = [
+type NavEntry = { to: string; label: string; icon: LucideIcon; end: boolean }
+
+// Primary destinations: the places an operator lives while a run is cooking.
+const PRIMARY_NAV: NavEntry[] = [
   { to: "/", label: "Dashboard", icon: Gauge, end: true },
+  { to: "/coverage", label: "Coverage", icon: Grid3X3, end: true },
   { to: "/tasks", label: "Task library", icon: Library, end: true },
-  { to: "/agents", label: "Agents", icon: Bot, end: true },
-  { to: "/skills", label: "Skills", icon: Puzzle, end: true },
-  { to: "/providers", label: "AI providers", icon: Boxes, end: true },
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
-  { to: "/new", label: "New experiment", icon: Plus, end: true },
+]
+
+// Setup: the fixtures you configure once, then rarely touch mid-investigation.
+const SETUP_NAV: NavEntry[] = [
+  { to: "/agents", label: "Agents", icon: Bot, end: true },
+  { to: "/providers", label: "AI providers", icon: Boxes, end: true },
+  { to: "/skills", label: "Skills", icon: Puzzle, end: true },
 ]
 
 export function Shell({ children }: { children: React.ReactNode }) {
@@ -53,19 +62,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <SidebarGroup>
             <SidebarGroupContent>
               <SidebarMenu>
-                {NAV.map((item) => (
-                  <SidebarMenuItem key={item.to}>
-                    <NavLink to={item.to} end={item.end}>
-                      {({ isActive }) => (
-                        <SidebarMenuButton isActive={isActive} tooltip={item.label} asChild>
-                          <span>
-                            <item.icon />
-                            <span>{item.label}</span>
-                          </span>
-                        </SidebarMenuButton>
-                      )}
-                    </NavLink>
-                  </SidebarMenuItem>
+                {PRIMARY_NAV.map((item) => (
+                  <NavItem key={item.to} item={item} />
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarSeparator />
+
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Setup
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {SETUP_NAV.map((item) => (
+                  <NavItem key={item.to} item={item} />
                 ))}
               </SidebarMenu>
             </SidebarGroupContent>
@@ -91,11 +104,29 @@ export function Shell({ children }: { children: React.ReactNode }) {
   )
 }
 
+function NavItem({ item }: { item: NavEntry }) {
+  return (
+    <SidebarMenuItem>
+      <NavLink to={item.to} end={item.end}>
+        {({ isActive }) => (
+          <SidebarMenuButton isActive={isActive} tooltip={item.label} asChild>
+            <span>
+              <item.icon />
+              <span>{item.label}</span>
+            </span>
+          </SidebarMenuButton>
+        )}
+      </NavLink>
+    </SidebarMenuItem>
+  )
+}
+
 function Crumbs({ pathname }: { pathname: string }) {
   const segments = pathname.split("/").filter(Boolean)
   const crumbs: { label: string; to?: string }[] = []
   if (segments.length === 0) crumbs.push({ label: "Dashboard" })
   else if (segments[0] === "new") crumbs.push({ label: "New experiment" })
+  else if (segments[0] === "coverage") crumbs.push({ label: "Coverage" })
   else if (segments[0] === "tasks") crumbs.push({ label: "Task library" })
   else if (segments[0] === "agents") crumbs.push({ label: "Agents" })
   else if (segments[0] === "skills") crumbs.push({ label: "Skills" })
