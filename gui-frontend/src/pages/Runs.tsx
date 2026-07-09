@@ -10,7 +10,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table"
-import { ArrowUpDown, FlaskConical, Search } from "lucide-react"
+import { ArrowUpDown, FlaskConical, PencilLine, Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -33,7 +33,7 @@ import {
 import { ExecutorStatsInline, PassSummaryBadge, StatusBadge } from "@/components/verdict"
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
 import { ErrorNote } from "@/pages/Dashboard"
-import { api, type RunOverview } from "@/lib/api"
+import { api, type RunOverview, type RunProfileRef } from "@/lib/api"
 import { fmtTime, shortDir, spanBetween } from "@/lib/format"
 
 /* The Runs page is an execution ledger: one row per run, newest first,
@@ -287,13 +287,29 @@ function RunIdCell({ run, experimentId }: { run: RunOverview; experimentId?: str
       >
         {run.run_id}
       </div>
-      <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
         <time dateTime={run.started_at ?? undefined} title={run.started_at ?? undefined}>
           {fmtTime(run.started_at)}
         </time>
+        {run.profile?.modified && <AdHocTag profile={run.profile} />}
         {experimentId && <ExperimentTag id={experimentId} />}
       </div>
     </div>
+  )
+}
+
+/* A run launched from a profile but deviating from it: an ad-hoc test. The
+   deviation lives in the run's own snapshot, not in the profile. Glyph + word,
+   never color alone; muted amber keeps it quiet against faithful runs. */
+function AdHocTag({ profile }: { profile: RunProfileRef }) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warn-soft px-1.5 py-px font-medium text-warn-ink"
+      title={`Ad-hoc test — deviated from profile ${profile.id} (rev ${profile.rev}) at launch`}
+    >
+      <PencilLine className="size-3 shrink-0" aria-hidden />
+      ad-hoc
+    </span>
   )
 }
 

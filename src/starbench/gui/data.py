@@ -282,6 +282,31 @@ def progress_snapshot(run_root: Path) -> Optional[Dict[str, Any]]:
     }
 
 
+def _profile_marker(run_root: Path) -> Optional[Dict[str, Any]]:
+    """Lightweight profile marker for a run row: ``{id, rev, modified}`` read
+    from the run's ``profile_snapshot.json``. ``modified`` is True only when
+    the snapshot says the launch deviated from the cited profile (an ad-hoc
+    test). Missing, unreadable, or malformed snapshot -> ``None`` — one bad
+    run directory must never break the whole listing."""
+    snapshot = _read_json(run_root / "profile_snapshot.json")
+    if not isinstance(snapshot, dict):
+        return None
+    profile = snapshot.get("profile")
+    if not isinstance(profile, dict):
+        return None
+    profile_id = profile.get("id")
+    rev = profile.get("rev")
+    if not isinstance(profile_id, str) or not profile_id:
+        return None
+    if isinstance(rev, bool) or not isinstance(rev, int):
+        return None
+    return {
+        "id": profile_id,
+        "rev": rev,
+        "modified": snapshot.get("modified") is True,
+    }
+
+
 def run_overview(run_root: Path, active_run_ids: Optional[set] = None) -> Dict[str, Any]:
     run_config = _read_json(run_root / "run_config.json")
     config = run_config if isinstance(run_config, dict) else {}
@@ -323,6 +348,10 @@ def run_overview(run_root: Path, active_run_ids: Optional[set] = None) -> Dict[s
         "started_at": started_at,
         "ended_at": ended_at,
         "has_ablation": (run_root / "instruction_ablation_summary.json").exists(),
+        # The measurement contract this run cites, as a light marker (id/rev/
+        # modified); null for bare runs and unreadable snapshots. The detail
+        # view carries the full snapshot separately.
+        "profile": _profile_marker(run_root),
     }
 
 

@@ -36,6 +36,7 @@ import type {
   RunLivePayload,
   RunLiveState,
   RunLiveTask,
+  RunProfileRef,
   RuntimeCli,
   RuntimeProtocol,
   Skill,
@@ -79,6 +80,7 @@ export type {
   RunLivePayload,
   RunLiveState,
   RunLiveTask,
+  RunProfileRef,
   RuntimeCli,
   RuntimeProtocol,
   Skill,
@@ -122,6 +124,11 @@ export interface RunOverview {
   started_at: string | null
   ended_at: string | null
   has_ablation: boolean
+  /* Attribution to the measurement contract this run launched under, when it
+     carried one. `modified` marks an ad-hoc test: the launch deviated from the
+     profile and the deviation was recorded in the run's snapshot. Bare runs
+     (no profile) carry null. */
+  profile?: RunProfileRef | null
 }
 
 export interface TaskRow {
@@ -623,6 +630,10 @@ export const api = {
     tasks: string[]
     shared: Partial<SharedConfig>
     contenders: Contender[]
+    /* When launching under a profile, the backend diffs the effective payload
+       against this profile and records any deviation in the run snapshot
+       (`modified`/`modified_fields`). Omit for a bare (custom) launch. */
+    profile_id?: string
     dry_run?: boolean
   }) =>
     request<

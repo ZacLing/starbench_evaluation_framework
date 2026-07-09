@@ -101,6 +101,45 @@ class GuiDataTest(unittest.TestCase):
         detail = data.run_detail(self.runs_dir, "run_broken_snapshot")
         self.assertIsNone(detail["profile_snapshot"])
 
+    def test_list_runs_carries_profile_marker(self) -> None:
+        run_root = make_run(self.runs_dir, "run_adhoc")
+        write_json(
+            run_root / "profile_snapshot.json",
+            {
+                "schema_version": 1,
+                "profile": {"id": "hsw", "rev": 3, "name": "HSW sweep"},
+                "modified": True,
+                "modified_fields": ["repeat"],
+            },
+        )
+        runs = data.list_runs(self.runs_dir)
+        self.assertEqual(runs[0]["profile"], {"id": "hsw", "rev": 3, "modified": True})
+
+    def test_list_runs_profile_marker_defaults_modified_false(self) -> None:
+        # A snapshot from before the deviation record (no `modified` key)
+        # reads as a faithful profile launch.
+        run_root = make_run(self.runs_dir, "run_faithful")
+        write_json(
+            run_root / "profile_snapshot.json",
+            {"profile": {"id": "hsw", "rev": 1, "name": "HSW sweep"}},
+        )
+        runs = data.list_runs(self.runs_dir)
+        self.assertEqual(runs[0]["profile"], {"id": "hsw", "rev": 1, "modified": False})
+
+    def test_list_runs_profile_marker_soft_fails_to_null(self) -> None:
+        make_run(self.runs_dir, "run_bare")  # no snapshot at all
+        broken = make_run(self.runs_dir, "run_broken")
+        (broken / "profile_snapshot.json").write_text("{not json", encoding="utf-8")
+        malformed = make_run(self.runs_dir, "run_malformed")
+        write_json(
+            malformed / "profile_snapshot.json", {"profile": {"id": "hsw"}}  # no rev
+        )
+        rows = {row["run_id"]: row for row in data.list_runs(self.runs_dir)}
+        self.assertEqual(len(rows), 3, "a bad snapshot never hides a run")
+        self.assertIsNone(rows["run_bare"]["profile"])
+        self.assertIsNone(rows["run_broken"]["profile"])
+        self.assertIsNone(rows["run_malformed"]["profile"])
+
     def test_task_run_detail_reads_all_surfaces(self) -> None:
         make_run(self.runs_dir, "run_pass")
         detail = data.task_run_detail(self.runs_dir, "run_pass", "demo_task__baseline_01")

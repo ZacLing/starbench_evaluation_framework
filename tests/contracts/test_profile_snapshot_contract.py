@@ -138,6 +138,40 @@ class ProfileSnapshotSchemaTests(unittest.TestCase):
                 with self.assertRaisesRegex(ContractValidationError, key):
                     validate_payload("profile_snapshot.schema.json", snapshot)
 
+    def test_modified_marker_is_optional_both_ways(self) -> None:
+        """Ad-hoc launches annotate their deviation from the cited profile;
+        snapshots written before the marker existed carry neither key and
+        must stay legal (valid_snapshot() itself has no marker)."""
+        unmarked = valid_snapshot()
+        self.assertNotIn("modified", unmarked)
+        self.assertNotIn("modified_fields", unmarked)
+        validate_payload("profile_snapshot.schema.json", unmarked)
+
+        marked = valid_snapshot()
+        marked["modified"] = True
+        marked["modified_fields"] = ["roster", "task_set", "repeat"]
+        validate_payload("profile_snapshot.schema.json", marked)
+        # Walk the new branches through the whitelist validator too: a clean
+        # pass proves they stay inside the supported keyword set.
+        validate_json_schema(load_schema("profile_snapshot.schema.json"), marked)
+
+        unmodified = valid_snapshot()
+        unmodified["modified"] = False
+        validate_payload("profile_snapshot.schema.json", unmodified)
+
+    def test_modified_fields_non_string_items_rejected(self) -> None:
+        snapshot = valid_snapshot()
+        snapshot["modified"] = True
+        snapshot["modified_fields"] = ["roster", 7]
+        with self.assertRaisesRegex(ContractValidationError, "modified_fields"):
+            validate_payload("profile_snapshot.schema.json", snapshot)
+
+    def test_modified_wrong_type_rejected(self) -> None:
+        snapshot = valid_snapshot()
+        snapshot["modified"] = "yes"
+        with self.assertRaisesRegex(ContractValidationError, "modified"):
+            validate_payload("profile_snapshot.schema.json", snapshot)
+
     def test_secret_material_fields_rejected_everywhere(self) -> None:
         """CREDENTIAL RED LINE: no object in the contract accepts a field that
         could carry a key value. Unknown keys are rejected at every level."""

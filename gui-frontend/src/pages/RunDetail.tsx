@@ -24,6 +24,7 @@ import {
   Copy,
   LoaderCircle,
   OctagonX,
+  PencilLine,
   Scale,
   TriangleAlert,
   XCircle,
@@ -1517,6 +1518,19 @@ function ContractProvenance({
           </>
         )}
       </p>
+      {snapshot.modified && (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-md bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn-ink"
+          title={
+            snapshot.modified_fields?.length
+              ? `Deviated from the profile at launch: ${snapshot.modified_fields.join(", ")}`
+              : "Deviated from the profile at launch"
+          }
+        >
+          <PencilLine className="size-3.5 shrink-0" aria-hidden />
+          modified · ad-hoc test
+        </span>
+      )}
       <DriftChip drift={drift} />
     </div>
   )

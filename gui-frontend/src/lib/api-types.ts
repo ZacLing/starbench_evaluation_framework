@@ -376,6 +376,35 @@ export interface ProfileSnapshot {
   instrument: ProfileSnapshotInstrument
   execution: ProfileSnapshotExecution
   task_set: ProfileSnapshotTaskSet
+  modified?: boolean
+  modified_fields?: string[]
+}
+
+export interface RunProfileRef {
+  id: string
+  rev: number
+  modified: boolean
+}
+
+export interface RunRow {
+  run_id: string
+  status: "complete" | "running" | "interrupted"
+  task_count: number
+  executor_stats: Record<string, number>
+  judge_passes: Record<string, number>
+  judge_totals: Record<string, number>
+  judge_mode: string | null
+  executor_agent: string | null
+  executor_model: string | null
+  evaluator_agent: string | null
+  evaluator_model: string | null
+  executor_backend: string | null
+  seed: number | null
+  instruction_mode: string | null
+  started_at: string | null
+  ended_at: string | null
+  has_ablation: boolean
+  profile: RunProfileRef | null
 }
 
 export interface ExperimentPlanItem {

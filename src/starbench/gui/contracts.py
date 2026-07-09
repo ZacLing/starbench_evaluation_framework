@@ -558,7 +558,7 @@ class ProfileSnapshotTaskSet(TypedDict):
     task_ids: List[str]
 
 
-class ProfileSnapshot(TypedDict):
+class _ProfileSnapshotBase(TypedDict):
     schema_version: int
     captured_at: str
     profile: ProfileSnapshotProfile
@@ -567,6 +567,59 @@ class ProfileSnapshot(TypedDict):
     instrument: ProfileSnapshotInstrument
     execution: ProfileSnapshotExecution
     task_set: ProfileSnapshotTaskSet
+
+
+class ProfileSnapshot(_ProfileSnapshotBase, total=False):
+    """Every value is the EFFECTIVE launch configuration; ``profile`` cites the
+    comparison baseline. ``modified: true`` marks an ad-hoc launch that
+    deviated from that baseline, and ``modified_fields`` names the deviating
+    dimensions ("roster", "task_set", or shared key names like "repeat").
+    Both keys are absent on launches that matched the profile — and on every
+    snapshot written before the deviation record existed."""
+
+    modified: bool
+    modified_fields: List[str]
+
+
+# ---------------------------------------------------------------------------
+# Run listing (/api/runs): one row per run directory (gui.data.run_overview);
+# the run detail payload extends this shape.
+# ---------------------------------------------------------------------------
+
+class RunProfileRef(TypedDict):
+    """Profile marker on a run row, soft-read from the run's
+    profile_snapshot.json: which profile (at which rev) the run cites, and
+    whether the launch deviated from it (``modified`` = an ad-hoc test).
+    A missing or unreadable snapshot yields null on the row, never an error."""
+
+    id: str
+    rev: int
+    modified: bool
+
+
+class RunRow(TypedDict):
+    run_id: str
+    status: RunStatus
+    task_count: int
+    # success / failed / timeout / pending counters.
+    executor_stats: Dict[str, int]
+    # Judge tallies keyed by mode ("single" / "parallel").
+    judge_passes: Dict[str, int]
+    judge_totals: Dict[str, int]
+    judge_mode: Optional[str]
+    executor_agent: Optional[str]
+    executor_model: Optional[str]
+    evaluator_agent: Optional[str]
+    evaluator_model: Optional[str]
+    executor_backend: Optional[str]
+    seed: Optional[int]
+    instruction_mode: Optional[str]
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    has_ablation: bool
+    # The measurement contract this run cites, or null for bare runs (and for
+    # unreadable snapshots — soft failure).
+    profile: Optional[RunProfileRef]
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +722,8 @@ GENERATED_TYPES = [
     "ProfileSnapshotExecution",
     "ProfileSnapshotTaskSet",
     "ProfileSnapshot",
+    "RunProfileRef",
+    "RunRow",
     "ExperimentPlanItem",
     "Contender",
 ]

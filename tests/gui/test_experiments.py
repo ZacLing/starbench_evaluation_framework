@@ -861,7 +861,10 @@ class ExperimentRigorTest(unittest.TestCase):
 
 class ExperimentProfileSnapshotTest(unittest.TestCase):
     """Snapshot-on-use: launching from a roster-carrying profile attaches one
-    contract snapshot per contender; bare launches attach nothing."""
+    contract snapshot per contender; bare launches attach nothing. The payload
+    is the effective configuration and the profile is the comparison baseline:
+    a deviating (ad-hoc) launch is allowed, and the backend diffs the two and
+    annotates the snapshot with ``modified``/``modified_fields``."""
 
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_snapshot_"))
@@ -974,6 +977,16 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
     def snapshot_path_from(argv) -> str:
         return argv[argv.index("--profile-snapshot") + 1]
 
+    def plan_snapshots(self, payload) -> list:
+        """Plan the payload and return every contender's transported snapshot."""
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        return [
+            json.loads(
+                Path(self.snapshot_path_from(item["argv"])).read_text(encoding="utf-8")
+            )
+            for item in plan["plans"]
+        ]
+
     def test_roster_profile_attaches_one_snapshot_per_contender(self) -> None:
         self.save_profile()
         plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
@@ -1061,14 +1074,123 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
                 self.payload(profile_id="ghost"), runs_dir=self.runs_dir
             )
 
-    def test_dangling_roster_provider_rejected(self) -> None:
-        # A snapshot must never carry an unresolvable reference: fail the plan,
-        # do not write a half-true contract.
-        self.save_profile(
-            roster=[{"agent": "claude", "model": "claude-opus-4-8", "provider_id": "ghost"}]
-        )
+    def test_dangling_payload_provider_rejected(self) -> None:
+        # The snapshot inlines the PAYLOAD's providers (the effective config);
+        # an unresolvable reference there still fails the plan — never a
+        # half-true contract on disk.
+        self.save_profile()
+        payload = self.payload()
+        payload["contenders"][0]["provider_id"] = "ghost"
         with self.assertRaisesRegex(ExperimentError, "ghost"):
-            experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
+            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+
+    def test_dangling_profile_roster_provider_reads_as_deviation(self) -> None:
+        # The profile is only the comparison baseline now: its dangling
+        # reference no longer enters the snapshot (the effective roster does),
+        # so the launch proceeds and the diff reports the roster deviation.
+        self.save_profile(
+            roster=[
+                {"agent": "claude", "model": "claude-opus-4-8", "provider_id": "ghost"},
+                {"agent": "codex", "model": "gpt-5.5", "provider_id": "openai"},
+            ]
+        )
+        snapshot = self.plan_snapshots(self.payload())[0]
+        self.assertTrue(snapshot["modified"])
+        self.assertEqual(snapshot["modified_fields"], ["roster"])
+        self.assertNotIn("ghost", json.dumps(snapshot))
+
+    # -- Ad-hoc deviation record (payload = effective, profile = baseline) --
+
+    def test_unmodified_launch_carries_no_deviation_marker(self) -> None:
+        # The payload mirrors the profile exactly -> the snapshot looks the
+        # same as before the deviation record existed (no marker keys at all).
+        self.save_profile()
+        for snapshot in self.plan_snapshots(self.payload()):
+            self.assertNotIn("modified", snapshot)
+            self.assertNotIn("modified_fields", snapshot)
+
+    def test_label_only_change_is_not_a_deviation(self) -> None:
+        # A contender label is display-only: renaming does not change what is
+        # measured, so it must not mark the launch as modified.
+        self.save_profile()
+        payload = self.payload()
+        payload["contenders"][0]["label"] = "Claude Opus (renamed)"
+        for snapshot in self.plan_snapshots(payload):
+            self.assertNotIn("modified", snapshot)
+
+    def test_roster_deviation_records_the_effective_roster(self) -> None:
+        # Launching a subset of the declared roster is an ad-hoc test: allowed,
+        # marked, and the snapshot records what actually launched.
+        self.save_profile()
+        payload = self.payload()
+        payload["contenders"] = [payload["contenders"][0]]  # drop the codex column
+        snapshots = self.plan_snapshots(payload)
+        self.assertEqual(len(snapshots), 1)
+        snapshot = snapshots[0]
+        validate_payload("profile_snapshot.schema.json", snapshot)
+        self.assertIs(snapshot["modified"], True)
+        self.assertEqual(snapshot["modified_fields"], ["roster"])
+        # Effective roster, not the profile's two-column declaration.
+        self.assertEqual(len(snapshot["roster"]), 1)
+        self.assertEqual(snapshot["roster"][0]["agent"], "claude")
+        self.assertEqual(snapshot["roster"][0]["base_url"], "https://api.anthropic.com")
+        # The cited rev pins the BASELINE the launch deviated from.
+        self.assertEqual(snapshot["profile"], {"id": "hsw", "rev": 1, "name": "HSW sweep"})
+
+    def test_shared_single_key_deviation_names_the_key(self) -> None:
+        self.save_profile()
+        payload = self.payload()
+        payload["shared"]["repeat"] = 1  # profile baseline says 5
+        for snapshot in self.plan_snapshots(payload):
+            validate_payload("profile_snapshot.schema.json", snapshot)
+            self.assertIs(snapshot["modified"], True)
+            self.assertEqual(snapshot["modified_fields"], ["repeat"])
+            # The snapshot records the value that took effect, not the baseline.
+            self.assertEqual(snapshot["execution"]["repeat"], 1)
+
+    def test_task_set_deviation_marks_task_set(self) -> None:
+        self.save_profile()  # profile task_ids [] = every task (task_a, task_b)
+        payload = self.payload()
+        payload["tasks"] = ["task_a"]
+        snapshot = self.plan_snapshots(payload)[0]
+        validate_payload("profile_snapshot.schema.json", snapshot)
+        self.assertIs(snapshot["modified"], True)
+        self.assertEqual(snapshot["modified_fields"], ["task_set"])
+        self.assertEqual(snapshot["task_set"]["task_ids"], ["task_a"])
+
+    def test_explicit_selectors_matching_the_profile_are_no_deviation(self) -> None:
+        # The diff compares RESOLVED task sets: naming every task explicitly
+        # equals the profile's "empty selectors = every task".
+        self.save_profile()
+        payload = self.payload()
+        payload["tasks"] = ["task_a", "task_b"]
+        snapshot = self.plan_snapshots(payload)[0]
+        self.assertNotIn("modified", snapshot)
+
+    def test_combined_deviation_lists_dimensions_then_shared_keys(self) -> None:
+        self.save_profile()
+        payload = self.payload()
+        payload["contenders"][0]["model"] = "claude-sonnet-4-6"  # roster deviation
+        payload["tasks"] = ["task_b"]  # task_set deviation
+        payload["shared"]["seed"] = 99
+        payload["shared"]["judge_mode"] = "both"
+        snapshot = self.plan_snapshots(payload)[0]
+        validate_payload("profile_snapshot.schema.json", snapshot)
+        self.assertEqual(
+            snapshot["modified_fields"], ["roster", "task_set", "judge_mode", "seed"]
+        )
+
+    def test_spelled_out_defaults_are_no_deviation(self) -> None:
+        # Both sides normalize with the runner defaults: a payload spelling
+        # out what the profile leaves implicit (and vice versa) is the same
+        # measurement contract.
+        self.save_profile()
+        payload = self.payload()
+        payload["shared"]["web_search_mode"] = "task"  # profile omits it
+        payload["shared"]["max_evaluator_parallel"] = 4  # runner default
+        payload["shared"]["seed"] = "7"  # same value, string-typed
+        snapshot = self.plan_snapshots(payload)[0]
+        self.assertNotIn("modified", snapshot)
 
 
 if __name__ == "__main__":

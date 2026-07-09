@@ -6,16 +6,20 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  ArrowUpRight,
   Check,
   CheckCircle2,
   ChevronDown,
   DownloadCloud,
   FolderSearch,
+  Layers,
   Loader2,
+  PencilLine,
   Plus,
   Rocket,
   Save,
   Scale,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   XCircle,
@@ -63,6 +67,7 @@ import {
   type PreflightCheck,
   type ExperimentPlanItem,
   type Profile,
+  type ProfilesPayload,
   type ProviderFilter,
   type SharedConfig,
   type SkillsPayload,
@@ -82,7 +87,12 @@ const JUDGE_MODES = [
    directly rather than as a toggle here. */
 const PER_FIELD_OPTIONS = [{ id: "model", label: "Model", locked: true }]
 
-const STEPS = ["Tasks", "Agents", "Shared config", "Review & launch"]
+/* Step 0 ("Mode") frames the launch before any configuration: instantiate a
+   saved measurement contract, or configure a bare run by hand. The four
+   original steps follow unchanged. */
+const STEPS = ["Mode", "Tasks", "Agents", "Shared config", "Review & launch"]
+
+type WizardMode = "profile" | "custom"
 
 /* A contender IS an agent runtime; provider+model is its configuration. */
 const RUNTIMES = ["claude", "codex", "gemini", "grok", "opencode"] as const
@@ -95,12 +105,134 @@ interface ContenderDraft {
   thinking_effort: string
 }
 
+/* The generated `Profile` in api.ts types only the fields the wizard's shared
+   step reads (id/name/shared/per_contender_fields). A profile on disk also
+   carries a server-assigned `rev` and the two blocks that make it a launchable
+   measurement contract: `roster` (the contender columns) and `task_set`. We
+   read the payload structurally here — the same convention Profiles.tsx uses —
+   rather than widening the generated contract. */
+interface RosterEntry {
+  agent: string
+  model?: string
+  label?: string
+  provider_id?: string
+  thinking_effort?: string
+}
+interface TaskSet {
+  tasks_dir: string
+  task_ids: string[]
+}
+interface FullProfile {
+  id: string
+  name: string
+  rev?: number
+  shared: Partial<SharedConfig>
+  per_contender_fields: string[]
+  roster?: RosterEntry[]
+  task_set?: TaskSet
+}
+
+interface LibraryRef {
+  dir: string
+  tasks: TaskPackage[]
+}
+
+/* Resolve a profile's (often repo-relative, e.g. "examples/tasks") tasks_dir to
+   a known library without rewriting the stored value: exact match, then a path
+   suffix, then the trailing folder name. Mirrors Profiles.tsx. */
+function resolveLibraryDir(tasksDir: string, libraries: LibraryRef[]): LibraryRef | undefined {
+  if (!tasksDir) return undefined
+  return (
+    libraries.find((l) => l.dir === tasksDir) ??
+    libraries.find((l) => l.dir.endsWith("/" + tasksDir)) ??
+    libraries.find((l) => l.dir.split("/").pop() === tasksDir.split("/").pop())
+  )
+}
+
+/* The wizard runs a local, advisory copy of the backend's deviation diff so it
+   can label the launch (ad-hoc vs faithful) before the plan returns. The
+   backend in gui/experiments.py stays the single source of truth — it recomputes
+   this on launch and is what actually annotates the snapshot. Keep the three
+   comparisons below aligned with `_roster_comparison_key`,
+   `_SHARED_CONTRACT_DEFAULTS`, and `_task_set_deviates`. */
+const SHARED_CONTRACT_DEFAULTS: Record<string, string | number | null> = {
+  evaluator_agent: "codex",
+  evaluator_model: null,
+  evaluator_auth_mode: null,
+  judge_mode: "single",
+  evaluator_timeout_seconds: 900,
+  seed: 123,
+  batch_size: 1,
+  repeat: 1,
+  executor_backend: "local",
+  executor_auth_mode: "env",
+  max_evaluator_parallel: 4,
+  web_search_mode: "task",
+  claude_max_turns: null,
+}
+
+function normalizedShared(value: unknown, def: string | number | null): string | number | null {
+  if (value === null || value === undefined || (typeof value === "string" && !value.trim()))
+    return def
+  if (typeof value === "number") return value
+  const text = String(value).trim()
+  return /^-?\d+$/.test(text) ? parseInt(text, 10) : text
+}
+
+function rosterKey(entry: {
+  agent?: string
+  model?: string
+  provider_id?: string
+  thinking_effort?: string
+}): string {
+  return [
+    entry.agent ?? "",
+    (entry.model ?? "").trim(),
+    entry.provider_id ?? "",
+    entry.thinking_effort || "none",
+  ].join("::")
+}
+
+function sameMultiset(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  const x = [...a].sort()
+  const y = [...b].sort()
+  return x.every((value, index) => value === y[index])
+}
+
 function timestampName(prefix: string): string {
   const now = new Date()
   const pad = (value: number) => String(value).padStart(2, "0")
   return `${prefix}_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(
     now.getHours(),
   )}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+}
+
+/* A filesystem-safe profile id (SAFE_ID: starts alnum, then alnum/._-). */
+function slugId(text: string): string {
+  const slug = text
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[^a-z0-9]+/, "")
+    .replace(/-+$/g, "")
+  return slug || timestampName("profile")
+}
+
+/* Human-readable name for a deviating dimension, for the "modified" mark. */
+function deviationLabel(dim: string): string {
+  const named: Record<string, string> = {
+    roster: "roster",
+    task_set: "task set",
+    evaluator_model: "judge model",
+    evaluator_agent: "judge runtime",
+    evaluator_timeout_seconds: "judge timeout",
+    judge_mode: "judge mode",
+    batch_size: "batch size",
+    max_evaluator_parallel: "judge parallelism",
+    web_search_mode: "web search",
+    claude_max_turns: "max turns",
+  }
+  return named[dim] ?? dim.replace(/_/g, " ")
 }
 
 /* Contenders and the judge are sent as pure references to a provider
@@ -199,6 +331,7 @@ export default function NewRun() {
   )
 
   const [step, setStep] = useState(0)
+  const [mode, setMode] = useState<WizardMode>("profile")
   const [pickerOpen, setPickerOpen] = useState(false)
   const [launching, setLaunching] = useState(false)
   const [tasksDir, setTasksDir] = useState(preset.tasksDir ?? "")
@@ -209,20 +342,131 @@ export default function NewRun() {
   const [perFields, setPerFields] = useState<string[]>(["model"])
   const [expName, setExpName] = useState(() => timestampName("exp"))
   const [preflightBlocked, setPreflightBlocked] = useState(false)
+  const [savingProfile, setSavingProfile] = useState(false)
   const [installingAgentId, setInstallingAgentId] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!profilesQuery.data || profileId !== null) return
-    const payload = profilesQuery.data
-    const chosen =
-      payload.profiles.find((profile) => profile.id === payload.default_profile_id) ??
-      payload.profiles[0]
-    if (chosen) {
-      setProfileId(chosen.id)
-      setShared(chosen.shared)
-      setPerFields(chosen.per_contender_fields.length ? chosen.per_contender_fields : ["model"])
+  /* The profiles payload, read at its full on-disk shape (roster/task_set/rev). */
+  const fullProfiles = useMemo(
+    () => (profilesQuery.data?.profiles ?? []) as unknown as FullProfile[],
+    [profilesQuery.data],
+  )
+  const rosteredProfiles = useMemo(
+    () => fullProfiles.filter((profile) => (profile.roster?.length ?? 0) > 0),
+    [fullProfiles],
+  )
+  const selectedProfile = useMemo(
+    () => fullProfiles.find((profile) => profile.id === profileId) ?? null,
+    [fullProfiles, profileId],
+  )
+
+  /* Instantiate a contract into the wizard: pre-check its task set, pre-generate
+     one contender per roster column, and prefill the shared config. Each block
+     stays editable afterward — the deviation diff below then flags what moved. */
+  const appliedProfileRef = useRef<string | null>(null)
+  const applyProfile = useCallback(
+    (profile: FullProfile) => {
+      const ts = profile.task_set
+      if (ts?.tasks_dir) {
+        const lib = resolveLibraryDir(ts.tasks_dir, libraries)
+        if (lib) {
+          setTasksDir(lib.dir)
+          const healthy = new Set(lib.tasks.filter((task) => !task.error).map((task) => task.id))
+          setTasks((ts.task_ids ?? []).filter((id) => healthy.has(id)))
+        }
+      }
+      setContenders(
+        (profile.roster ?? []).map((entry) => {
+          contenderCounter += 1
+          const pinnedExists =
+            entry.provider_id && providers.some((item) => item.id === entry.provider_id)
+          const provider = pinnedExists
+            ? entry.provider_id!
+            : compatibleProviders(filterFor(entry.agent), providers, entry.agent)[0]?.id ??
+              entry.provider_id ??
+              ""
+          return {
+            key: `c${contenderCounter}`,
+            runtime: entry.agent,
+            provider_id: provider,
+            model: entry.model ?? "",
+            thinking_effort: entry.thinking_effort ?? "none",
+          }
+        }),
+      )
+      setShared(profile.shared ?? {})
+      setPerFields(
+        profile.per_contender_fields?.length ? profile.per_contender_fields : ["model"],
+      )
+      appliedProfileRef.current = profile.id
+    },
+    [libraries, providers, filterFor],
+  )
+
+  const chooseProfile = useCallback(
+    (id: string) => {
+      const profile = fullProfiles.find((item) => item.id === id)
+      if (!profile) return
+      setMode("profile")
+      setProfileId(id)
+      applyProfile(profile)
+    },
+    [fullProfiles, applyProfile],
+  )
+
+  const chooseCustom = useCallback(() => {
+    setMode("custom")
+    /* A custom launch is bare — it carries no roster contract. Drop any roster a
+       profile prefilled so the Agents step starts from the operator's choices. */
+    if (appliedProfileRef.current !== null) {
+      setContenders([])
+      appliedProfileRef.current = null
     }
-  }, [profilesQuery.data, profileId])
+  }, [])
+
+  /* One-time init once profiles and libraries are both loaded: pick the initial
+     profile (default, else the first with a roster) and the starting mode. A
+     targeted "run these tasks" entry (location.state preset) keeps the operator's
+     task choice and starts Custom. */
+  const initRef = useRef(false)
+  useEffect(() => {
+    if (initRef.current) return
+    if (!profilesQuery.data || !tasklib.data) return
+    initRef.current = true
+    const payload = profilesQuery.data
+    const rostered = fullProfiles.filter((profile) => (profile.roster?.length ?? 0) > 0)
+    const chosen =
+      rostered.find((profile) => profile.id === payload.default_profile_id) ??
+      rostered[0] ??
+      fullProfiles.find((profile) => profile.id === payload.default_profile_id) ??
+      fullProfiles[0]
+    if (!chosen) return
+    const hasPreset = Boolean(preset.tasksDir || preset.taskIds?.length)
+    const startMode: WizardMode = !hasPreset && rostered.length ? "profile" : "custom"
+    setMode(startMode)
+    setProfileId(chosen.id)
+    if (startMode === "profile") {
+      applyProfile(chosen)
+    } else {
+      /* Custom parity with the previous flow: seed the shared config from the
+         chosen profile so the Shared step is not blank. */
+      setShared(chosen.shared)
+      setPerFields(chosen.per_contender_fields?.length ? chosen.per_contender_fields : ["model"])
+    }
+  }, [profilesQuery.data, tasklib.data, fullProfiles, applyProfile, preset.tasksDir, preset.taskIds])
+
+  /* The tasks_dir the launch reports. When a profile launch still points at the
+     library its task_set names, send the profile's stored (often repo-relative)
+     string so the backend's string-level task_set diff reads faithful rather
+     than flagging the absolute path as a deviation. */
+  const effectiveTasksDir = useCallback((): string => {
+    if (mode === "profile" && selectedProfile?.task_set) {
+      const lib = resolveLibraryDir(selectedProfile.task_set.tasks_dir, libraries)
+      if (lib && lib.dir === tasksDir) return selectedProfile.task_set.tasks_dir
+    }
+    return tasksDir
+  }, [mode, selectedProfile, libraries, tasksDir])
+
+  const launchProfileId = mode === "profile" && profileId ? profileId : undefined
 
   useEffect(() => {
     if (!tasksDir && libraries.length) {
@@ -331,16 +575,17 @@ export default function NewRun() {
   })
   const planTimer = useRef<ReturnType<typeof setTimeout>>(null)
   useEffect(() => {
-    if (step !== 3 || !tasksDir || !contenders.length) return
+    if (step !== 4 || !tasksDir || !contenders.length) return
     if (planTimer.current) clearTimeout(planTimer.current)
     planTimer.current = setTimeout(async () => {
       try {
         const result = await api.createExperiment({
           name: expName.trim(),
-          tasks_dir: tasksDir,
+          tasks_dir: effectiveTasksDir(),
           tasks,
           shared,
           contenders: apiContenders(),
+          profile_id: launchProfileId,
           dry_run: true,
         })
         setPlan({
@@ -355,7 +600,7 @@ export default function NewRun() {
     return () => {
       if (planTimer.current) clearTimeout(planTimer.current)
     }
-  }, [step, expName, tasksDir, tasks, shared, apiContenders, contenders.length])
+  }, [step, expName, tasksDir, tasks, shared, apiContenders, contenders.length, effectiveTasksDir, launchProfileId])
 
   if (
     tasklib.isPending ||
@@ -386,30 +631,160 @@ export default function NewRun() {
       draft.model.trim() === String(shared.evaluator_model ?? "").trim(),
   )
 
+  /* Step gates. Mode (0) needs a resolvable choice; the original task/contender
+     gates move one step later. */
   const canNext =
     step === 0
-      ? healthyTasks.length > 0 && (tasks.length > 0 || brokenCount === 0)
+      ? mode === "custom" || (mode === "profile" && Boolean(selectedProfile?.roster?.length))
       : step === 1
-        ? contenders.length > 0
-        : true
+        ? healthyTasks.length > 0 && (tasks.length > 0 || brokenCount === 0)
+        : step === 2
+          ? contenders.length > 0
+          : true
 
-  const launch = async () => {
+  /* Advisory deviation diff (profile mode only), mirroring the backend's
+     authoritative comparison so the launch can be labelled ad-hoc vs faithful
+     before the plan returns. The backend recomputes and records the real one. */
+  const deviation: string[] = (() => {
+    if (mode !== "profile" || !selectedProfile?.roster?.length) return []
+    const dims: string[] = []
+    if (!sameMultiset(apiContenders().map(rosterKey), (selectedProfile.roster ?? []).map(rosterKey)))
+      dims.push("roster")
+    const ts = selectedProfile.task_set
+    if (ts) {
+      if (effectiveTasksDir() !== (ts.tasks_dir ?? "")) {
+        dims.push("task_set")
+      } else {
+        const lib = resolveLibraryDir(ts.tasks_dir, libraries)
+        const healthyIds = new Set((lib?.tasks ?? []).filter((t) => !t.error).map((t) => t.id))
+        const baseline = ts.task_ids?.length
+          ? ts.task_ids.filter((id) => healthyIds.has(id))
+          : [...healthyIds]
+        if (!sameMultiset(baseline, selectedTaskObjs.map((t) => t.id))) dims.push("task_set")
+      }
+    }
+    const ps = (selectedProfile.shared ?? {}) as Record<string, unknown>
+    const cs = shared as Record<string, unknown>
+    for (const key of Object.keys(SHARED_CONTRACT_DEFAULTS)) {
+      const def = SHARED_CONTRACT_DEFAULTS[key]
+      if (normalizedShared(cs[key], def) !== normalizedShared(ps[key], def)) dims.push(key)
+    }
+    return dims
+  })()
+  const deviated = deviation.length > 0
+
+  /* One create call, used by every launch exit. Passing profile_id makes the
+     backend diff the effective payload against the profile and record any
+     deviation in the run snapshot; omitting it launches bare. */
+  const createAndGo = async (profileIdForLaunch?: string) => {
+    const record = await api.createExperiment({
+      name: expName.trim(),
+      tasks_dir: effectiveTasksDir(),
+      tasks,
+      shared,
+      contenders: apiContenders(),
+      profile_id: profileIdForLaunch,
+    })
+    toast.success(`Experiment ${record.name ?? expName} started: ${contenders.length} runs.`)
+    queryClient.invalidateQueries({ queryKey: ["experiments"] })
+    queryClient.invalidateQueries({ queryKey: ["runs"] })
+    navigate(`/experiments/${encodeURIComponent(expName.trim())}`)
+  }
+
+  const primaryLaunch = async () => {
     setLaunching(true)
     try {
-      const record = await api.createExperiment({
-        name: expName.trim(),
-        tasks_dir: tasksDir,
-        tasks,
-        shared,
-        contenders: apiContenders(),
-      })
-      toast.success(`Experiment ${record.name ?? expName} started: ${contenders.length} runs.`)
-      queryClient.invalidateQueries({ queryKey: ["experiments"] })
-      navigate(`/experiments/${encodeURIComponent(expName.trim())}`)
+      await createAndGo(launchProfileId)
+    } catch (error) {
+      toast.error((error as Error).message)
+      setLaunching(false)
+    }
+  }
+
+  /* Build a full profile object from the current wizard configuration. */
+  const wizardProfile = (id: string, name: string): FullProfile => {
+    const roster: RosterEntry[] = contenders.map((draft) => {
+      const entry: RosterEntry = { agent: draft.runtime }
+      if (draft.model.trim()) entry.model = draft.model.trim()
+      if (draft.provider_id) entry.provider_id = draft.provider_id
+      if (draft.thinking_effort && draft.thinking_effort !== "none")
+        entry.thinking_effort = draft.thinking_effort
+      return entry
+    })
+    const profile: FullProfile = {
+      id,
+      name,
+      shared,
+      per_contender_fields: perFields.length ? perFields : ["model"],
+      roster,
+    }
+    /* Keep the profile's stored dir string when the launch still points at the
+       library it names; otherwise store the current one. */
+    const keepStored =
+      mode === "profile" &&
+      selectedProfile?.task_set &&
+      resolveLibraryDir(selectedProfile.task_set.tasks_dir, libraries)?.dir === tasksDir
+    const storedDir = keepStored ? selectedProfile!.task_set!.tasks_dir : tasksDir
+    if (storedDir) profile.task_set = { tasks_dir: storedDir, task_ids: tasks }
+    return profile
+  }
+
+  /* saveProfiles replaces the whole file, so send every existing profile with
+     the target updated or appended. The server recomputes each rev by content. */
+  const persistProfile = async (target: FullProfile, asNew: boolean) => {
+    const next = asNew
+      ? [...fullProfiles, target]
+      : fullProfiles.map((profile) => (profile.id === target.id ? target : profile))
+    await api.saveProfiles({
+      default_profile_id: profilesQuery.data?.default_profile_id ?? null,
+      profiles: next as unknown as ProfilesPayload["profiles"],
+    })
+    await queryClient.invalidateQueries({ queryKey: ["profiles"] })
+  }
+
+  const uniqueProfileId = (base: string): string => {
+    const ids = new Set(fullProfiles.map((profile) => profile.id))
+    const root = slugId(base)
+    if (!ids.has(root)) return root
+    let counter = 2
+    while (ids.has(`${root}-${counter}`)) counter += 1
+    return `${root}-${counter}`
+  }
+
+  const updateProfileAndLaunch = async () => {
+    if (!selectedProfile) return
+    setLaunching(true)
+    try {
+      await persistProfile(wizardProfile(selectedProfile.id, selectedProfile.name), false)
+      await createAndGo(selectedProfile.id)
+    } catch (error) {
+      toast.error((error as Error).message)
+      setLaunching(false)
+    }
+  }
+
+  const saveAsNewProfileAndLaunch = async () => {
+    setLaunching(true)
+    try {
+      const id = uniqueProfileId(expName)
+      await persistProfile(wizardProfile(id, expName.trim()), true)
+      await createAndGo(id)
+    } catch (error) {
+      toast.error((error as Error).message)
+      setLaunching(false)
+    }
+  }
+
+  const saveConfigAsProfile = async () => {
+    setSavingProfile(true)
+    try {
+      const id = uniqueProfileId(expName)
+      await persistProfile(wizardProfile(id, expName.trim()), true)
+      toast.success(`Saved this configuration as profile "${expName.trim()}".`)
     } catch (error) {
       toast.error((error as Error).message)
     } finally {
-      setLaunching(false)
+      setSavingProfile(false)
     }
   }
 
@@ -424,9 +799,32 @@ export default function NewRun() {
 
       <Stepper current={step} onSelect={(target) => target < step && setStep(target)} />
 
-      {step > 0 && <TaskFactsStrip tasks={selectedTaskObjs} />}
+      {step > 0 && mode === "profile" && selectedProfile && (
+        <ContractStatusBar
+          profileName={selectedProfile.name}
+          rev={selectedProfile.rev}
+          deviated={deviated}
+          dims={deviation}
+        />
+      )}
+
+      {step > 1 && <TaskFactsStrip tasks={selectedTaskObjs} />}
 
       {step === 0 && (
+        <StepMode
+          mode={mode}
+          profiles={fullProfiles}
+          rosteredProfiles={rosteredProfiles}
+          defaultProfileId={profilesQuery.data.default_profile_id}
+          profileId={profileId}
+          selectedProfile={selectedProfile}
+          libraries={libraries}
+          runtimeLabel={runtimeLabel}
+          onChooseProfile={chooseProfile}
+          onChooseCustom={chooseCustom}
+        />
+      )}
+      {step === 1 && (
         <StepTasks
           libraries={libraries}
           tasksDir={tasksDir}
@@ -440,7 +838,7 @@ export default function NewRun() {
           onImported={() => queryClient.invalidateQueries({ queryKey: ["tasklib"] })}
         />
       )}
-      {step === 1 && (
+      {step === 2 && (
         <StepContenders
           providers={providers}
           customRuntimes={customRuntimes}
@@ -464,7 +862,7 @@ export default function NewRun() {
           }
         />
       )}
-      {step === 2 && (
+      {step === 3 && (
         <StepShared
           profiles={profilesQuery.data.profiles}
           persisted={Boolean(profilesQuery.data.persisted)}
@@ -503,7 +901,7 @@ export default function NewRun() {
           ]}
         />
       )}
-      {step === 3 && (
+      {step === 4 && (
         <StepReview
           expName={expName}
           setExpName={setExpName}
@@ -515,6 +913,15 @@ export default function NewRun() {
           judgeConflicts={judgeConflicts.length}
           runtimeLabel={runtimeLabel}
           onPreflightBlocked={setPreflightBlocked}
+          mode={mode}
+          profileName={selectedProfile?.name ?? null}
+          profileRev={selectedProfile?.rev ?? null}
+          deviated={deviated}
+          launching={launching}
+          savingProfile={savingProfile}
+          onUpdateProfileLaunch={updateProfileAndLaunch}
+          onSaveAsNewLaunch={saveAsNewProfileAndLaunch}
+          onSaveConfigAsProfile={saveConfigAsProfile}
         />
       )}
 
@@ -522,7 +929,7 @@ export default function NewRun() {
         <Button variant="outline" disabled={step === 0} onClick={() => setStep(step - 1)}>
           <ArrowLeft /> Back
         </Button>
-        {step === 3 && preflightBlocked && plan.plans && (
+        {step === 4 && preflightBlocked && plan.plans && (
           <span className="text-right text-xs text-fail-ink">
             Launch is disabled until the readiness checks below pass.
           </span>
@@ -532,9 +939,16 @@ export default function NewRun() {
             Next <ArrowRight />
           </Button>
         ) : (
-          <Button disabled={!plan.plans || launching || preflightBlocked} onClick={launch}>
+          <Button
+            disabled={!plan.plans || launching || savingProfile || preflightBlocked}
+            onClick={primaryLaunch}
+          >
             {launching ? <Loader2 className="animate-spin" /> : <Rocket />}
-            {launching ? "Launching…" : `Launch ${contenders.length} runs`}
+            {launching
+              ? "Launching…"
+              : mode === "profile" && deviated
+                ? "Launch as ad-hoc test"
+                : `Launch ${contenders.length} runs`}
           </Button>
         )}
       </div>
@@ -597,6 +1011,271 @@ function Stepper({ current, onSelect }: { current: number; onSelect: (step: numb
         )
       })}
     </ol>
+  )
+}
+
+/* ---------- contract status (steps 1-4, profile mode) ---------- */
+
+/* A quiet, persistent reminder of the contract the wizard is building under,
+   and whether the current configuration still matches it. The mark is muted by
+   design — deviating from a profile is a legitimate ad-hoc test, not an error. */
+function ContractStatusBar({
+  profileName,
+  rev,
+  deviated,
+  dims,
+}: {
+  profileName: string
+  rev?: number
+  deviated: boolean
+  dims: string[]
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+      <span className="text-muted-foreground">
+        Under{" "}
+        <span className="font-medium text-foreground">{profileName}</span>
+        {rev !== undefined && (
+          <>
+            <span className="text-border"> · </span>
+            <span className="font-mono">rev {rev}</span>
+          </>
+        )}
+      </span>
+      {deviated ? (
+        <span
+          className="inline-flex items-center gap-1.5 rounded-md bg-warn-soft px-2 py-0.5 font-medium text-warn-ink"
+          title={`Deviates from the profile at: ${dims.map(deviationLabel).join(", ")}`}
+        >
+          <PencilLine className="size-3.5 shrink-0" aria-hidden />
+          modified
+          <span className="font-normal text-warn-ink/80">
+            · {dims.length} change{dims.length === 1 ? "" : "s"}
+          </span>
+        </span>
+      ) : (
+        <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+          <Check className="size-3.5 shrink-0 text-pass" aria-hidden />
+          matches the contract
+        </span>
+      )}
+    </div>
+  )
+}
+
+/* ---------- step 0: mode ---------- */
+
+/* The launch's first decision: instantiate a saved measurement contract, or
+   configure a bare run by hand. This gate exists so a run's provenance is a
+   deliberate choice, not an accident of which fields were left at defaults. */
+function StepMode({
+  mode,
+  profiles,
+  rosteredProfiles,
+  defaultProfileId,
+  profileId,
+  selectedProfile,
+  libraries,
+  runtimeLabel,
+  onChooseProfile,
+  onChooseCustom,
+}: {
+  mode: WizardMode
+  profiles: FullProfile[]
+  rosteredProfiles: FullProfile[]
+  defaultProfileId: string | null
+  profileId: string | null
+  selectedProfile: FullProfile | null
+  libraries: LibraryRef[]
+  runtimeLabel: (runtime: string) => string
+  onChooseProfile: (id: string) => void
+  onChooseCustom: () => void
+}) {
+  const hasRostered = rosteredProfiles.length > 0
+  const profileActive = mode === "profile"
+  const customActive = mode === "custom"
+  const enterProfile = () => {
+    if (!hasRostered || profileActive) return
+    const target = profileId ?? rosteredProfiles[0]?.id
+    if (target) onChooseProfile(target)
+  }
+  return (
+    <div role="radiogroup" aria-label="Launch mode" className="grid gap-3 sm:grid-cols-2">
+      {/* From a profile */}
+      {hasRostered ? (
+        <div
+          role="radio"
+          aria-checked={profileActive}
+          tabIndex={0}
+          onClick={enterProfile}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault()
+              enterProfile()
+            }
+          }}
+          className={cn(
+            "flex cursor-pointer flex-col gap-3 rounded-xl border bg-card p-5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            profileActive
+              ? "border-primary ring-1 ring-primary"
+              : "hover:border-primary/40",
+          )}
+        >
+          <div className="flex items-center gap-2.5">
+            <span
+              className={cn(
+                "grid size-8 shrink-0 place-content-center rounded-lg",
+                profileActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+              )}
+            >
+              <Layers className="size-4" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">From a profile</div>
+              <div className="text-xs text-muted-foreground">
+                Reuse a saved measurement contract
+              </div>
+            </div>
+          </div>
+          <p className="text-[13px] leading-5 text-muted-foreground">
+            Its roster, task set, and judge prefill the wizard, so these runs land as
+            comparable columns in the coverage matrix.
+          </p>
+          <div onClick={(event) => event.stopPropagation()}>
+            <Select value={profileId ?? undefined} onValueChange={onChooseProfile}>
+              <SelectTrigger className="w-full" aria-label="Profile">
+                <SelectValue placeholder="Choose a profile" />
+              </SelectTrigger>
+              <SelectContent>
+                {rosteredProfiles.map((profile) => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    {profile.name}
+                    {profile.id === defaultProfileId ? " (default)" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {selectedProfile && (
+            <ContractSummary
+              profile={selectedProfile}
+              libraries={libraries}
+              runtimeLabel={runtimeLabel}
+            />
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 rounded-xl border border-dashed bg-muted/30 p-5">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-8 shrink-0 place-content-center rounded-lg bg-muted text-muted-foreground">
+              <Layers className="size-4" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-muted-foreground">From a profile</div>
+              <div className="text-xs text-muted-foreground">No contract to reuse yet</div>
+            </div>
+          </div>
+          <p className="text-[13px] leading-5 text-muted-foreground">
+            {profiles.length
+              ? "No saved profile declares a roster, so none can prefill a comparable run."
+              : "No profiles are saved yet."}{" "}
+            Define one and its roster in Setup.
+          </p>
+          <Link
+            to="/profiles"
+            className="inline-flex w-fit items-center gap-1 text-sm font-medium text-primary hover:text-primary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            Create a profile <ArrowUpRight className="size-3.5" aria-hidden />
+          </Link>
+        </div>
+      )}
+
+      {/* Custom */}
+      <div
+        role="radio"
+        aria-checked={customActive}
+        tabIndex={0}
+        onClick={onChooseCustom}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault()
+            onChooseCustom()
+          }
+        }}
+        className={cn(
+          "flex cursor-pointer flex-col gap-3 rounded-xl border bg-card p-5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          customActive ? "border-primary ring-1 ring-primary" : "hover:border-primary/40",
+        )}
+      >
+        <div className="flex items-center gap-2.5">
+          <span
+            className={cn(
+              "grid size-8 shrink-0 place-content-center rounded-lg",
+              customActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+            )}
+          >
+            <SlidersHorizontal className="size-4" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">Custom</div>
+            <div className="text-xs text-muted-foreground">Configure everything by hand</div>
+          </div>
+        </div>
+        <p className="text-[13px] leading-5 text-muted-foreground">
+          Pick the tasks, agents, and judge yourself. This launches a bare run: no contract
+          snapshot, and it will not fill a coverage-matrix column.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/* One-line summary of a profile's measurement contract, for the mode card. */
+function ContractSummary({
+  profile,
+  libraries,
+  runtimeLabel,
+}: {
+  profile: FullProfile
+  libraries: LibraryRef[]
+  runtimeLabel: (runtime: string) => string
+}) {
+  const rosterCount = profile.roster?.length ?? 0
+  const judgeAgent = String(profile.shared.evaluator_agent ?? "codex")
+  const judgeModel = String(profile.shared.evaluator_model ?? "") || "runtime default"
+  const repeat = Number(profile.shared.repeat) || 1
+  const ts = profile.task_set
+  const taskCount = ts?.task_ids?.length ?? 0
+  const lib = ts ? resolveLibraryDir(ts.tasks_dir, libraries) : undefined
+  const dirLabel = ts ? (lib ? shortenPath(lib.dir) : ts.tasks_dir) : null
+  const facts: string[] = [
+    `${rosterCount} contender${rosterCount === 1 ? "" : "s"}`,
+    `${runtimeLabel(judgeAgent)} · ${judgeModel} judge`,
+    `×${repeat} repeat`,
+  ]
+  if (ts) facts.push(taskCount ? `${taskCount} task${taskCount === 1 ? "" : "s"}` : "whole folder")
+  return (
+    <div className="mt-1 flex flex-col gap-1 rounded-lg bg-muted/50 px-3 py-2.5 text-[13px] leading-5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
+        {facts.map((fact, index) => (
+          <span key={index} className="flex items-center gap-2">
+            {index > 0 && <span className="text-border" aria-hidden>·</span>}
+            <span>{fact}</span>
+          </span>
+        ))}
+      </div>
+      {dirLabel && (
+        <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+          <span className="truncate" title={ts?.tasks_dir}>{dirLabel}</span>
+          {profile.rev !== undefined && (
+            <>
+              <span className="text-border" aria-hidden>·</span>
+              <span>rev {profile.rev}</span>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -2339,6 +3018,15 @@ function StepReview({
   judgeConflicts,
   runtimeLabel,
   onPreflightBlocked,
+  mode,
+  profileName,
+  profileRev,
+  deviated,
+  launching,
+  savingProfile,
+  onUpdateProfileLaunch,
+  onSaveAsNewLaunch,
+  onSaveConfigAsProfile,
 }: {
   expName: string
   setExpName: (name: string) => void
@@ -2350,7 +3038,18 @@ function StepReview({
   judgeConflicts: number
   runtimeLabel: (runtime: string) => string
   onPreflightBlocked: (blocked: boolean) => void
+  mode: WizardMode
+  profileName: string | null
+  profileRev: number | null
+  deviated: boolean
+  launching: boolean
+  savingProfile: boolean
+  onUpdateProfileLaunch: () => void
+  onSaveAsNewLaunch: () => void
+  onSaveConfigAsProfile: () => void
 }) {
+  const busy = launching || savingProfile
+  const nextRev = profileRev !== null ? profileRev + 1 : null
   const repeat = Number(shared.repeat) || 1
   const planSkills = plan.plans?.[0]?.executor_skills ?? []
   // Prefer the backend's execution estimate (it accounts for the instruction
@@ -2362,6 +3061,18 @@ function StepReview({
   const totalExecutions = estimate?.total ?? perContender * contenders.length
   return (
     <div className="grid gap-4">
+      {/* Contract provenance: what these runs will be attributed to on disk. */}
+      {mode === "profile" && profileName && (
+        <p className="text-[13px] leading-5 text-muted-foreground">
+          Launching under <span className="font-medium text-foreground">{profileName}</span>
+          {profileRev !== null && (
+            <>
+              <span className="text-border"> · </span>
+              <span className="font-mono">rev {profileRev}</span>
+            </>
+          )}
+        </p>
+      )}
       <Card className="py-4">
         <CardContent className="grid gap-3 px-4 sm:grid-cols-[1fr_auto]">
           <div className="grid max-w-sm gap-1.5">
@@ -2550,6 +3261,72 @@ function StepReview({
           </p>
         )}
       </Card>
+
+      {/* Launch exits beyond the primary. Profile mode: the primary button is an
+          ad-hoc test when the config deviates; these persist the deviation into
+          the contract instead. Custom mode: capture the bare config as a
+          reusable profile. */}
+      {mode === "profile" && deviated && (
+        <Card className="gap-0 border-warn-ink/30 bg-warn-soft/25 py-4">
+          <CardContent className="grid gap-3 px-4">
+            <div className="flex items-start gap-2.5">
+              <PencilLine className="mt-0.5 size-4 shrink-0 text-warn-ink" aria-hidden />
+              <div className="grid gap-1">
+                <span className="text-sm font-medium">
+                  This configuration deviates from {profileName}
+                </span>
+                <p className="max-w-prose text-[13px] leading-5 text-muted-foreground">
+                  This launches an ad-hoc test: the deviation is recorded in the run&rsquo;s
+                  snapshot but not saved to the profile. To make it the contract instead:
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 pl-[26px]">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || !plan.plans}
+                onClick={onUpdateProfileLaunch}
+              >
+                <Save />
+                {profileRev !== null && nextRev !== null
+                  ? `Update profile (rev ${profileRev}→${nextRev}) & launch`
+                  : "Update profile & launch"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || !plan.plans}
+                onClick={onSaveAsNewLaunch}
+              >
+                <Plus /> Save as new profile & launch
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {mode === "custom" && (
+        <Card className="py-4">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 px-4">
+            <div className="grid min-w-0 gap-0.5">
+              <span className="text-sm font-medium">Reuse this configuration?</span>
+              <p className="text-[13px] leading-5 text-muted-foreground">
+                Save it as a profile so future runs launch under the same contract.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy || !contenders.length}
+              onClick={onSaveConfigAsProfile}
+            >
+              {savingProfile ? <Loader2 className="animate-spin" /> : <Save />} Save this
+              configuration as a profile
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

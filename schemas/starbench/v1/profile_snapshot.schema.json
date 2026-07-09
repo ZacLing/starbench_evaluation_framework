@@ -15,8 +15,19 @@
       "type": "string",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
     },
+    "modified": {
+      "description": "True when this launch deviated from the cited profile (an ad-hoc test): the snapshot records the configuration that actually took effect, and `profile` names the comparison baseline it deviated from. Absent (or false) means the launch matched the profile at the cited rev; snapshots written before this field existed carry neither key and stay legal.",
+      "type": "boolean"
+    },
+    "modified_fields": {
+      "description": "Which dimensions deviated from the cited profile: \"roster\" (the contender set differs as a whole), \"task_set\" (the resolved task selection differs), and/or individual shared-configuration key names (e.g. \"repeat\", \"seed\"). Meaningful only alongside `modified: true`.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "profile": {
-      "description": "Identity of the profile in <runs-dir>/profiles.json at launch. rev is the profile's revision counter there; editing the profile later never rewrites this snapshot.",
+      "description": "Identity of the profile in <runs-dir>/profiles.json at launch. rev is the profile's revision counter there; editing the profile later never rewrites this snapshot. When `modified` is true this identity is the comparison baseline the launch deviated from, not a claim that the profile's values were used.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -90,7 +101,7 @@
       ]
     },
     "roster": {
-      "description": "The profile's full roster as declared at launch (the comparison context / coverage-matrix columns), each entry resolved the same way as `contender`.",
+      "description": "The full contender roster that actually launched (the comparison context / coverage-matrix columns), each entry resolved the same way as `contender`. Equal to the profile's declared roster unless `modified_fields` lists \"roster\".",
       "type": "array",
       "items": {
         "type": "object",

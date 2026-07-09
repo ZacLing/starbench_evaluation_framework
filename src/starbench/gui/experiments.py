@@ -12,6 +12,10 @@ individually. A profile may additionally declare a `roster` (the contender
 columns its coverage matrix measures) and a `task_set`; launching from such a
 profile hands every contender's run a self-contained, credential-free
 `profile_snapshot.json` (snapshot-on-use — the runner validates and writes it).
+The payload is the effective configuration and the profile is the comparison
+baseline: an ad-hoc launch may deviate from the profile without persisting an
+edit, and the snapshot then records the actual values plus a backend-computed
+`modified`/`modified_fields` annotation naming the deviating dimensions.
 """
 
 from __future__ import annotations
@@ -500,7 +504,112 @@ def _instruction_execution_estimate(
 
 # ---------------------------------------------------------------------------
 # Profile snapshot (snapshot-on-use): the measurement contract each run carries
+#
+# The payload is the effective configuration (the wizard may have edited it
+# after loading a profile); the profile is the comparison baseline. The
+# backend diffs the two itself — it never trusts a client-declared "modified"
+# flag — and annotates any deviation in the snapshot (`modified` +
+# `modified_fields`), so an ad-hoc test can launch without persisting a
+# profile edit while the record stays honest.
 # ---------------------------------------------------------------------------
+
+# Shared keys that are part of the measurement contract (they feed the
+# snapshot's instrument/execution sections), mapped to the effective default
+# the runner applies when the key is unset. The deviation diff normalizes the
+# payload and the profile with the SAME defaults, so an omitted key and an
+# explicitly-spelled default never read as a deviation.
+_SHARED_CONTRACT_DEFAULTS: Dict[str, Any] = {
+    "evaluator_agent": "codex",
+    "evaluator_model": None,
+    "evaluator_auth_mode": None,
+    "judge_mode": "single",
+    "evaluator_timeout_seconds": 900,
+    "seed": 123,
+    "batch_size": 1,
+    "repeat": 1,
+    "executor_backend": "local",
+    "executor_auth_mode": "env",
+    "max_evaluator_parallel": 4,
+    "web_search_mode": "task",
+    "claude_max_turns": None,
+}
+
+
+def _normalized_shared_value(value: Any, default: Any) -> Any:
+    """One shared key's comparison value: unset -> the runner default, numeric
+    strings -> ints, other strings stripped. Representation differences
+    ("5" vs 5) must never read as measurement deviations."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    if isinstance(value, bool) or isinstance(value, (int, float)):
+        return value
+    text = str(value).strip()
+    try:
+        return int(text)
+    except ValueError:
+        return text
+
+
+def _shared_deviations(
+    payload_shared: Dict[str, Any], profile_shared: Dict[str, Any]
+) -> List[str]:
+    """Shared-configuration keys whose effective value deviates from the
+    profile baseline, sorted. Only measurement-contract keys are compared:
+    keys with no bearing on the snapshot (display/orchestration knobs) cannot
+    mark a launch as modified."""
+    deviations = []
+    for key, default in _SHARED_CONTRACT_DEFAULTS.items():
+        effective = _normalized_shared_value(payload_shared.get(key), default)
+        baseline = _normalized_shared_value(profile_shared.get(key), default)
+        if effective != baseline:
+            deviations.append(key)
+    return sorted(deviations)
+
+
+def _roster_comparison_key(entry: Dict[str, Any]) -> Tuple[str, str, str, str]:
+    """The measurement-relevant identity of one roster entry. ``label`` is
+    display-only and deliberately excluded: renaming a contender does not
+    change what is being measured."""
+    return (
+        str(entry.get("agent") or ""),
+        str(entry.get("model") or "").strip(),
+        str(entry.get("provider_id") or ""),
+        str(entry.get("thinking_effort") or "none"),
+    )
+
+
+def _roster_deviates(contenders: List[Any], profile_roster: List[Any]) -> bool:
+    """True when the launched contender set differs from the profile's declared
+    roster as a multiset (order is presentation, not measurement)."""
+    launched = sorted(
+        _roster_comparison_key(entry) for entry in contenders if isinstance(entry, dict)
+    )
+    declared = sorted(
+        _roster_comparison_key(entry) for entry in profile_roster if isinstance(entry, dict)
+    )
+    return launched != declared
+
+
+def _task_set_deviates(
+    payload: Dict[str, Any], profile_task_set: Any, resolved_task_ids: List[str]
+) -> bool:
+    """True when the launch's resolved task selection differs from what the
+    profile's task_set resolves to right now. Comparison happens at the
+    resolved level so "empty selectors = every task" equals an explicit list
+    naming every task. A profile without a task_set declares no baseline, so
+    nothing can deviate from it."""
+    if not isinstance(profile_task_set, dict):
+        return False
+    if str(payload.get("tasks_dir") or "") != str(profile_task_set.get("tasks_dir") or ""):
+        return True
+    baseline_task_ids = [
+        task_id
+        for task_id, _ in _resolve_selected_steps(
+            profile_task_set.get("tasks_dir"), profile_task_set.get("task_ids")
+        )
+    ]
+    return sorted(resolved_task_ids) != sorted(baseline_task_ids)
+
 
 def _int_or_default(value: Any, default: int) -> int:
     """Effective integer a launch will use: the runner's default when unset.
@@ -560,23 +669,22 @@ def _assemble_profile_snapshot(
     *,
     profile: Dict[str, Any],
     contender_spec: Dict[str, Any],
-    provider_by_id: Dict[str, Any],
+    roster: List[Dict[str, Any]],
     shared: Dict[str, Any],
     evaluator_agent: str,
     launch_payload: Dict[str, Any],
     effective_backend: str,
     tasks_dir: str,
     task_ids: List[str],
+    modified_fields: List[str],
 ) -> Dict[str, Any]:
-    """The full measurement contract for one contender's run, as of launch."""
+    """The full measurement contract for one contender's run, as of launch.
+
+    Every value here is the EFFECTIVE one (assembled from the launch payload);
+    ``profile`` cites the comparison baseline, and a launch that deviated from
+    it carries ``modified``/``modified_fields`` so the deviation is on the
+    record without forcing a profile edit."""
     profile_id = str(profile.get("id") or "")
-    roster = [
-        _snapshot_contender_spec(
-            entry, provider_by_id, context=f"Profile {profile_id} roster[{index}]"
-        )
-        for index, entry in enumerate(profile.get("roster") or [])
-        if isinstance(entry, dict)
-    ]
     contender_auth = str(launch_payload.get("auth_mode") or "env")
     instrument = {
         "evaluator_agent": evaluator_agent,
@@ -601,22 +709,28 @@ def _assemble_profile_snapshot(
     claude_max_turns = shared.get("claude_max_turns")
     if claude_max_turns not in (None, ""):
         execution["claude_max_turns"] = int(claude_max_turns)
-    return {
+    snapshot = {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "profile": {
             "id": profile_id,
             # Hand-edited profiles.json may predate the revision counter; the
             # first revision is the honest floor, matching what save assigns.
+            # When the launch deviated, this rev pins the BASELINE compared
+            # against, never the deviating values.
             "rev": int(profile.get("rev") or 1),
             "name": str(profile.get("name") or profile_id),
         },
         "contender": contender_spec,
-        "roster": roster,
+        "roster": list(roster),
         "instrument": instrument,
         "execution": execution,
         "task_set": {"tasks_dir": tasks_dir, "task_ids": list(task_ids)},
     }
+    if modified_fields:
+        snapshot["modified"] = True
+        snapshot["modified_fields"] = list(modified_fields)
+    return snapshot
 
 
 def plan_experiment(
@@ -744,9 +858,12 @@ def plan_experiment(
 
     # Test-profile launch link (snapshot-on-use): a payload naming a profile
     # with a non-empty roster gets one measurement-contract snapshot per
-    # contender, handed to the runner via --profile-snapshot. No profile, or a
-    # profile without a roster, launches bare — legal, just not a coverage-
-    # matrix column filler.
+    # contender, handed to the runner via --profile-snapshot. The PAYLOAD is
+    # the effective configuration (the wizard may have edited it after loading
+    # the profile); the profile is the comparison baseline, and any deviation
+    # is diffed here in the backend and annotated in the snapshot. No profile,
+    # or a profile without a roster, launches bare — legal, just not a
+    # coverage-matrix column filler.
     profile_id = str(payload.get("profile_id") or "")
     snapshot_profile: Optional[Dict[str, Any]] = None
     if profile_id:
@@ -781,6 +898,48 @@ def plan_experiment(
                 f"in {runtimes_dir}."
             )
     judge_sensitive = _judge_sensitive_vars(evaluator_agent, runtimes_dir)
+
+    # Ad-hoc deviation record: diff the payload's effective configuration
+    # against the profile baseline (computed HERE, never trusted from the
+    # client). One list serves every contender — the deviating dimensions are
+    # shared configuration, so each contender's snapshot carries the same
+    # annotation. Dimension markers first, then the deviating shared keys.
+    snapshot_modified_fields: List[str] = []
+    snapshot_roster: List[Dict[str, Any]] = []
+    if snapshot_profile is not None:
+        if _roster_deviates(contenders, snapshot_profile.get("roster") or []):
+            snapshot_modified_fields.append("roster")
+        if _task_set_deviates(
+            payload,
+            snapshot_profile.get("task_set"),
+            [task_id for task_id, _ in resolved_steps],
+        ):
+            snapshot_modified_fields.append("task_set")
+        snapshot_modified_fields += _shared_deviations(
+            shared, snapshot_profile.get("shared") or {}
+        )
+        # The roster the snapshots record is the one that actually launched
+        # (the payload's contenders in their reference shape), resolved to
+        # inline provider values like every other snapshot entry.
+        for index, entry in enumerate(contenders):
+            if not isinstance(entry, dict):
+                continue  # the per-contender loop below rejects this payload
+            entry_label = str(entry.get("label") or "") or (
+                f"{entry.get('agent') or ''}-{entry.get('model') or index + 1}"
+            )
+            snapshot_roster.append(
+                _snapshot_contender_spec(
+                    {
+                        "agent": entry.get("agent"),
+                        "model": entry.get("model"),
+                        "label": entry.get("label"),
+                        "thinking_effort": entry.get("thinking_effort"),
+                        "provider_id": entry.get("provider_id"),
+                    },
+                    provider_by_id,
+                    context=f"Contender {entry_label}",
+                )
+            )
     plans: List[Dict[str, Any]] = []
     used_run_ids = set()
     for index, contender in enumerate(contenders):
@@ -913,13 +1072,14 @@ def plan_experiment(
             snapshot = _assemble_profile_snapshot(
                 profile=snapshot_profile,
                 contender_spec=contender_spec,
-                provider_by_id=provider_by_id,
+                roster=snapshot_roster,
                 shared=shared,
                 evaluator_agent=evaluator_agent,
                 launch_payload=launch_payload,
                 effective_backend=effective_backend,
                 tasks_dir=str(payload.get("tasks_dir") or ""),
                 task_ids=[task_id for task_id, _ in resolved_steps],
+                modified_fields=snapshot_modified_fields,
             )
             # Belt and braces: the runner re-validates and fails closed, but an
             # assembly bug should surface as a plan-time error, not at launch.
