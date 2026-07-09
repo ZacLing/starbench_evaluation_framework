@@ -1349,17 +1349,28 @@ def _task_run_tested_at(task_root: Path) -> Optional[str]:
     return None
 
 
-def coverage(runs_dir: Path, tasks_dirs: Sequence[Path]) -> Dict[str, Any]:
+def coverage(
+    runs_dir: Path, tasks_dirs: Sequence[Path], profile_id: Optional[str] = None
+) -> Dict[str, Any]:
     """Task × executor-config coverage matrix over everything on disk.
 
     Rows are the union of the task library (``tasks_dirs``) and every task id
-    observed in ``runs_dir``; columns are the executor configs observed in run
-    configs (``executor_agent`` × ``executor_model``). HSW semantics: a cell
-    with any ``overall_pass == True`` means the task was breached, so variants
-    and repeats all aggregate into the same cell. Library tasks never run
-    render as zero-cell rows — the visible gaps are the point. A corrupted run
-    directory degrades to an "unknown" column (or is skipped mid-scan); it
-    never sinks the payload.
+    observed in ``runs_dir``; columns are the union of a profile's declared
+    roster and the executor configs observed in run configs (``executor_agent``
+    × ``executor_model``). HSW semantics: a cell with any ``overall_pass ==
+    True`` means the task was breached, so variants and repeats all aggregate
+    into the same cell. Library tasks never run render as zero-cell rows — the
+    visible gaps are the point. A corrupted run directory degrades to an
+    "unknown" column (or is skipped mid-scan); it never sinks the payload.
+
+    Roster overlay: the first profile carrying a non-empty ``roster`` (or the
+    one named by ``profile_id``) defines the coverage denominator. Its declared
+    contender columns come first, in declaration order, flagged ``rostered``;
+    columns observed only on disk sort after them. A rostered contender never
+    seen in any run still becomes a column — a zero-cell column is the hole in
+    the denominator, the whole point of a roster. With no rostered profile on
+    disk the matrix falls back to pure disk induction: ``profile`` is null and
+    every column is ``rostered: False``.
     """
     library_ids: set = set()
     for tasks_dir in tasks_dirs:
@@ -1455,9 +1466,77 @@ def coverage(runs_dir: Path, tasks_dirs: Sequence[Path]) -> Dict[str, Any]:
             ref for _, _, ref in refs[:COVERAGE_RECENT_REFS_LIMIT]
         ]
 
-    column_order = sorted(
-        columns.values(), key=lambda col: (col["agent"], col["model"] or "")
+    # ------------------------------------------------------------------
+    # Roster overlay. The roster defines the denominator: rostered columns lead
+    # (declaration order), observed-only columns follow (sorted). A rostered
+    # contender never observed still becomes a zero-cell column. ``load_profiles``
+    # is imported lazily here because ``experiments`` imports this module at
+    # module load — a top-level import would be circular.
+    # ------------------------------------------------------------------
+    from .experiments import load_profiles
+
+    profiles_payload = load_profiles(runs_dir)
+    profile_list = profiles_payload.get("profiles")
+    profile_list = profile_list if isinstance(profile_list, list) else []
+
+    def _has_roster(profile: Any) -> bool:
+        return (
+            isinstance(profile, dict)
+            and isinstance(profile.get("roster"), list)
+            and bool(profile.get("roster"))
+        )
+
+    roster_profile: Optional[Dict[str, Any]] = None
+    if profile_id:
+        for profile in profile_list:
+            if (
+                isinstance(profile, dict)
+                and str(profile.get("id")) == profile_id
+                and _has_roster(profile)
+            ):
+                roster_profile = profile
+                break
+    else:
+        roster_profile = next((p for p in profile_list if _has_roster(p)), None)
+
+    roster_keys: List[str] = []
+    roster_key_set: set = set()
+    profile_field: Optional[Dict[str, Any]] = None
+    if roster_profile is not None:
+        rev = roster_profile.get("rev")
+        profile_field = {
+            "id": str(roster_profile.get("id")),
+            "name": str(roster_profile.get("name") or roster_profile.get("id")),
+            "rev": rev if isinstance(rev, int) else 0,
+        }
+        for entry in roster_profile["roster"]:
+            if not isinstance(entry, dict):
+                continue
+            agent = entry.get("agent")
+            agent = agent if isinstance(agent, str) and agent else "unknown"
+            model = entry.get("model")
+            model = model if isinstance(model, str) and model else None
+            key = f"{agent}::{model or ''}"
+            if key in roster_key_set:
+                continue
+            roster_key_set.add(key)
+            roster_keys.append(key)
+            # A rostered contender never observed on disk still becomes a
+            # column — the zero-cell column is the visible denominator hole.
+            columns.setdefault(
+                key,
+                {"key": key, "agent": agent, "model": model, "run_count": 0},
+            )
+
+    for key, column in columns.items():
+        column["rostered"] = key in roster_key_set
+
+    rostered_columns = [columns[key] for key in roster_keys]
+    unrostered_columns = sorted(
+        (column for key, column in columns.items() if key not in roster_key_set),
+        key=lambda col: (col["agent"], col["model"] or ""),
     )
+    column_order = rostered_columns + unrostered_columns
     ordered_keys = [col["key"] for col in column_order]
     rows: List[Dict[str, Any]] = []
     for task_id in library_ids | observed_tasks:
@@ -1479,5 +1558,6 @@ def coverage(runs_dir: Path, tasks_dirs: Sequence[Path]) -> Dict[str, Any]:
         "columns": column_order,
         "rows": rows,
         "runs_scanned": runs_scanned,
+        "profile": profile_field,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }

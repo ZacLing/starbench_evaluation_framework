@@ -43,21 +43,40 @@ export default function Coverage() {
   if (coverageQuery.isPending) return <Skeleton className="h-96" />
   if (coverageQuery.isError) return <ErrorNote message={(coverageQuery.error as Error).message} />
 
-  const { columns, rows, runs_scanned } = coverageQuery.data
+  const { columns, rows, runs_scanned, profile } = coverageQuery.data
+  const runLabel = `${runs_scanned} run${runs_scanned === 1 ? "" : "s"}`
 
   return (
     <div className="grid gap-5">
       <div className="max-w-3xl">
         <h1 className="text-xl font-semibold tracking-tight">Coverage</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Which executor configurations each task has faced. Columns are the configurations
-          observed across the {runs_scanned} run{runs_scanned === 1 ? "" : "s"} on disk (no
-          roster is configured yet); rows are library tasks plus any task seen in a run.
-        </p>
+        {profile ? (
+          <>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Which rostered contenders have breached each task, and where the measurement
+              set still has gaps. Rostered columns lead; a config seen in a run but outside
+              the roster is marked <span className="text-foreground">unrostered</span>.
+            </p>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Roster from profile{" "}
+              <span className="font-medium text-foreground">{profile.name}</span>
+              <span className="mx-1.5 text-border">·</span>
+              <span className="font-mono text-xs tabular-nums">rev {profile.rev}</span>
+              <span className="mx-1.5 text-border">·</span>
+              columns also include configs seen across the {runLabel} on disk
+            </p>
+          </>
+        ) : (
+          <p className="mt-1 text-sm text-muted-foreground">
+            Which executor configurations each task has faced. Columns are derived from the{" "}
+            {runLabel} on disk (no roster configured); rows are library tasks plus any task
+            seen in a run.
+          </p>
+        )}
       </div>
 
       {rows.length ? (
-        <MatrixPanel columns={columns} rows={rows} />
+        <MatrixPanel columns={columns} rows={rows} hasRoster={profile !== null} />
       ) : (
         <EmptyCoverage />
       )}
@@ -67,7 +86,15 @@ export default function Coverage() {
 
 /* The panel frames the matrix as one instrument: a reading key across the top
    (the how-to-read legend, folded into the panel it explains) over the grid. */
-function MatrixPanel({ columns, rows }: { columns: CoverageColumn[]; rows: CoverageRow[] }) {
+function MatrixPanel({
+  columns,
+  rows,
+  hasRoster,
+}: {
+  columns: CoverageColumn[]
+  rows: CoverageRow[]
+  hasRoster: boolean
+}) {
   return (
     <Card className="overflow-hidden py-0">
       <ReadingKey taskCount={rows.length} configCount={columns.length} />
@@ -90,9 +117,10 @@ function MatrixPanel({ columns, rows }: { columns: CoverageColumn[]; rows: Cover
                   className={cn(
                     "h-auto min-w-[11rem] bg-card py-3 align-middle",
                     index > 0 && "border-l border-border/60",
+                    hasRoster && !column.rostered && "bg-muted/25",
                   )}
                 >
-                  <ColumnHeader column={column} />
+                  <ColumnHeader column={column} hasRoster={hasRoster} />
                 </TableHead>
               ))
             ) : (
@@ -222,26 +250,40 @@ function TaskHeader({ row }: { row: CoverageRow }) {
   )
 }
 
-function ColumnHeader({ column }: { column: CoverageColumn }) {
+/* A column head reads three ways. A rostered config that has run looks normal.
+   A rostered config never observed reports "not yet run" over an all-untested
+   column — the hole in the coverage denominator. A config seen on disk but
+   absent from the roster carries a muted "unrostered" mark: a candidate to
+   enroll, surfaced but not yet actionable. */
+function ColumnHeader({ column, hasRoster }: { column: CoverageColumn; hasRoster: boolean }) {
+  const neverRun = column.run_count === 0
+  const unrostered = hasRoster && !column.rostered
   return (
-    <div className="flex items-center gap-2.5">
-      <AgentIcon agent={column.agent} size={20} />
-      <div className="grid min-w-0 gap-0.5 leading-tight">
-        <span className="truncate text-sm font-medium">
-          {AGENT_LABELS[column.agent] ?? column.agent}
-        </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-xs font-normal">
-          <span
-            className="max-w-[10rem] truncate font-mono text-muted-foreground"
-            title={column.model ?? "model not recorded in run config"}
-          >
-            {column.model ?? "model not recorded"}
+    <div className="grid gap-1.5">
+      <div className="flex items-center gap-2.5">
+        <AgentIcon agent={column.agent} size={20} />
+        <div className="grid min-w-0 gap-0.5 leading-tight">
+          <span className="truncate text-sm font-medium">
+            {AGENT_LABELS[column.agent] ?? column.agent}
           </span>
-          <span className="shrink-0 whitespace-nowrap font-mono tabular-nums text-muted-foreground/70">
-            · {column.run_count} run{column.run_count === 1 ? "" : "s"}
+          <span className="flex min-w-0 items-center gap-1.5 text-xs font-normal">
+            <span
+              className="max-w-[10rem] truncate font-mono text-muted-foreground"
+              title={column.model ?? "model not recorded in run config"}
+            >
+              {column.model ?? "model not recorded"}
+            </span>
+            <span className="shrink-0 whitespace-nowrap font-mono tabular-nums text-muted-foreground/70">
+              · {neverRun ? "not yet run" : `${column.run_count} run${column.run_count === 1 ? "" : "s"}`}
+            </span>
           </span>
-        </span>
+        </div>
       </div>
+      {unrostered && (
+        <span className="w-fit rounded border border-dashed border-border px-1.5 py-px text-[0.65rem] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+          unrostered
+        </span>
+      )}
     </div>
   )
 }

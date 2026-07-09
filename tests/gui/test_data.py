@@ -891,6 +891,125 @@ class CoverageTest(unittest.TestCase):
         )
         self.assertTrue(all(ref["run_id"] == "run_a" for ref in cell["recent_refs"][1:]))
 
+    # -- roster overlay ----------------------------------------------------
+
+    def _write_profiles(self, profiles: list, default: object = None) -> None:
+        write_json(
+            self.runs_dir / "profiles.json",
+            {"default_profile_id": default, "profiles": profiles},
+        )
+
+    def test_absent_profiles_file_is_pure_disk_induction(self) -> None:
+        # No profiles.json (and the built-in HSW profile carries an empty
+        # roster): the matrix is inducted purely from disk.
+        payload = self._coverage()
+        self.assertIsNone(payload["profile"])
+        self.assertTrue(all(col["rostered"] is False for col in payload["columns"]))
+
+    def test_roster_columns_lead_and_carry_the_rostered_flag(self) -> None:
+        self._write_profiles(
+            [
+                {
+                    "id": "hsw",
+                    "rev": 4,
+                    "name": "HSW sweep",
+                    "roster": [
+                        {"agent": "claude", "model": "claude-opus-4-8"},
+                        {"agent": "codex", "model": "gpt-5.5"},
+                        {"agent": "gemini", "model": "gemini-3.1-pro"},
+                    ],
+                }
+            ]
+        )
+        payload = self._coverage()
+        # Rostered columns lead in declaration order; the observed-only
+        # "unknown::" config sorts after them.
+        self.assertEqual(
+            [col["key"] for col in payload["columns"]],
+            [
+                "claude::claude-opus-4-8",
+                "codex::gpt-5.5",
+                "gemini::gemini-3.1-pro",
+                "unknown::",
+            ],
+        )
+        self.assertEqual(
+            {col["key"]: col["rostered"] for col in payload["columns"]},
+            {
+                "claude::claude-opus-4-8": True,
+                "codex::gpt-5.5": True,
+                "gemini::gemini-3.1-pro": True,
+                "unknown::": False,
+            },
+        )
+        self.assertEqual(payload["profile"], {"id": "hsw", "name": "HSW sweep", "rev": 4})
+
+    def test_rostered_config_never_observed_is_a_zero_cell_column(self) -> None:
+        self._write_profiles(
+            [
+                {
+                    "id": "hsw",
+                    "rev": 4,
+                    "name": "HSW sweep",
+                    "roster": [
+                        {"agent": "codex", "model": "gpt-5.5"},
+                        {"agent": "gemini", "model": "gemini-3.1-pro"},
+                    ],
+                }
+            ]
+        )
+        payload = self._coverage()
+        gemini = next(col for col in payload["columns"] if col["key"] == "gemini::gemini-3.1-pro")
+        self.assertTrue(gemini["rostered"])
+        # In the roster, never run: a column with no runs behind it…
+        self.assertEqual(gemini["run_count"], 0)
+        # …and no task row carries a cell for it — the hole in the denominator.
+        for row in payload["rows"]:
+            self.assertNotIn(
+                "gemini::gemini-3.1-pro", [cell["column_key"] for cell in row["cells"]]
+            )
+
+    def test_empty_roster_is_not_a_roster_source(self) -> None:
+        # A profile whose roster is empty declares no denominator: fall back.
+        self._write_profiles([{"id": "bare", "rev": 1, "name": "Bare", "roster": []}])
+        payload = self._coverage()
+        self.assertIsNone(payload["profile"])
+        self.assertEqual(
+            [col["key"] for col in payload["columns"]],
+            ["claude::claude-opus-4-8", "codex::gpt-5.5", "unknown::"],
+        )
+        self.assertTrue(all(not col["rostered"] for col in payload["columns"]))
+
+    def test_profile_id_selects_a_named_roster(self) -> None:
+        self._write_profiles(
+            [
+                {
+                    "id": "first",
+                    "rev": 1,
+                    "name": "First",
+                    "roster": [{"agent": "codex", "model": "gpt-5.5"}],
+                },
+                {
+                    "id": "second",
+                    "rev": 2,
+                    "name": "Second",
+                    "roster": [{"agent": "claude", "model": "claude-opus-4-8"}],
+                },
+            ]
+        )
+        # Default: the first profile carrying a non-empty roster.
+        self.assertEqual(
+            data.coverage(self.runs_dir, [self.tasks_dir])["profile"]["id"], "first"
+        )
+        # An explicit id overrides the default selection.
+        payload = data.coverage(self.runs_dir, [self.tasks_dir], "second")
+        self.assertEqual(payload["profile"], {"id": "second", "name": "Second", "rev": 2})
+        claude = next(c for c in payload["columns"] if c["key"] == "claude::claude-opus-4-8")
+        self.assertTrue(claude["rostered"])
+        # codex was observed on disk but is not in the "second" roster.
+        codex = next(c for c in payload["columns"] if c["key"] == "codex::gpt-5.5")
+        self.assertFalse(codex["rostered"])
+
 
 if __name__ == "__main__":
     unittest.main()

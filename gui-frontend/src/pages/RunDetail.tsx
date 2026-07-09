@@ -25,6 +25,7 @@ import {
   LoaderCircle,
   OctagonX,
   Scale,
+  TriangleAlert,
   XCircle,
 } from "lucide-react"
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
@@ -60,6 +61,8 @@ import {
 import { ErrorNote } from "@/pages/Dashboard"
 import {
   api,
+  type Profile,
+  type ProfilesPayload,
   type RunDetail as RunDetailData,
   type RunLiveCurrent,
   type RunLiveEta,
@@ -68,6 +71,7 @@ import {
   type RunLiveTask,
   type TaskRow,
 } from "@/lib/api"
+import type { ProfileSnapshot } from "@/lib/api-types"
 import { cn } from "@/lib/utils"
 import { fmtDelta, fmtDuration, fmtRate, fmtTime, percent, spanBetween } from "@/lib/format"
 
@@ -109,6 +113,18 @@ export default function RunDetail() {
       queryClient.invalidateQueries({ queryKey: ["run", runId] })
     },
     onError: (error: Error) => toast.error(error.message),
+  })
+  // The measurement contract this run was launched under, if any. run_detail
+  // carries it outside the hand-typed RunDetail interface; read it structurally.
+  const snapshot =
+    (runQuery.data as (RunDetailData & { profile_snapshot?: ProfileSnapshot | null }) | undefined)
+      ?.profile_snapshot ?? null
+  // Only fetch the live profiles when there is a snapshot to compare against —
+  // the drift check ("has the contract moved on since launch?") needs both.
+  const profilesQuery = useQuery({
+    queryKey: ["profiles"],
+    queryFn: api.profiles,
+    enabled: Boolean(snapshot),
   })
 
   if (runQuery.isPending) return <Skeleton className="h-96" />
@@ -272,7 +288,14 @@ export default function RunDetail() {
 
       {run.ablation?.groups?.length ? <AblationCard groups={run.ablation.groups} /> : null}
 
-      {run.config && <ConfigCard config={run.config} taskCount={run.task_count} />}
+      {run.config && (
+        <ConfigCard
+          config={run.config}
+          taskCount={run.task_count}
+          snapshot={snapshot}
+          profiles={profilesQuery.data}
+        />
+      )}
     </div>
   )
 }
@@ -1232,11 +1255,14 @@ function ProtocolPanel({
   taskCount,
   batch,
   variables,
+  repeat,
 }: {
   taskCount: number | null
   batch: string | null
   variables: ProtoAttr[]
+  repeat?: number | null
 }) {
+  const repeated = typeof repeat === "number" && repeat > 1
   return (
     <section className="min-w-0">
       <PanelCaption caption="Protocol" gloss="tasks and variables" />
@@ -1250,7 +1276,15 @@ function ProtocolPanel({
           <span className="text-muted-foreground">task count not recorded</span>
         )}
         {batch && <span className="text-muted-foreground"> · batch {batch}</span>}
+        {repeated && (
+          <span className="font-medium text-foreground"> · ×{repeat} per task</span>
+        )}
       </div>
+      {repeated && (
+        <p className="mt-1 text-[13px] leading-5 text-muted-foreground">
+          Each task is sampled {repeat} times; under HSW a single pass is a sample, not a verdict.
+        </p>
+      )}
       {variables.length ? (
         <AttrList attrs={variables} />
       ) : (
@@ -1291,19 +1325,238 @@ function RawConfig({ config }: { config: Record<string, unknown> }) {
   )
 }
 
+/* ---------- Measurement contract (profile snapshot) ----------
+   When a run was launched from a profile with a roster, the runner writes a
+   self-contained profile_snapshot.json: the contract as of launch. The three
+   measurement panels then read the snapshot's structured fields in preference
+   to the run_config keys (a bare run with no snapshot keeps the config path
+   unchanged). The provenance line cites where the run came from; the drift
+   check compares the snapshot's pinned rev against the profile as it stands
+   now, because a profile is mutable and may have moved on since launch. */
+
+interface SnapshotView {
+  subject: ProtoParty
+  instrument: ProtoParty
+  taskCount: number | null
+  batch: string | null
+  variables: ProtoAttr[]
+  repeat: number | null
+}
+
+function buildSnapshotView(snapshot: ProfileSnapshot, taskCountProp: number | null): SnapshotView {
+  const contender = snapshot.contender
+  const execution = snapshot.execution
+  const subjectAttrs: ProtoAttr[] = []
+  if (contender.provider_id || contender.base_url)
+    subjectAttrs.push({
+      label: "gateway",
+      value: contender.provider_id ?? "custom endpoint",
+      code: contender.base_url,
+    })
+  if (contender.auth_mode)
+    subjectAttrs.push(
+      contender.auth_mode === "env" && contender.api_key_env
+        ? { label: "auth", value: AUTH_PHRASES[contender.auth_mode] ?? contender.auth_mode, code: contender.api_key_env }
+        : { label: "auth", value: AUTH_PHRASES[contender.auth_mode] ?? contender.auth_mode },
+    )
+  if (execution.executor_backend)
+    subjectAttrs.push({ label: "backend", value: execution.executor_backend })
+  if (contender.thinking_effort)
+    subjectAttrs.push({ label: "thinking", value: contender.thinking_effort })
+
+  const inst = snapshot.instrument
+  const instrumentAttrs: ProtoAttr[] = []
+  if (inst.evaluator_auth_mode)
+    instrumentAttrs.push({
+      label: "auth",
+      value: AUTH_PHRASES[inst.evaluator_auth_mode] ?? inst.evaluator_auth_mode,
+    })
+  if (inst.judge_mode)
+    instrumentAttrs.push({
+      label: "mode",
+      value: inst.judge_mode === "single" ? "single judge" : `${inst.judge_mode} judges`,
+    })
+  if (typeof execution.max_evaluator_parallel === "number")
+    instrumentAttrs.push({ label: "parallel", value: `up to ${execution.max_evaluator_parallel} at once` })
+  if (typeof inst.evaluator_timeout_seconds === "number")
+    instrumentAttrs.push({ label: "timeout", value: fmtDuration(inst.evaluator_timeout_seconds) })
+
+  const taskIds = snapshot.task_set?.task_ids ?? []
+  return {
+    subject: { agent: contender.agent, model: contender.model || null, attrs: subjectAttrs },
+    instrument: { agent: inst.evaluator_agent, model: inst.evaluator_model || null, attrs: instrumentAttrs },
+    taskCount: taskIds.length || taskCountProp,
+    batch: typeof execution.batch_size === "number" ? String(execution.batch_size) : null,
+    variables: [],
+    repeat: typeof execution.repeat === "number" ? execution.repeat : null,
+  }
+}
+
+type Drift =
+  | { kind: "unchanged" }
+  | { kind: "moved"; fromRev: number; toRev: number; dimensions: string[] }
+  | { kind: "gone" }
+
+const DRIFT_DIMENSION_LABELS: Record<string, string> = {
+  repeat: "repeat",
+  roster: "roster",
+  seed: "seed",
+  batch_size: "batch size",
+  judge_mode: "judge mode",
+  evaluator_agent: "judge agent",
+  evaluator_model: "judge model",
+  evaluator_auth_mode: "judge auth",
+  evaluator_timeout_seconds: "judge timeout",
+  max_evaluator_parallel: "judge parallelism",
+  executor_backend: "backend",
+  executor_auth_mode: "executor auth",
+}
+
+function driftLabel(key: string): string {
+  return DRIFT_DIMENSION_LABELS[key] ?? key.replace(/_/g, " ")
+}
+
+/* The snapshot pins the profile at its launch rev; the live profile may have a
+   newer rev. A shallow compare of the shared fields (reconstructed from the
+   snapshot's instrument + execution) plus the roster set names what moved.
+   Fields the snapshot never captured are skipped, not reported as drift. */
+function computeDrift(snapshot: ProfileSnapshot, profiles: ProfilesPayload | undefined): Drift | null {
+  if (!profiles) return null
+  const current = profiles.profiles.find((profile) => profile.id === snapshot.profile.id) as
+    | (Profile & { rev?: number; roster?: { agent: string; model?: string }[] })
+    | undefined
+  if (!current) return { kind: "gone" }
+  const toRev = typeof current.rev === "number" ? current.rev : snapshot.profile.rev
+  if (toRev === snapshot.profile.rev) return { kind: "unchanged" }
+
+  const dimensions: string[] = []
+  const snapRoster = new Set(snapshot.roster.map((entry) => `${entry.agent}::${entry.model ?? ""}`))
+  const curRoster = new Set((current.roster ?? []).map((entry) => `${entry.agent}::${entry.model ?? ""}`))
+  const rosterSame =
+    snapRoster.size === curRoster.size && [...snapRoster].every((key) => curRoster.has(key))
+  if (!rosterSame) dimensions.push("roster")
+
+  const snapShared: Record<string, unknown> = { ...snapshot.instrument, ...snapshot.execution }
+  const curShared = (current.shared ?? {}) as Record<string, unknown>
+  for (const key of Object.keys(curShared)) {
+    const snapValue = snapShared[key]
+    if (snapValue !== undefined && String(snapValue) !== String(curShared[key])) dimensions.push(key)
+  }
+  return { kind: "moved", fromRev: snapshot.profile.rev, toRev, dimensions }
+}
+
+function fmtCaptured(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
+
+function DriftChip({ drift }: { drift: Drift | null }) {
+  if (!drift) return null
+  if (drift.kind === "unchanged") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Circle className="size-2 fill-current" aria-hidden />
+        profile unchanged
+      </span>
+    )
+  }
+  const text =
+    drift.kind === "gone"
+      ? "profile no longer exists"
+      : `profile has moved on: rev ${drift.fromRev} → ${drift.toRev}`
+  const changed =
+    drift.kind === "moved" && drift.dimensions.length
+      ? drift.dimensions.map(driftLabel).join(", ")
+      : null
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-md bg-warn-soft px-2 py-0.5 text-xs font-medium text-warn-ink"
+      title={changed ? `changed: ${changed}` : undefined}
+    >
+      <TriangleAlert className="size-3.5 shrink-0" aria-hidden />
+      {text}
+      {changed && <span className="font-normal text-warn-ink/80">· {changed}</span>}
+    </span>
+  )
+}
+
+function ContractProvenance({
+  snapshot,
+  drift,
+}: {
+  snapshot: ProfileSnapshot
+  drift: Drift | null
+}) {
+  const rosterIndex = snapshot.roster.findIndex(
+    (entry) =>
+      entry.agent === snapshot.contender.agent &&
+      (entry.model ?? "") === (snapshot.contender.model ?? ""),
+  )
+  const contender =
+    rosterIndex >= 0 && snapshot.roster.length
+      ? `${rosterIndex + 1} of ${snapshot.roster.length}`
+      : null
+  const captured = fmtCaptured(snapshot.captured_at)
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <p className="text-[13px] leading-5 text-muted-foreground">
+        Launched from profile{" "}
+        <span className="font-medium text-foreground">{snapshot.profile.name}</span>
+        <span className="text-border"> · </span>
+        <span className="font-mono">rev {snapshot.profile.rev}</span>
+        {contender && (
+          <>
+            <span className="text-border"> · </span>contender {contender}
+          </>
+        )}
+        {captured && (
+          <>
+            <span className="text-border"> · </span>captured {captured}
+          </>
+        )}
+      </p>
+      <DriftChip drift={drift} />
+    </div>
+  )
+}
+
 function ConfigCard({
   config,
   taskCount,
+  snapshot,
+  profiles,
 }: {
   config: Record<string, unknown>
   taskCount: number | null
+  snapshot: ProfileSnapshot | null
+  profiles: ProfilesPayload | undefined
 }) {
   const [open, setOpen] = useState(true)
   const [showRaw, setShowRaw] = useState(false)
 
-  const view = useMemo(() => buildProtocolView(config, taskCount), [config, taskCount])
+  const configView = useMemo(() => buildProtocolView(config, taskCount), [config, taskCount])
+  const snapView = useMemo(
+    () => (snapshot ? buildSnapshotView(snapshot, taskCount) : null),
+    [snapshot, taskCount],
+  )
+  const drift = useMemo(
+    () => (snapshot ? computeDrift(snapshot, profiles) : null),
+    [snapshot, profiles],
+  )
   const recipe = useMemo(() => buildRecipe(config, taskCount), [config, taskCount])
   const rawKeyCount = Object.keys(config).length
+
+  // The measurement panels read the snapshot's structured contract first; the
+  // pins/other/raw sections always come from the run_config on disk (the file
+  // system is still the truth for what actually ran).
+  const subject = snapView?.subject ?? configView.subject
+  const instrument = snapView?.instrument ?? configView.instrument
+  const protocolTaskCount = snapView?.taskCount ?? configView.taskCount
+  const batch = snapView?.batch ?? configView.batch
+  const variables = snapView ? snapView.variables : configView.variables
+  const repeat = snapView?.repeat ?? null
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -1320,6 +1573,7 @@ function ConfigCard({
               </div>
             )}
           </div>
+          {snapshot && <ContractProvenance snapshot={snapshot} drift={drift} />}
           {!open && recipe && (
             <p
               className="mt-2 truncate font-mono text-[13px] leading-5 text-muted-foreground"
@@ -1333,24 +1587,25 @@ function ConfigCard({
         <CollapsibleContent>
           <CardContent className="pt-5">
             <div className="grid gap-x-5 gap-y-6 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
-              <PartyPanel caption="Subject" gloss="under test" party={view.subject} />
+              <PartyPanel caption="Subject" gloss="under test" party={subject} />
               <FlowArrow />
               <ProtocolPanel
-                taskCount={view.taskCount}
-                batch={view.batch}
-                variables={view.variables}
+                taskCount={protocolTaskCount}
+                batch={batch}
+                variables={variables}
+                repeat={repeat}
               />
               <FlowArrow />
-              <PartyPanel caption="Instrument" gloss="scores the outputs" party={view.instrument} />
+              <PartyPanel caption="Instrument" gloss="scores the outputs" party={instrument} />
             </div>
 
-            {view.other.length > 0 && (
+            {configView.other.length > 0 && (
               <div className="mt-6 border-t border-border/70 pt-4">
                 <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">
                   Other
                 </h3>
                 <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
-                  {view.other.map(([key, value]) => (
+                  {configView.other.map(([key, value]) => (
                     <div key={key} className="contents">
                       <dt className="font-mono text-[13px] leading-5 text-muted-foreground">
                         {key}
@@ -1368,7 +1623,7 @@ function ConfigCard({
               <span className="text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
                 Pins a rerun
               </span>
-              {view.pins.map((pin) => (
+              {configView.pins.map((pin) => (
                 <span key={pin.label} className="inline-flex items-baseline gap-1.5 text-xs">
                   <span className="text-muted-foreground">{pin.label}</span>
                   <code className="font-mono text-xs font-medium text-foreground">

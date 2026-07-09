@@ -446,14 +446,19 @@ class CoverageCell(TypedDict):
 
 
 class CoverageColumn(TypedDict):
-    """An executor configuration observed in run configs on disk
-    (``executor_agent`` × ``executor_model``); ``agent`` degrades to
-    "unknown" when a run's config is missing or unreadable."""
+    """An executor configuration in the matrix: a roster-declared contender,
+    a config observed in run configs on disk (``executor_agent`` ×
+    ``executor_model``), or both. ``agent`` degrades to "unknown" when a run's
+    config is missing or unreadable. ``rostered`` is True when the active
+    profile's roster names this column: a rostered column with zero cells is a
+    hole in the coverage denominator; an unrostered column ran but is not part
+    of the declared measurement set."""
 
     key: str
     agent: str
     model: Optional[str]
     run_count: int
+    rostered: bool
 
 
 class CoverageRow(TypedDict):
@@ -468,10 +473,23 @@ class CoverageRow(TypedDict):
     cells: List[CoverageCell]
 
 
+class CoverageProfile(TypedDict):
+    """The profile whose roster defines this matrix's denominator. ``rev`` pins
+    the revision read from disk. Null on the payload when no profile carries a
+    roster — the matrix then falls back to pure disk induction."""
+
+    id: str
+    name: str
+    rev: int
+
+
 class CoveragePayload(TypedDict):
     columns: List[CoverageColumn]
     rows: List[CoverageRow]
     runs_scanned: int
+    # The roster source, or null when no profile on disk declares a roster and
+    # the columns are derived purely from runs.
+    profile: Optional[CoverageProfile]
     # When this payload was assembled (describes the assembly, not the runs).
     generated_at: str
 
@@ -643,6 +661,7 @@ GENERATED_TYPES = [
     "CoverageCell",
     "CoverageColumn",
     "CoverageRow",
+    "CoverageProfile",
     "CoveragePayload",
     "ProfileSnapshotProfile",
     "ProfileSnapshotContender",

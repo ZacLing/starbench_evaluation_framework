@@ -301,6 +301,7 @@ export interface CoverageColumn {
   agent: string
   model: string | null
   run_count: number
+  rostered: boolean
 }
 
 export interface CoverageRow {
@@ -311,10 +312,17 @@ export interface CoverageRow {
   cells: CoverageCell[]
 }
 
+export interface CoverageProfile {
+  id: string
+  name: string
+  rev: number
+}
+
 export interface CoveragePayload {
   columns: CoverageColumn[]
   rows: CoverageRow[]
   runs_scanned: number
+  profile: CoverageProfile | null
   generated_at: string
 }
 

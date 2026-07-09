@@ -240,7 +240,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 )
             )
         elif segments == ["coverage"]:
-            self._send_json(data.coverage(state.runs_dir, state.tasks_dirs))
+            profile_id = query.get("profile", [None])[0]
+            self._send_json(data.coverage(state.runs_dir, state.tasks_dirs, profile_id))
         elif segments == ["tasklib"]:
             self._send_json({"libraries": self._libraries()})
         elif segments == ["tasklib", "task"]:
