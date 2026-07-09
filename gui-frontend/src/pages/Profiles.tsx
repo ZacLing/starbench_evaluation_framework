@@ -42,6 +42,7 @@ import {
   compatibleProviders,
   runtimeFilters,
 } from "@/components/brand"
+import { Hint } from "@/components/hint"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/pages/Dashboard"
 import {
@@ -131,6 +132,38 @@ function runtimeRefs(agents?: AgentsPayload): RuntimeRef[] {
       .filter((r) => !r.error)
       .map((r) => ({ id: r.id, label: r.label ?? r.spec_id, icon: r.icon })),
   ]
+}
+
+/* Self-describing enum options: the raw value stays the visible word (it is
+   what run configs and snapshots record), the plain-language meaning rides
+   next to it in the dropdown. Vocabulary matches the wizard and the run
+   detail card; unknown values fall back to the bare word. */
+const JUDGE_MODE_GLOSS: Record<string, string> = {
+  single: "one judge sees all rubrics per task",
+  parallel: "one judge per rubric, independently",
+  both: "runs both modes",
+}
+
+const AUTH_MODE_GLOSS: Record<string, string> = {
+  global: "the host CLI's own login",
+  env: "API key from environment variables",
+  "copy-auth": "copied CLI login",
+}
+
+const BACKEND_GLOSS: Record<string, string> = {
+  local: "runs directly on this machine",
+  docker: "each task isolated in its own container",
+}
+
+function GlossSelectItem({ value, gloss }: { value: string; gloss?: string }) {
+  return (
+    <SelectItem value={value}>
+      <span className="flex flex-col items-start gap-0.5">
+        <span>{value}</span>
+        {gloss && <span className="text-xs text-muted-foreground">{gloss}</span>}
+      </span>
+    </SelectItem>
+  )
 }
 
 function runtimeLabelOf(refs: RuntimeRef[], id: string | undefined): string {
@@ -713,6 +746,27 @@ function ProfileEditor({
           </SheetDescription>
         </SheetHeader>
 
+        {/* The whole form, translated live into the same recipe sentence the
+            run detail card speaks: edit a field, watch the sentence change. */}
+        <div className="border-b bg-muted/40 px-4 py-2.5 font-mono text-[13px] leading-6 text-muted-foreground">
+          <span className="font-medium text-foreground">{(value.roster ?? []).length}</span>{" "}
+          contender{(value.roster ?? []).length === 1 ? "" : "s"}
+          <span className="mx-1.5 text-muted-foreground/60">×</span>
+          {value.hasTaskSet
+            ? `${value.task_set?.task_ids?.length || "all"} tasks`
+            : "tasks chosen at launch"}
+          <span className="mx-1.5 text-muted-foreground/60">×</span>
+          judge{" "}
+          <span className="text-foreground">
+            {String(value.shared.evaluator_agent ?? "?")}
+            {value.shared.evaluator_model ? `(${value.shared.evaluator_model})` : ""}
+          </span>
+          <span className="mx-1.5 text-muted-foreground/60">·</span>×
+          <span className="tabular-nums text-foreground">{numValue(value.shared.repeat) || "1"}</span>
+          <span className="mx-1.5 text-muted-foreground/60">·</span>seed{" "}
+          <span className="tabular-nums">{numValue(value.shared.seed) || "–"}</span>
+        </div>
+
         <div className="grid gap-6 p-4">
           {/* identity */}
           <section className="grid gap-3">
@@ -821,7 +875,11 @@ function ProfileEditor({
               The judge and how it scores, shared across every contender.
             </SectionHeading>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Evaluator runtime">
+              <Field
+                label="Evaluator runtime"
+                gloss="the judge is an agent too"
+                hint="Scores are only as trustworthy as the runtime grading them; pick the judge as deliberately as the contenders."
+              >
                 <Select
                   value={String(value.shared.evaluator_agent ?? "")}
                   onValueChange={(evaluator_agent) => patchShared({ evaluator_agent })}
@@ -869,16 +927,26 @@ function ProfileEditor({
                   onValueChange={(judge_mode) => patchShared({ judge_mode })}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue>{String(value.shared.judge_mode ?? "single")}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {judgeModes.map((mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        {mode}
-                      </SelectItem>
+                      <GlossSelectItem key={mode} value={mode} gloss={JUDGE_MODE_GLOSS[mode]} />
                     ))}
                   </SelectContent>
                 </Select>
+              </Field>
+              <Field
+                label="Judge timeout (s)"
+                gloss="per judge invocation"
+                hint="A judge that exceeds it records no verdict for that task; the executor's work is kept."
+              >
+                <Input
+                  type="number"
+                  className="font-mono"
+                  value={numValue(value.shared.evaluator_timeout_seconds)}
+                  onChange={(event) => patchShared({ evaluator_timeout_seconds: event.target.value })}
+                />
               </Field>
               <Field label="Evaluator credentials">
                 <Select
@@ -886,24 +954,14 @@ function ProfileEditor({
                   onValueChange={(evaluator_auth_mode) => patchShared({ evaluator_auth_mode })}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue>{String(value.shared.evaluator_auth_mode ?? "env")}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {authModes.map((mode) => (
-                      <SelectItem key={mode} value={mode}>
-                        {mode}
-                      </SelectItem>
+                      <GlossSelectItem key={mode} value={mode} gloss={AUTH_MODE_GLOSS[mode]} />
                     ))}
                   </SelectContent>
                 </Select>
-              </Field>
-              <Field label="Judge timeout (s)">
-                <Input
-                  type="number"
-                  className="font-mono"
-                  value={numValue(value.shared.evaluator_timeout_seconds)}
-                  onChange={(event) => patchShared({ evaluator_timeout_seconds: event.target.value })}
-                />
               </Field>
             </div>
           </section>
@@ -933,7 +991,11 @@ function ProfileEditor({
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="Seed">
+              <Field
+                label="Seed"
+                gloss="schedules, not weights"
+                hint="Fixes task shuffle, batch grouping, and judge launch order so a rerun schedules identically. It does not make model outputs deterministic."
+              >
                 <Input
                   type="number"
                   className="font-mono"
@@ -941,7 +1003,11 @@ function ProfileEditor({
                   onChange={(event) => patchShared({ seed: event.target.value })}
                 />
               </Field>
-              <Field label="Batch size">
+              <Field
+                label="Batch size"
+                gloss="tasks at once"
+                hint="How many executor tasks run concurrently for each contender; 1 runs them one by one."
+              >
                 <Input
                   type="number"
                   min={1}
@@ -956,13 +1022,11 @@ function ProfileEditor({
                   onValueChange={(executor_backend) => patchShared({ executor_backend })}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue>{String(value.shared.executor_backend ?? "local")}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {backends.map((backend) => (
-                      <SelectItem key={backend} value={backend}>
-                        {backend}
-                      </SelectItem>
+                      <GlossSelectItem key={backend} value={backend} gloss={BACKEND_GLOSS[backend]} />
                     ))}
                   </SelectContent>
                 </Select>
@@ -1114,7 +1178,8 @@ function ProfileEditor({
           {/* per-contender fields */}
           <section className="grid gap-3">
             <SectionHeading icon={ListChecks} title="Per-contender fields">
-              What the wizard collects for each contender individually, instead of sharing.
+              Checked: each contender sets its own value at launch. Unchecked: locked by this
+              profile for everyone.
             </SectionHeading>
             <div className="grid gap-2 sm:grid-cols-2">
               {PER_CONTENDER_FIELDS.map((field) => {
@@ -1205,18 +1270,29 @@ function SectionHeading({
   )
 }
 
+/* Two-tier field help: `gloss` is the inline essential meaning (always
+   visible, never hover-gated); `hint` is the secondary why/when behind a
+   focusable question mark. */
 function Field({
   label,
+  gloss,
+  hint,
   children,
   className,
 }: {
   label: string
+  gloss?: string
+  hint?: React.ReactNode
   children: React.ReactNode
   className?: string
 }) {
   return (
     <div className={cn("grid gap-1.5", className)}>
-      <Label>{label}</Label>
+      <div className="flex items-baseline gap-1.5">
+        <Label>{label}</Label>
+        {gloss && <span className="text-xs text-muted-foreground">{gloss}</span>}
+        {hint && <Hint>{hint}</Hint>}
+      </div>
       {children}
     </div>
   )
