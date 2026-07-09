@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
@@ -16,6 +16,7 @@ import {
   Tooltip as ChartTooltip,
 } from "recharts"
 import {
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -26,6 +27,7 @@ import {
   Scale,
   XCircle,
 } from "lucide-react"
+import { AGENT_LABELS, AgentIcon } from "@/components/brand"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -860,65 +862,195 @@ function DeltaCell({ value }: { value: number | null | undefined }) {
   )
 }
 
-/* ---------- Run configuration → measurement recipe ----------
-   The launcher writes ~34 flat keys per run. As an alphabetical env dump they
-   make every run look identical; the operator's real question is "what did this
-   run measure, and how". So the card leads with a one-line recipe, then groups
-   the keys by the role each plays — who executed, what judged, what varied, what
-   pins a rerun. Keys stay literal (mono, lower-case, grep-able) and the complete
-   raw config is one click away: the file system is still the truth. */
+/* ---------- Run configuration → measurement protocol ----------
+   A run is physically a pipeline: a subject (the executor under test) works
+   through a protocol (tasks, variables, seed) and an instrument (the judge)
+   scores what comes out. The card renders that chain instead of enumerating
+   launcher flags. Known keys are consumed explicitly by name into the three
+   panels and the rerun pin strip; keys that belong to runtimes taking no part
+   in this run stay in Raw only; anything unrecognized surfaces verbatim under
+   "Other", so a future launcher flag can never be silently mis-filed. The
+   complete raw dump stays one click away: the file system is still the truth. */
 
-type ConfigGroupId = "executor" | "judge" | "variables" | "repro"
+const RUNTIME_KEY_PREFIXES = Object.keys(AGENT_LABELS)
 
-const CONFIG_GROUPS: { id: ConfigGroupId; label: string; gloss: string }[] = [
-  { id: "executor", label: "Executor", gloss: "how tasks were run" },
-  { id: "judge", label: "Judge", gloss: "how outputs were scored" },
-  { id: "variables", label: "Variables", gloss: "what changed across tasks" },
-  { id: "repro", label: "Reproducibility", gloss: "what pins an exact rerun" },
-]
-
-// task_order duplicates the task table above and can run long; keep it to Raw.
-const CONFIG_SKIP = new Set(["task_order"])
-
-/* First match wins; every non-skipped key lands in exactly one group. Anything
-   unrecognized (a future launcher flag) falls through to Reproducibility and is
-   always visible under Raw, so no key is silently dropped. */
-function classifyConfigKey(key: string): ConfigGroupId {
-  if (
-    key === "run_id" ||
-    key === "seed" ||
-    key === "docker_image" ||
-    key === "claude_thinking_effort"
-  )
-    return "repro"
-  if (key.endsWith("_bin")) return "repro"
-  if (key.startsWith("requested_")) return "variables"
-  if (key.startsWith("evaluator_") || key === "judge_mode" || key === "max_evaluator_parallel")
-    return "judge"
-  if (key.startsWith("instruction_") || key.startsWith("rigor_") || key === "batch_size")
-    return "variables"
-  if (key.startsWith("executor_") || key === "auth_mode") return "executor"
-  if (
-    key.endsWith("_base_url") ||
-    key.endsWith("_provider") ||
-    key.endsWith("_api_key_env") ||
-    key.endsWith("_api_key") ||
-    key.endsWith("_endpoint")
-  )
-    return "executor"
-  return "repro"
+/* The launch wizard's plain-language credential vocabulary, reused verbatim. */
+const AUTH_PHRASES: Record<string, string> = {
+  env: "API key from env",
+  global: "host CLI login",
+  "copy-auth": "copied CLI login",
 }
 
-// A value is "empty" when it carries no measurement decision: null, [], "", or
-// the literal sentinels the launcher writes for an unset flag ("-", "none").
-function isEmptyConfigValue(value: unknown): boolean {
-  if (value === null || value === undefined) return true
-  if (Array.isArray(value)) return value.length === 0
-  if (typeof value === "string") {
-    const v = value.trim().toLowerCase()
-    return v === "" || v === "-" || v === "–" || v === "none" || v === "null"
+interface ProtoAttr {
+  label: string
+  value: string
+  code?: string
+}
+
+interface ProtoParty {
+  agent: string
+  model: string | null
+  attrs: ProtoAttr[]
+}
+
+interface ProtocolView {
+  subject: ProtoParty | null
+  instrument: ProtoParty | null
+  taskCount: number | null
+  batch: string | null
+  variables: ProtoAttr[]
+  pins: ProtoAttr[]
+  other: [string, unknown][]
+}
+
+function buildProtocolView(
+  config: Record<string, unknown>,
+  taskCountProp: number | null,
+): ProtocolView {
+  const consumed = new Set<string>()
+  const raw = (key: string): unknown => {
+    consumed.add(key)
+    return config[key]
   }
-  return false
+  // Launcher sentinels for "unset" ("-", "none", "") read as absent.
+  const str = (key: string): string | null => {
+    const v = raw(key)
+    if (typeof v === "number") return String(v)
+    if (typeof v !== "string") return null
+    const t = v.trim()
+    if (!t || ["-", "–", "none", "null"].includes(t.toLowerCase())) return null
+    return t
+  }
+  const ids = (key: string): string[] => {
+    const v = raw(key)
+    return Array.isArray(v) ? v.map(String).filter(Boolean) : []
+  }
+
+  const party = (role: "executor" | "evaluator"): ProtoParty | null => {
+    const agent = str(`${role}_agent`)
+    const model = str(`${role}_model`)
+    const attrs: ProtoAttr[] = []
+    const provider = agent ? str(`${agent}_provider`) : null
+    const gatewayUrl = agent ? (str(`${agent}_base_url`) ?? str(`${agent}_endpoint`)) : null
+    if (provider || gatewayUrl)
+      attrs.push({
+        label: "gateway",
+        value: provider ?? "custom endpoint",
+        code: gatewayUrl ?? undefined,
+      })
+    const envKey = agent ? str(`${agent}_api_key_env`) : null
+    // Read both unconditionally: `??` short-circuiting would leave the legacy
+    // top-level auth_mode unconsumed and it would leak into "Other".
+    const roleMode = role === "executor" ? str("executor_auth_mode") : str("evaluator_auth_mode")
+    const legacyMode = role === "executor" ? str("auth_mode") : null
+    const mode = roleMode ?? legacyMode
+    if (mode) {
+      const phrase = AUTH_PHRASES[mode] ?? mode
+      attrs.push(
+        mode === "env" && envKey
+          ? { label: "auth", value: phrase, code: envKey }
+          : { label: "auth", value: phrase },
+      )
+    }
+    if (role === "executor") {
+      const backend = str("executor_backend")
+      const docker = str("docker_image")
+      if (backend)
+        attrs.push(
+          backend === "docker" && docker
+            ? { label: "backend", value: backend, code: docker }
+            : { label: "backend", value: backend },
+        )
+    } else {
+      const judgeMode = str("judge_mode")
+      if (judgeMode)
+        attrs.push({
+          label: "mode",
+          value: judgeMode === "single" ? "single judge" : `${judgeMode} judges`,
+        })
+      const parallel = str("max_evaluator_parallel")
+      if (parallel) attrs.push({ label: "parallel", value: `up to ${parallel} at once` })
+    }
+    if (agent === "claude") {
+      const effort = str("claude_thinking_effort")
+      if (effort) attrs.push({ label: "thinking", value: effort })
+    }
+    if (!agent && !model) return null
+    return { agent: agent ?? "unknown", model, attrs }
+  }
+
+  const subject = party("executor")
+  const instrument = party("evaluator")
+
+  const order = raw("task_order")
+  const taskCount = taskCountProp ?? (Array.isArray(order) ? order.length : null)
+  const batch = str("batch_size")
+
+  /* Variables render only when active; the inert launcher defaults they leave
+     behind (instruction_step_order with mode none, executor_skill_order with
+     no skills) are a deliberate Raw-only relegation, not an omission. */
+  const variables: ProtoAttr[] = []
+  const instructionMode = str("instruction_mode")
+  const stepIds = ids("instruction_step_ids")
+  const requestedSteps = ids("requested_instruction_step_ids")
+  const stepOrder = str("instruction_step_order")
+  const variantIds = ids("instruction_variants")
+  if (instructionMode) {
+    const detail = [
+      stepIds.length
+        ? `steps ${stepIds.join(", ")}`
+        : requestedSteps.length
+          ? `requested ${requestedSteps.join(", ")}`
+          : null,
+      stepOrder ? `order ${stepOrder}` : null,
+      variantIds.length ? `variants ${variantIds.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ")
+    variables.push({ label: "instructions", value: instructionMode, code: detail || undefined })
+  }
+  const rigorMode = str("rigor_mode")
+  const rigorIds = ids("requested_rigor_ids")
+  if (rigorMode || rigorIds.length)
+    variables.push({
+      label: "rigor",
+      value: rigorMode ?? "requested",
+      code: rigorIds.length ? rigorIds.join(", ") : undefined,
+    })
+  const skillIds = ids("requested_executor_skill_ids")
+  const skillGroups = ids("requested_executor_skill_groups")
+  const skillOrder = str("executor_skill_order")
+  if (skillIds.length || skillGroups.length)
+    variables.push({
+      label: "skills",
+      value: [...skillGroups, ...skillIds].join(", "),
+      code: skillOrder ? `order ${skillOrder}` : undefined,
+    })
+
+  /* Only the bins of runtimes that took part pin this run; the other three
+     are launcher defaults with no bearing on a rerun (Raw keeps them all). */
+  const pins: ProtoAttr[] = []
+  const runId = str("run_id")
+  if (runId) pins.push({ label: "run", value: runId })
+  const seed = str("seed")
+  if (seed !== null) pins.push({ label: "seed", value: seed })
+  const participants = [subject?.agent, instrument?.agent].filter(
+    (a, i, arr): a is string => Boolean(a) && arr.indexOf(a) === i,
+  )
+  for (const agent of participants) {
+    const bin = str(`${agent}_bin`)
+    if (bin) pins.push({ label: `${agent} bin`, value: bin })
+  }
+
+  const other = Object.entries(config)
+    .filter(
+      ([key]) =>
+        !consumed.has(key) &&
+        !RUNTIME_KEY_PREFIXES.some((agent) => key.startsWith(`${agent}_`)),
+    )
+    .sort(([a], [b]) => a.localeCompare(b))
+
+  return { subject, instrument, taskCount, batch, variables, pins, other }
 }
 
 function formatConfigValue(value: unknown): string {
@@ -1018,50 +1150,126 @@ function CopyRecipeButton({ text }: { text: string }) {
   )
 }
 
-function ConfigGroup({
-  label,
+function PanelCaption({ caption, gloss }: { caption: string; gloss: string }) {
+  return (
+    <div className="mb-3 flex items-baseline gap-2 border-b border-border/70 pb-1.5">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+        {caption}
+      </h3>
+      <span className="text-xs text-muted-foreground/80">{gloss}</span>
+    </div>
+  )
+}
+
+function AttrList({ attrs }: { attrs: ProtoAttr[] }) {
+  if (!attrs.length) return null
+  return (
+    <dl className="mt-3 space-y-1.5">
+      {attrs.map((attr) => (
+        <div key={`${attr.label}:${attr.value}`} className="flex gap-3 text-[13px] leading-5">
+          <dt className="w-16 shrink-0 text-muted-foreground">{attr.label}</dt>
+          <dd className="min-w-0 text-foreground">
+            {attr.value}
+            {attr.code && (
+              <>
+                {" "}
+                <code className="break-all font-mono text-xs text-muted-foreground">
+                  {attr.code}
+                </code>
+              </>
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function PartyPanel({
+  caption,
   gloss,
-  rows,
-  showEmpty,
+  party,
 }: {
-  label: string
+  caption: string
   gloss: string
-  rows: [string, unknown][]
-  showEmpty: boolean
+  party: ProtoParty | null
 }) {
-  const visible = showEmpty ? rows : rows.filter(([, v]) => !isEmptyConfigValue(v))
-  const hiddenEmpty = rows.length - visible.length
   return (
     <section className="min-w-0">
-      <div className="mb-2.5 flex items-baseline gap-2 border-b border-border/70 pb-1.5">
-        <h3 className="text-sm font-medium text-foreground">{label}</h3>
-        <span className="text-xs text-muted-foreground">{gloss}</span>
-      </div>
-      {visible.length ? (
-        <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
-          {visible.map(([key, value]) => {
-            const empty = isEmptyConfigValue(value)
-            return (
-              <Fragment key={key}>
-                <dt className="font-mono text-[13px] leading-5 text-muted-foreground">{key}</dt>
-                <dd
-                  className={cn(
-                    "min-w-0 break-all font-mono text-[13px] leading-5",
-                    empty ? "text-muted-foreground" : "text-foreground",
-                  )}
+      <PanelCaption caption={caption} gloss={gloss} />
+      {party ? (
+        <>
+          <div className="flex items-center gap-2.5">
+            <AgentIcon agent={party.agent} size={22} />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-5 text-foreground">
+                {AGENT_LABELS[party.agent] ?? party.agent}
+              </div>
+              {party.model ? (
+                <div
+                  className="truncate font-mono text-[13px] leading-5 text-muted-foreground"
+                  title={party.model}
                 >
-                  {formatConfigValue(value)}
-                </dd>
-              </Fragment>
-            )
-          })}
-        </dl>
+                  {party.model}
+                </div>
+              ) : (
+                <div className="text-[13px] leading-5 text-muted-foreground">
+                  model not recorded
+                </div>
+              )}
+            </div>
+          </div>
+          <AttrList attrs={party.attrs} />
+        </>
       ) : (
-        <p className="text-[13px] text-muted-foreground">
-          {hiddenEmpty ? `${hiddenEmpty} empty field${hiddenEmpty === 1 ? "" : "s"}` : "none set"}
-        </p>
+        <p className="text-[13px] text-muted-foreground">not recorded</p>
       )}
     </section>
+  )
+}
+
+function ProtocolPanel({
+  taskCount,
+  batch,
+  variables,
+}: {
+  taskCount: number | null
+  batch: string | null
+  variables: ProtoAttr[]
+}) {
+  return (
+    <section className="min-w-0">
+      <PanelCaption caption="Protocol" gloss="tasks and variables" />
+      <div className="text-sm leading-5 text-foreground">
+        {taskCount !== null ? (
+          <>
+            <span className="font-semibold tabular-nums">{taskCount}</span>
+            <span> task{taskCount === 1 ? "" : "s"}</span>
+          </>
+        ) : (
+          <span className="text-muted-foreground">task count not recorded</span>
+        )}
+        {batch && <span className="text-muted-foreground"> · batch {batch}</span>}
+      </div>
+      {variables.length ? (
+        <AttrList attrs={variables} />
+      ) : (
+        <div className="mt-3">
+          <div className="text-[13px] font-medium leading-5 text-foreground">Baseline run</div>
+          <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
+            No instruction variants, no rigor injection, no executor skills.
+          </p>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function FlowArrow() {
+  return (
+    <div aria-hidden="true" className="hidden self-center lg:block">
+      <ArrowRight className="size-4 text-muted-foreground/60" />
+    </div>
   )
 }
 
@@ -1090,98 +1298,89 @@ function ConfigCard({
   config: Record<string, unknown>
   taskCount: number | null
 }) {
-  const [showEmpty, setShowEmpty] = useState(false)
+  const [open, setOpen] = useState(true)
   const [showRaw, setShowRaw] = useState(false)
 
-  const { grouped, emptyTotal } = useMemo(() => {
-    const grouped = new Map<ConfigGroupId, [string, unknown][]>(
-      CONFIG_GROUPS.map((g) => [g.id, [] as [string, unknown][]]),
-    )
-    let emptyTotal = 0
-    for (const [key, value] of Object.entries(config)) {
-      if (CONFIG_SKIP.has(key)) continue
-      grouped.get(classifyConfigKey(key))!.push([key, value])
-      if (isEmptyConfigValue(value)) emptyTotal += 1
-    }
-    for (const rows of grouped.values()) rows.sort(([a], [b]) => a.localeCompare(b))
-    return { grouped, emptyTotal }
-  }, [config])
-
+  const view = useMemo(() => buildProtocolView(config, taskCount), [config, taskCount])
   const recipe = useMemo(() => buildRecipe(config, taskCount), [config, taskCount])
   const rawKeyCount = Object.keys(config).length
 
   return (
-    <Collapsible defaultOpen>
+    <Collapsible open={open} onOpenChange={setOpen}>
       <Card className="gap-0 py-5">
-        <div className="flex flex-col gap-3 px-6">
-          <CollapsibleTrigger className="group flex items-center gap-2 self-start rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
-            <CardTitle className="text-base">Run configuration</CardTitle>
-            <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-          </CollapsibleTrigger>
-          {recipe && (
-            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 py-2.5 pl-3.5 pr-2">
-              <code className="min-w-0 flex-1 break-words font-mono text-sm leading-6">
-                {recipe.cross.map((u, i) => (
-                  <Fragment key={i}>
-                    {i > 0 && <span className="mx-1.5 text-muted-foreground/60">×</span>}
-                    {u.type === "count" ? (
-                      <span>
-                        <span className="tabular-nums text-foreground">{u.value}</span>
-                        <span className="text-muted-foreground"> task{u.value === 1 ? "" : "s"}</span>
-                      </span>
-                    ) : (
-                      <span>
-                        {u.prefix && <span className="text-muted-foreground">{u.prefix} </span>}
-                        <span className="font-medium text-foreground">{u.agent}</span>
-                        {u.model && <span className="text-muted-foreground">({u.model})</span>}
-                      </span>
-                    )}
-                  </Fragment>
-                ))}
-                {recipe.meta.map((m, i) => (
-                  <Fragment key={`m${i}`}>
-                    <span className="mx-1.5 text-muted-foreground/60">·</span>
-                    {m.label && <span className="text-muted-foreground">{m.label} </span>}
-                    <span className="text-foreground">{m.value}</span>
-                  </Fragment>
-                ))}
-              </code>
-              <CopyRecipeButton text={recipe.text} />
-            </div>
+        <div className="px-6">
+          <div className="flex items-center gap-2">
+            <CollapsibleTrigger className="group flex items-center gap-2 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
+              <CardTitle className="text-base">Run configuration</CardTitle>
+              <ChevronDown className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            {recipe && (
+              <div className="ml-auto">
+                <CopyRecipeButton text={recipe.text} />
+              </div>
+            )}
+          </div>
+          {!open && recipe && (
+            <p
+              className="mt-2 truncate font-mono text-[13px] leading-5 text-muted-foreground"
+              title={recipe.text}
+            >
+              {recipe.text}
+            </p>
           )}
         </div>
 
         <CollapsibleContent>
           <CardContent className="pt-5">
-            <div className="grid gap-x-10 gap-y-6 md:grid-cols-2">
-              {CONFIG_GROUPS.map((group) => (
-                <ConfigGroup
-                  key={group.id}
-                  label={group.label}
-                  gloss={group.gloss}
-                  rows={grouped.get(group.id)!}
-                  showEmpty={showEmpty}
-                />
-              ))}
+            <div className="grid gap-x-5 gap-y-6 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
+              <PartyPanel caption="Subject" gloss="under test" party={view.subject} />
+              <FlowArrow />
+              <ProtocolPanel
+                taskCount={view.taskCount}
+                batch={view.batch}
+                variables={view.variables}
+              />
+              <FlowArrow />
+              <PartyPanel caption="Instrument" gloss="scores the outputs" party={view.instrument} />
             </div>
 
-            <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/70 pt-3">
-              {emptyTotal > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setShowEmpty((v) => !v)}
-                  aria-expanded={showEmpty}
-                  className="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                >
-                  <ChevronDown className={cn("size-3.5 transition-transform", showEmpty && "rotate-180")} />
-                  {emptyTotal} empty field{emptyTotal === 1 ? "" : "s"}
-                </button>
-              )}
+            {view.other.length > 0 && (
+              <div className="mt-6 border-t border-border/70 pt-4">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                  Other
+                </h3>
+                <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5">
+                  {view.other.map(([key, value]) => (
+                    <div key={key} className="contents">
+                      <dt className="font-mono text-[13px] leading-5 text-muted-foreground">
+                        {key}
+                      </dt>
+                      <dd className="min-w-0 break-all font-mono text-[13px] leading-5 text-foreground">
+                        {formatConfigValue(value)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
+
+            <div className="mt-6 flex flex-wrap items-baseline gap-x-5 gap-y-2 border-t border-border/70 pt-3">
+              <span className="text-xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+                Pins a rerun
+              </span>
+              {view.pins.map((pin) => (
+                <span key={pin.label} className="inline-flex items-baseline gap-1.5 text-xs">
+                  <span className="text-muted-foreground">{pin.label}</span>
+                  <code className="font-mono text-xs font-medium text-foreground">
+                    {pin.value}
+                  </code>
+                </span>
+              ))}
               <button
                 type="button"
                 onClick={() => setShowRaw((v) => !v)}
                 aria-expanded={showRaw}
-                className="inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                className="ml-auto inline-flex items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <ChevronDown className={cn("size-3.5 transition-transform", showRaw && "rotate-180")} />
                 Raw config · {rawKeyCount} keys
