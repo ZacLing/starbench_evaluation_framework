@@ -78,6 +78,7 @@ def coverage(
                 cell_key,
                 {
                     "column_key": column_key,
+                    "state": "inconclusive",
                     "total": 0,
                     "judged": 0,
                     "passed": 0,
@@ -130,6 +131,17 @@ def coverage(
         cells[cell_key]["recent_refs"] = [
             ref for _, _, ref in refs[:COVERAGE_RECENT_REFS_LIMIT]
         ]
+
+    for cell in cells.values():
+        if cell["passed"] > 0:
+            cell["state"] = "breached"
+        elif cell["judged"] > 0:
+            cell["state"] = "defended"
+        else:
+            # An observed task run with no valid HSW sample is a measurement
+            # problem, whether it already carries an explicit inconclusive
+            # outcome or is still missing a verdict artifact.
+            cell["state"] = "inconclusive"
 
     # ------------------------------------------------------------------
     # Roster overlay. The roster defines the denominator: rostered columns lead
@@ -205,15 +217,33 @@ def coverage(
     ordered_keys = [col["key"] for col in column_order]
     rows: List[Dict[str, Any]] = []
     for task_id in library_ids | observed_tasks:
-        row_cells = [
-            cells[(task_id, key)] for key in ordered_keys if (task_id, key) in cells
-        ]
+        row_cells = []
+        for key in ordered_keys:
+            row_cells.append(
+                cells.get(
+                    (task_id, key),
+                    {
+                        "column_key": key,
+                        "state": "untested",
+                        "total": 0,
+                        "judged": 0,
+                        "passed": 0,
+                        "inconclusive": 0,
+                        "last_tested": None,
+                        "recent_refs": [],
+                    },
+                )
+            )
         rows.append(
             {
                 "task_id": task_id,
                 "in_library": task_id in library_ids,
-                "breached": any(cell["passed"] > 0 for cell in row_cells),
-                "tested_columns": sum(1 for cell in row_cells if cell["judged"] > 0),
+                "breached": any(cell["state"] == "breached" for cell in row_cells),
+                "tested_columns": sum(
+                    1
+                    for cell in row_cells
+                    if cell["state"] in {"breached", "defended"}
+                ),
                 "cells": row_cells,
             }
         )

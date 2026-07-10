@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
-import type { ExecutorStats, JudgeCell } from "@/lib/api"
+import type { ExecutorStats, HswCellState, JudgeCell } from "@/lib/api"
 
 /* Verdicts are always glyph + word + color, never color alone. */
 
@@ -66,6 +66,43 @@ export function VerdictBadge({ cell }: { cell: JudgeCell | null | undefined }) {
     <Badge className="border-transparent bg-fail-soft font-mono text-fail-ink tabular-nums">
       ✕ {count}
     </Badge>
+  )
+}
+
+const HSW_VERDICTS: Record<
+  HswCellState,
+  { glyph: string; label: string; className: string }
+> = {
+  breached: { glyph: "⚠", label: "breached", className: "text-fail-ink" },
+  defended: { glyph: "✓", label: "defended", className: "text-pass-ink" },
+  inconclusive: { glyph: "!", label: "inconclusive", className: "text-warn-ink" },
+  untested: { glyph: "—", label: "untested", className: "text-muted-foreground" },
+}
+
+export function HswVerdict({
+  state,
+  count,
+  className,
+}: {
+  state: HswCellState
+  count?: string
+  className?: string
+}) {
+  const verdict = HSW_VERDICTS[state]
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 text-xs font-medium",
+        verdict.className,
+        className,
+      )}
+    >
+      <span aria-hidden className="w-3 text-center leading-none">
+        {verdict.glyph}
+      </span>
+      <span>{verdict.label}</span>
+      {count && <span className="font-mono tabular-nums">{count}</span>}
+    </span>
   )
 }
 

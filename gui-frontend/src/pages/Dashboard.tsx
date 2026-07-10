@@ -2,6 +2,7 @@ import { Link, useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, XAxis, YAxis, Tooltip as ChartTooltip } from "recharts"
 import { Activity, CheckCircle2, ListChecks, Plus } from "lucide-react"
+import { ErrorNote } from "@/components/error-note"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -231,16 +232,6 @@ function StatCard({
     >
       {card}
     </Link>
-  )
-}
-
-export function ErrorNote({ message }: { message: string }) {
-  return (
-    <Card className="border-fail-ink/40 bg-fail-soft">
-      <CardContent className="text-sm text-fail-ink" role="alert">
-        {message}
-      </CardContent>
-    </Card>
   )
 }
 

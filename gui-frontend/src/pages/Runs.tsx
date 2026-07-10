@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/table"
 import { ExecutorStatsInline, PassSummaryBadge, StatusBadge } from "@/components/verdict"
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
-import { ErrorNote } from "@/pages/Dashboard"
+import { ErrorNote } from "@/components/error-note"
 import { api, type RunOverview, type RunProfileRef } from "@/lib/api"
 import { fmtTime, shortDir, spanBetween } from "@/lib/format"
 

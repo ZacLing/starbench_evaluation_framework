@@ -38,11 +38,28 @@ class ContractsTest(unittest.TestCase):
             "api-types.ts is stale — run `make gen-types` and commit the result.",
         )
 
-    def test_contracts_cover_the_core_shapes(self) -> None:
+    def test_contracts_cover_every_api_domain(self) -> None:
         from starbench.gui import contracts
 
-        for name in ("AgentsPayload", "AiProvider", "ExperimentPlanItem", "Contender"):
+        for name in (
+            "AgentsPayload",
+            "AiProvider",
+            "RunDetail",
+            "TaskRunDetail",
+            "CoveragePayload",
+            "TaskLibrariesPayload",
+            "ProfilesPayload",
+            "ExperimentPlanResponse",
+            "ExperimentLaunchResponse",
+        ):
             self.assertIn(name, contracts.GENERATED_TYPES)
+
+    def test_api_client_declares_no_hand_written_wire_interfaces(self) -> None:
+        client = (ROOT / "gui-frontend" / "src" / "lib" / "api.ts").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("export interface ", client)
+        self.assertNotIn("export type TaskRunOutcome", client)
 
 
 if __name__ == "__main__":

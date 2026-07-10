@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from starbench.contracts import validate_payload
 from starbench.gui import experiments
@@ -1200,9 +1201,27 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         # The payload mirrors the profile exactly -> the snapshot looks the
         # same as before the deviation record existed (no marker keys at all).
         self.save_profile()
+        plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
+        self.assertIs(plan["profile_modified"], False)
+        self.assertEqual(plan["profile_modified_fields"], [])
         for snapshot in self.plan_snapshots(self.payload()):
             self.assertNotIn("modified", snapshot)
             self.assertNotIn("modified_fields", snapshot)
+
+    def test_dry_run_profile_preview_does_not_materialize_temp_snapshot(self) -> None:
+        self.save_profile()
+        payload = self.payload()
+        payload["dry_run"] = True
+
+        with mock.patch(
+            "starbench.gui.services.planning.tempfile.mkstemp"
+        ) as make_temp:
+            plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+
+        make_temp.assert_not_called()
+        for item in plan["plans"]:
+            marker = item["argv"].index("--profile-snapshot")
+            self.assertEqual(item["argv"][marker + 1], "<generated-at-launch>")
 
     def test_label_only_change_is_not_a_deviation(self) -> None:
         # A contender label is display-only: renaming does not change what is
@@ -1247,7 +1266,14 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         self.save_profile()  # profile task_ids [] = every task (task_a, task_b)
         payload = self.payload()
         payload["tasks"] = ["task_a"]
-        snapshot = self.plan_snapshots(payload)[0]
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        self.assertIs(plan["profile_modified"], True)
+        self.assertEqual(plan["profile_modified_fields"], ["task_set"])
+        snapshot = json.loads(
+            Path(self.snapshot_path_from(plan["plans"][0]["argv"])).read_text(
+                encoding="utf-8"
+            )
+        )
         validate_payload("profile_snapshot.schema.json", snapshot)
         self.assertIs(snapshot["modified"], True)
         self.assertEqual(snapshot["modified_fields"], ["task_set"])
@@ -1269,7 +1295,17 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         payload["tasks"] = ["task_b"]  # task_set deviation
         payload["shared"]["seed"] = 99
         payload["shared"]["judge_mode"] = "both"
-        snapshot = self.plan_snapshots(payload)[0]
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        self.assertIs(plan["profile_modified"], True)
+        self.assertEqual(
+            plan["profile_modified_fields"],
+            ["roster", "task_set", "judge_mode", "seed"],
+        )
+        snapshot = json.loads(
+            Path(self.snapshot_path_from(plan["plans"][0]["argv"])).read_text(
+                encoding="utf-8"
+            )
+        )
         validate_payload("profile_snapshot.schema.json", snapshot)
         self.assertEqual(
             snapshot["modified_fields"], ["roster", "task_set", "judge_mode", "seed"]

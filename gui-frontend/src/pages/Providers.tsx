@@ -47,7 +47,7 @@ import {
   compatibleProviders,
   ProviderIcon,
 } from "@/components/brand"
-import { ErrorNote } from "@/pages/Dashboard"
+import { ErrorNote } from "@/components/error-note"
 import {
   api,
   type AiProvider,

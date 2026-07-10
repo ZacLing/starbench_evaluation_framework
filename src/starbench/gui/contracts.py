@@ -6,9 +6,8 @@ shapes. ``scripts/gen_api_types.py`` renders it into
 and ``lib/api.ts`` re-exports those generated types — so the front and back
 ends cannot drift on a field name or nullability.
 
-Scope: the shapes P2 touches (agents + experiment planning + their providers).
-Other routes still type themselves by hand in ``api.ts``; migrate them here when
-you next touch them.
+Scope: every JSON request and response crossing the Console ``/api`` boundary.
+React-only view models remain local to their feature; wire fields never do.
 
 Invariants:
 - Import-safe on Python 3.9 (no ``typing.NotRequired``): optional fields use the
@@ -21,7 +20,7 @@ Invariants:
 
 from __future__ import annotations
 
-from typing import Dict, List, Literal, Optional, TypedDict
+from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
 
 # ---------------------------------------------------------------------------
 # Enumerations (rendered as TS string-literal unions)
@@ -39,6 +38,15 @@ AgentInstallStatusKind = Literal["installed", "failed"]
 ThinkingChannel = Literal["native_config", "prompt"]
 # Run-level web-search override; "task" follows each task package's flag.
 WebSearchMode = Literal["task", "allow", "deny"]
+TaskRunOutcome = Literal[
+    "agent_pass",
+    "agent_fail",
+    "inconclusive_judge",
+    "inconclusive_executor",
+    "invalid_task",
+]
+HswCellState = Literal["breached", "defended", "inconclusive", "untested"]
+PreflightStatus = Literal["ok", "warn", "fail"]
 
 
 # ---------------------------------------------------------------------------
@@ -432,13 +440,18 @@ class CoverageCell(TypedDict):
     and repeats on disk. HSW semantics: ``passed > 0`` means some configuration
     solved the task — the task is breached, which is bad news for the bench.
 
-    ``inconclusive`` counts attempted measurements excluded from HSW scoring.
+    ``state`` is the backend-owned HSW interpretation: breached when any valid
+    sample passes, defended when at least one valid sample exists and none pass,
+    inconclusive when attempts exist but none are scoreable, and untested for a
+    synthesized empty matrix intersection. ``inconclusive`` counts attempted
+    measurements excluded from HSW scoring.
     ``last_tested`` is a timestamp recorded on disk (executor ``ended_at``,
     else the summary/status file's mtime); absent evidence is ``null``, never
     an estimate.
     """
 
     column_key: str
+    state: HswCellState
     total: int
     judged: int
     passed: int
@@ -714,6 +727,623 @@ class Contender(_ContenderBase, total=False):
     thinking_effort: str
 
 
+# ---------------------------------------------------------------------------
+# Remaining Console wire DTOs
+# ---------------------------------------------------------------------------
+
+class _ExecutorStatsBase(TypedDict):
+    success: int
+    failed: int
+    timeout: int
+
+
+class ExecutorStats(_ExecutorStatsBase, total=False):
+    skipped: int
+    pending: int
+
+
+class JudgeCell(TypedDict):
+    outcome: Optional[TaskRunOutcome]
+    overall_pass: Optional[bool]
+    passed_count: Optional[int]
+    total_count: Optional[int]
+    missing: int
+    fail_fast_failures: int
+    error: Optional[str]
+
+
+class _RunOverviewBase(TypedDict):
+    run_id: str
+    status: RunStatus
+    task_count: int
+    executor_stats: ExecutorStats
+    judge_passes: Dict[str, int]
+    judge_totals: Dict[str, int]
+    judge_inconclusive: Dict[str, int]
+    judge_mode: Optional[str]
+    executor_agent: Optional[str]
+    executor_model: Optional[str]
+    evaluator_agent: Optional[str]
+    evaluator_model: Optional[str]
+    executor_backend: Optional[str]
+    seed: Optional[int]
+    instruction_mode: Optional[str]
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    has_ablation: bool
+
+
+class RunOverview(_RunOverviewBase, total=False):
+    profile: Optional[RunProfileRef]
+
+
+class TaskRow(TypedDict):
+    run_task_id: str
+    task_id: Optional[str]
+    instruction_variant: Optional[str]
+    executor_status: Optional[str]
+    executor_duration_seconds: Optional[float]
+    executor_timed_out: Optional[bool]
+    judges: Dict[str, Optional[JudgeCell]]
+    evaluated: bool
+
+
+class ProgressTotals(TypedDict):
+    executors: int
+    evaluators: int
+
+
+class ProgressSnapshot(TypedDict):
+    totals: ProgressTotals
+    executor_done: int
+    evaluator_done: int
+    executor_stats: ExecutorStats
+    evaluator_stats: ExecutorStats
+    active_executors: List[str]
+    event_count: int
+
+
+class AblationDelta(TypedDict):
+    overall_pass_rate_delta: Optional[float]
+    mean_rubric_pass_rate_delta: Optional[float]
+
+
+class _AblationGroupBase(TypedDict):
+    task_id: str
+    judge_mode: str
+    instruction_variant: str
+    runs: int
+    overall_pass_count: int
+    overall_pass_rate: Optional[float]
+    mean_rubric_pass_rate: Optional[float]
+
+
+class AblationGroup(_AblationGroupBase, total=False):
+    attempts: int
+    inconclusive: int
+    delta_vs_baseline: AblationDelta
+
+
+class AblationPayload(TypedDict):
+    groups: List[AblationGroup]
+
+
+class RunDetail(RunOverview):
+    config: Optional[Dict[str, Any]]
+    tasks: List[TaskRow]
+    progress: Optional[ProgressSnapshot]
+    ablation: Optional[AblationPayload]
+
+
+class RubricResult(TypedDict):
+    rubric_id: str
+    answer: Optional[bool]
+    expected: bool
+    passed: Optional[bool]
+    fail_fast: bool
+    evidence: str
+
+
+class _JudgeAggregateBase(TypedDict):
+    mode: str
+    outcome: TaskRunOutcome
+    overall_pass: Optional[bool]
+    passed_count: int
+    total_count: int
+    missing: List[str]
+    fail_fast_failures: List[str]
+    results: List[RubricResult]
+
+
+class JudgeAggregate(_JudgeAggregateBase, total=False):
+    error: str
+
+
+class ExecutorStatus(TypedDict, total=False):
+    command: List[str]
+    status: str
+    exit_code: Optional[int]
+    timed_out: bool
+    started_at: str
+    ended_at: str
+    duration_seconds: float
+
+
+class TraceTextItem(TypedDict, total=False):
+    id: str
+    text: Optional[str]
+
+
+class TraceCommandExecution(TypedDict, total=False):
+    id: str
+    command: str
+    status: str
+    exit_code: Optional[int]
+    aggregated_output: Optional[str]
+
+
+class TraceFileChange(TypedDict, total=False):
+    id: str
+    status: str
+    changes: Any
+
+
+class TraceSummary(TypedDict):
+    thread_id: Optional[str]
+    event_type_counts: Dict[str, int]
+    item_type_counts: Dict[str, int]
+    reasoning_items: List[TraceTextItem]
+    agent_messages: List[TraceTextItem]
+    command_executions: List[TraceCommandExecution]
+    file_changes: List[TraceFileChange]
+    usage: Optional[Dict[str, Any]]
+
+
+class _ArtifactManifestEntryBase(TypedDict):
+    path: str
+    kind: str
+
+
+class ArtifactManifestEntry(_ArtifactManifestEntryBase, total=False):
+    size_bytes: int
+    sha256: str
+
+
+class ArtifactManifest(TypedDict):
+    outputs_dir: str
+    file_count: int
+    entries: List[ArtifactManifestEntry]
+
+
+class JudgeTaskResult(TypedDict):
+    aggregate: JudgeAggregate
+    status: Optional[ExecutorStatus]
+
+
+class TaskRunDetail(TypedDict):
+    run_id: str
+    run_task_id: str
+    task_id: Optional[str]
+    instruction_variant: Optional[str]
+    executor: Optional[ExecutorStatus]
+    executor_timing: Optional[Dict[str, Any]]
+    judges: Dict[str, JudgeTaskResult]
+    rubric_questions: Dict[str, str]
+    trace_summary: Optional[TraceSummary]
+    artifact_manifest: Optional[ArtifactManifest]
+    outputs_listing: Optional[OutputsListing]
+    variant_group: List[VariantSibling]
+    final_message: Optional[str]
+    stderr_tail: Optional[str]
+    raw_event_count: int
+    evaluated: bool
+
+
+class TasksDirMeta(TypedDict):
+    dir: str
+    exists: bool
+
+
+class Meta(TypedDict):
+    runs_dir: str
+    cwd: str
+    runtimes_dir: str
+    skills_dir: str
+    tasks_dirs: List[TasksDirMeta]
+    agents: List[str]
+    judge_modes: List[str]
+    auth_modes: List[str]
+    backends: List[str]
+    thinking_efforts: List[str]
+
+
+class _TaskPackageBase(TypedDict):
+    id: str
+    dir_name: str
+    name: str
+    rubric_count: int
+    timeout_seconds: Optional[int]
+    allow_web_search: Optional[bool]
+    rigor_count: int
+    has_human_reference: bool
+
+
+class TaskPackage(_TaskPackageBase, total=False):
+    error: Optional[str]
+    warning: Optional[str]
+
+
+class TaskLibrary(TypedDict):
+    dir: str
+    exists: bool
+    tasks: List[TaskPackage]
+
+
+class TaskLibrariesPayload(TypedDict):
+    libraries: List[TaskLibrary]
+
+
+class Launch(TypedDict):
+    run_id: str
+    argv: List[str]
+    pid: int
+    started_at: str
+    log_path: str
+    running: bool
+    exit_code: Optional[int]
+
+
+class RunsPayload(TypedDict):
+    runs: List[RunOverview]
+
+
+class LaunchesPayload(TypedDict):
+    launches: List[Launch]
+
+
+class RawEventsPage(TypedDict):
+    events: List[Dict[str, Any]]
+    offset: int
+    total: int
+    next_offset: Optional[int]
+
+
+class _LaunchPayloadBase(TypedDict):
+    run_id: str
+    tasks_dir: str
+    tasks: List[str]
+    executor_agent: str
+    executor_model: str
+    executor_backend: str
+    docker_image: str
+    auth_mode: str
+    thinking_effort: str
+    web_search: str
+    evaluator_agent: str
+    evaluator_model: str
+    judge_mode: str
+    evaluator_timeout_seconds: str
+    seed: str
+    batch_size: str
+    repeat: str
+    extra_args: str
+
+
+class LaunchPayload(_LaunchPayloadBase, total=False):
+    dry_run: bool
+
+
+class LaunchPlanResponse(TypedDict):
+    argv: List[str]
+    dry_run: Literal[True]
+
+
+class DirListingEntry(TypedDict):
+    name: str
+    path: str
+    task_count: int
+    is_task_package: bool
+
+
+class DirListing(TypedDict):
+    path: str
+    parent: Optional[str]
+    task_count: int
+    dirs: List[DirListingEntry]
+
+
+class ImportFile(TypedDict):
+    path: str
+    content_b64: str
+
+
+class ImportReportTask(TypedDict, total=False):
+    id: str
+    name: str
+    rubric_count: int
+
+
+class _ImportReportBase(TypedDict):
+    valid: bool
+    errors: List[str]
+    warnings: List[str]
+    task: ImportReportTask
+    file_count: int
+
+
+class ImportReport(_ImportReportBase, total=False):
+    installed_to: str
+
+
+class TaskRubricDetail(TypedDict):
+    id: str
+    fail_fast: bool
+    expected: bool
+    question: str
+
+
+class TaskPackageDetail(TypedDict):
+    dir: str
+    dir_name: str
+    id: str
+    name: str
+    timeout_seconds: Optional[int]
+    allow_web_search: Optional[bool]
+    prompt: Optional[str]
+    rubrics: List[TaskRubricDetail]
+    human_reference_steps: List[HumanReferenceStepDetail]
+    human_reference_step_count: int
+    rigors: List[RigorDetail]
+    rigor_count: int
+
+
+class PreflightCheck(TypedDict):
+    id: str
+    label: str
+    status: PreflightStatus
+    hint: str
+
+
+class PreflightPayload(TypedDict):
+    checks: List[PreflightCheck]
+
+
+class EnvSource(TypedDict, total=False):
+    value: str
+    from_env: str
+
+
+class GatewayConfig(TypedDict, total=False):
+    opencode_provider: str
+    opencode_base_url: str
+    opencode_api_key_env: str
+
+
+class SharedConfig(TypedDict, total=False):
+    evaluator_agent: str
+    evaluator_model: str
+    evaluator_auth_mode: str
+    judge_mode: str
+    evaluator_timeout_seconds: Optional[Union[int, str]]
+    executor_backend: str
+    docker_image: str
+    executor_auth_mode: str
+    seed: Optional[Union[int, str]]
+    batch_size: Optional[Union[int, str]]
+    repeat: Optional[Union[int, str]]
+    max_evaluator_parallel: Optional[Union[int, str]]
+    claude_max_turns: Optional[Union[int, str]]
+    web_search_mode: str
+    extra_args: str
+    executor_skills: List[str]
+    executor_skill_groups: List[str]
+    instruction_mode: str
+    instruction_steps: List[str]
+    rigor_mode: str
+    rigors: List[str]
+    evaluator_provider_id: str
+    evaluator_gateway: Optional[GatewayConfig]
+    judge_env: Optional[Dict[str, EnvSource]]
+
+
+class _RosterEntryBase(TypedDict):
+    agent: str
+
+
+class RosterEntry(_RosterEntryBase, total=False):
+    model: str
+    label: str
+    provider_id: str
+    thinking_effort: str
+
+
+class ProfileTaskSet(TypedDict):
+    tasks_dir: str
+    task_ids: List[str]
+
+
+class _ProfileBase(TypedDict):
+    id: str
+    name: str
+    shared: SharedConfig
+    per_contender_fields: List[str]
+
+
+class Profile(_ProfileBase, total=False):
+    rev: int
+    roster: List[RosterEntry]
+    task_set: ProfileTaskSet
+
+
+class _ProfilesPayloadBase(TypedDict):
+    default_profile_id: Optional[str]
+    profiles: List[Profile]
+
+
+class ProfilesPayload(_ProfilesPayloadBase, total=False):
+    persisted: bool
+
+
+class AgentTemplate(TypedDict):
+    template_id: str
+    title: str
+    docs_url: str
+    description: str
+    spec: Dict[str, Any]
+
+
+class AgentTemplatesPayload(TypedDict):
+    templates: List[AgentTemplate]
+
+
+class _CustomRuntimePayloadBase(TypedDict):
+    id: str
+    command: str
+    args: List[str]
+    prompt_via: str
+    parser: str
+    protocol: str
+
+
+class CustomRuntimePayload(_CustomRuntimePayloadBase, total=False):
+    label: str
+    description: str
+    icon: str
+    judge_args: Optional[List[str]]
+    model_flag: str
+    prompt_flag: str
+    env: Dict[str, str]
+    base_url_env: str
+    api_key_env: str
+    docker_image: str
+    docker_env_passthrough: List[str]
+
+
+class _ProviderWriteBase(TypedDict):
+    id: str
+    name: str
+    kind: ProviderKind
+    auth: AuthKind
+    base_url: str
+    api_key_env: str
+    models: List[str]
+    models_fetched_at: Optional[str]
+    models_source: Optional[ModelsSource]
+
+
+class ProviderWrite(_ProviderWriteBase, total=False):
+    anthropic_base_url: Optional[str]
+    gemini_base_url: Optional[str]
+
+
+class SaveProvidersPayload(TypedDict):
+    providers: List[ProviderWrite]
+
+
+class DeletedAgentPayload(TypedDict):
+    deleted: str
+
+
+class ExperimentContenderRecord(TypedDict):
+    label: str
+    agent: str
+    agent_label: str
+    model: str
+    run_id: str
+    backend: str
+    backend_downgraded: bool
+
+
+class _ExperimentRecordBase(TypedDict):
+    id: str
+    created_at: str
+    tasks_dir: str
+    tasks: List[str]
+    shared: SharedConfig
+    contenders: List[ExperimentContenderRecord]
+    run_ids: List[str]
+    launch_status: str
+
+
+class ExperimentRecord(_ExperimentRecordBase, total=False):
+    launch_error: str
+
+
+class MissingRun(TypedDict):
+    run_id: str
+    status: Literal["missing"]
+
+
+class ExperimentSummary(ExperimentRecord):
+    runs: List[Union[RunOverview, MissingRun]]
+
+
+class MatrixCell(TypedDict):
+    passed: int
+    total: int
+
+
+class MatrixRubric(TypedDict):
+    id: str
+    question: str
+    cells: Dict[str, MatrixCell]
+
+
+class MatrixTask(TypedDict):
+    task_id: str
+    rubrics: List[MatrixRubric]
+
+
+class ExperimentDetailContender(ExperimentContenderRecord):
+    run: Optional[RunOverview]
+
+
+class _ExperimentDetailBase(TypedDict):
+    id: str
+    created_at: str
+    tasks_dir: str
+    tasks: List[str]
+    shared: SharedConfig
+    contenders: List[ExperimentDetailContender]
+    run_ids: List[str]
+    launch_status: str
+    matrix: List[MatrixTask]
+
+
+class ExperimentDetail(_ExperimentDetailBase, total=False):
+    launch_error: str
+
+
+class ExperimentsPayload(TypedDict):
+    experiments: List[ExperimentSummary]
+
+
+class _CreateExperimentPayloadBase(TypedDict):
+    name: str
+    tasks_dir: str
+    tasks: List[str]
+    shared: SharedConfig
+    contenders: List[Contender]
+
+
+class CreateExperimentPayload(_CreateExperimentPayloadBase, total=False):
+    profile_id: str
+
+
+class ExperimentPlanResponse(TypedDict):
+    name: str
+    shared: SharedConfig
+    plans: List[ExperimentPlanItem]
+    execution_estimate: ExecutionEstimate
+    profile_modified: bool
+    profile_modified_fields: List[str]
+    dry_run: Literal[True]
+
+
+class ExperimentLaunchResponse(ExperimentRecord):
+    launches: List[Launch]
+
+
 # Ordered list the code generator renders (aliases first, then interfaces in
 # dependency order). Names not listed here are internal helpers.
 GENERATED_TYPES = [
@@ -726,6 +1356,9 @@ GENERATED_TYPES = [
     "AgentInstallStatusKind",
     "ThinkingChannel",
     "WebSearchMode",
+    "TaskRunOutcome",
+    "HswCellState",
+    "PreflightStatus",
     "RuntimeCli",
     "AgentPackage",
     "AgentRuntimeStatus",
@@ -778,4 +1411,71 @@ GENERATED_TYPES = [
     "RunRow",
     "ExperimentPlanItem",
     "Contender",
+    "ExecutorStats",
+    "JudgeCell",
+    "RunOverview",
+    "TaskRow",
+    "ProgressTotals",
+    "ProgressSnapshot",
+    "AblationDelta",
+    "AblationGroup",
+    "AblationPayload",
+    "RunDetail",
+    "RubricResult",
+    "JudgeAggregate",
+    "ExecutorStatus",
+    "TraceTextItem",
+    "TraceCommandExecution",
+    "TraceFileChange",
+    "TraceSummary",
+    "ArtifactManifestEntry",
+    "ArtifactManifest",
+    "JudgeTaskResult",
+    "TaskRunDetail",
+    "TasksDirMeta",
+    "Meta",
+    "TaskPackage",
+    "TaskLibrary",
+    "TaskLibrariesPayload",
+    "Launch",
+    "RunsPayload",
+    "LaunchesPayload",
+    "RawEventsPage",
+    "LaunchPayload",
+    "LaunchPlanResponse",
+    "DirListingEntry",
+    "DirListing",
+    "ImportFile",
+    "ImportReportTask",
+    "ImportReport",
+    "TaskRubricDetail",
+    "TaskPackageDetail",
+    "PreflightCheck",
+    "PreflightPayload",
+    "EnvSource",
+    "GatewayConfig",
+    "SharedConfig",
+    "RosterEntry",
+    "ProfileTaskSet",
+    "Profile",
+    "ProfilesPayload",
+    "AgentTemplate",
+    "AgentTemplatesPayload",
+    "CustomRuntimePayload",
+    "ProviderWrite",
+    "SaveProvidersPayload",
+    "DeletedAgentPayload",
+    "ExperimentContenderRecord",
+    "ExperimentRecord",
+    "MissingRun",
+    "ExperimentSummary",
+    "MatrixCell",
+    "MatrixRubric",
+    "MatrixTask",
+    "ExperimentDetailContender",
+    "ExperimentDetail",
+    "ExperimentsPayload",
+    "CreateExperimentPayload",
+    "ExperimentPlanResponse",
+    "ExperimentLaunchResponse",
 ]

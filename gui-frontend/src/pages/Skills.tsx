@@ -3,7 +3,7 @@ import { AlertTriangle, FileText, Layers, Puzzle } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ErrorNote } from "@/pages/Dashboard"
+import { ErrorNote } from "@/components/error-note"
 import { api, type Skill } from "@/lib/api"
 import { shortDir } from "@/lib/format"
 

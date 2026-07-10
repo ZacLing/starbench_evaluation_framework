@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Literal, Union, get_args, get_origin, get_type_hints
+from typing import Any, Dict, List, Literal, Union, get_args, get_origin, get_type_hints
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -45,6 +45,8 @@ def _is_typeddict(obj: object) -> bool:
 
 def ts_type(tp: object, names: set) -> str:
     origin = get_origin(tp)
+    if tp is Any:
+        return "unknown"
     if tp is str:
         return "string"
     if tp is bool:

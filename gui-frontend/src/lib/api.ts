@@ -1,521 +1,46 @@
 /* Typed client for the StarBench Console API (src/starbench/gui/server.py). */
 
-/* Core API shapes are generated from src/starbench/gui/contracts.py
-   (`make gen-types`) so the front and back ends cannot drift. Import them for
-   local use and re-export them so consumers keep importing from "@/lib/api". */
 import type {
-  AgentsPayload,
   AgentInstallResult,
-  AgentRuntimeStatus,
   AgentStatusPayload,
-  AiProvider,
+  AgentTemplatesPayload,
+  AgentsPayload,
   ArtifactPayload,
-  AuthKind,
-  BuiltinRuntime,
-  Contender,
-  CoverageCell,
-  CoverageColumn,
   CoveragePayload,
-  CoverageRow,
-  CoverageRunRef,
+  CreateExperimentPayload,
   CustomRuntime,
-  ExecutionEstimate,
-  ExperimentPlanItem,
-  HumanReferenceStepDetail,
-  ModelsSource,
-  OutputsListing,
-  OutputsListingEntry,
+  CustomRuntimePayload,
+  DeletedAgentPayload,
+  DirListing,
+  ExperimentDetail,
+  ExperimentLaunchResponse,
+  ExperimentPlanResponse,
+  ExperimentsPayload,
+  ImportFile,
+  ImportReport,
+  Launch,
+  LaunchPayload,
+  LaunchPlanResponse,
+  LaunchesPayload,
+  Meta,
+  PreflightPayload,
+  ProfilesPayload,
   ProviderCliStatusPayload,
-  ProviderFilter,
-  ProviderKind,
   ProvidersPayload,
-  RigorDetail,
-  RunLiveCurrent,
-  RunLiveEta,
-  RunLiveEvent,
+  RawEventsPage,
+  RunDetail,
   RunLivePayload,
-  RunLiveState,
-  RunLiveTask,
-  RunProfileRef,
-  RuntimeCli,
-  RuntimeProtocol,
-  Skill,
+  RunsPayload,
+  SaveProvidersPayload,
   SkillsPayload,
-  TaskHistory,
-  TaskHistoryConfig,
   TaskHistoryPayload,
+  TaskLibrariesPayload,
+  TaskPackageDetail,
+  TaskRunDetail,
   TaskTracePayload,
-  TraceEntry,
-  TraceEntryType,
-  VariantSibling,
 } from "./api-types"
 
-export type {
-  AgentsPayload,
-  AgentInstallResult,
-  AgentRuntimeStatus,
-  AgentStatusPayload,
-  AiProvider,
-  ArtifactPayload,
-  AuthKind,
-  BuiltinRuntime,
-  Contender,
-  CoverageCell,
-  CoverageColumn,
-  CoveragePayload,
-  CoverageRow,
-  CoverageRunRef,
-  CustomRuntime,
-  ExecutionEstimate,
-  ExperimentPlanItem,
-  HumanReferenceStepDetail,
-  ModelsSource,
-  OutputsListing,
-  OutputsListingEntry,
-  ProviderCliStatusPayload,
-  ProviderFilter,
-  ProviderKind,
-  ProvidersPayload,
-  RigorDetail,
-  RunLiveCurrent,
-  RunLiveEta,
-  RunLiveEvent,
-  RunLivePayload,
-  RunLiveState,
-  RunLiveTask,
-  RunProfileRef,
-  RuntimeCli,
-  RuntimeProtocol,
-  Skill,
-  SkillsPayload,
-  TaskHistory,
-  TaskHistoryConfig,
-  TaskHistoryPayload,
-  TaskTracePayload,
-  TraceEntry,
-  TraceEntryType,
-  VariantSibling,
-}
-
-export interface ExecutorStats {
-  success: number
-  failed: number
-  timeout: number
-  skipped?: number
-  pending?: number
-}
-
-export type TaskRunOutcome =
-  | "agent_pass"
-  | "agent_fail"
-  | "inconclusive_judge"
-  | "inconclusive_executor"
-  | "invalid_task"
-
-export interface JudgeCell {
-  outcome: TaskRunOutcome | null
-  overall_pass: boolean | null
-  passed_count: number | null
-  total_count: number | null
-  missing: number
-  fail_fast_failures: number
-  error: string | null
-}
-
-export interface RunOverview {
-  run_id: string
-  status: "complete" | "running" | "interrupted"
-  task_count: number
-  executor_stats: ExecutorStats
-  judge_passes: { single: number; parallel: number }
-  judge_totals: { single: number; parallel: number }
-  judge_inconclusive: { single: number; parallel: number }
-  judge_mode: string | null
-  executor_agent: string | null
-  executor_model: string | null
-  evaluator_agent: string | null
-  evaluator_model: string | null
-  executor_backend: string | null
-  seed: number | null
-  instruction_mode: string | null
-  started_at: string | null
-  ended_at: string | null
-  has_ablation: boolean
-  /* Attribution to the measurement contract this run launched under, when it
-     carried one. `modified` marks an ad-hoc test: the launch deviated from the
-     profile and the deviation was recorded in the run's snapshot. Bare runs
-     (no profile) carry null. */
-  profile?: RunProfileRef | null
-}
-
-export interface TaskRow {
-  run_task_id: string
-  task_id: string | null
-  instruction_variant: string | null
-  executor_status: string | null
-  executor_duration_seconds: number | null
-  executor_timed_out: boolean | null
-  judges: Partial<Record<"single" | "parallel", JudgeCell | null>>
-  evaluated: boolean
-}
-
-export interface ProgressSnapshot {
-  totals: { executors: number; evaluators: number }
-  executor_done: number
-  evaluator_done: number
-  executor_stats: ExecutorStats
-  evaluator_stats: ExecutorStats
-  active_executors: string[]
-  event_count: number
-}
-
-export interface AblationGroup {
-  task_id: string
-  judge_mode: string
-  instruction_variant: string
-  runs: number
-  attempts?: number
-  inconclusive?: number
-  overall_pass_count: number
-  overall_pass_rate: number | null
-  mean_rubric_pass_rate: number | null
-  delta_vs_baseline?: {
-    overall_pass_rate_delta: number | null
-    mean_rubric_pass_rate_delta: number | null
-  }
-}
-
-export interface RunDetail extends RunOverview {
-  config: Record<string, unknown> | null
-  tasks: TaskRow[]
-  progress: ProgressSnapshot | null
-  ablation: { groups: AblationGroup[] } | null
-}
-
-export interface RubricResult {
-  rubric_id: string
-  answer: boolean | null
-  expected: boolean
-  passed: boolean | null
-  fail_fast: boolean
-  evidence: string
-}
-
-export interface JudgeAggregate {
-  mode: string
-  outcome: TaskRunOutcome
-  overall_pass: boolean | null
-  passed_count: number
-  total_count: number
-  missing: string[]
-  fail_fast_failures: string[]
-  results: RubricResult[]
-  error?: string
-}
-
-export interface ExecutorStatus {
-  command?: string[]
-  status?: string
-  exit_code?: number | null
-  timed_out?: boolean
-  started_at?: string
-  ended_at?: string
-  duration_seconds?: number
-}
-
-export interface TraceSummary {
-  thread_id: string | null
-  event_type_counts: Record<string, number>
-  item_type_counts: Record<string, number>
-  reasoning_items: { id?: string; text?: string | null }[]
-  agent_messages: { id?: string; text?: string | null }[]
-  command_executions: {
-    id?: string
-    command?: string
-    status?: string
-    exit_code?: number | null
-    aggregated_output?: string | null
-  }[]
-  file_changes: { id?: string; status?: string; changes?: unknown }[]
-  usage: Record<string, unknown> | null
-}
-
-export interface ArtifactManifest {
-  outputs_dir: string
-  file_count: number
-  entries: { path: string; kind: string; size_bytes?: number; sha256?: string }[]
-}
-
-export interface TaskRunDetail {
-  run_id: string
-  run_task_id: string
-  task_id: string | null
-  instruction_variant: string | null
-  executor: ExecutorStatus | null
-  executor_timing: Record<string, unknown> | null
-  judges: Partial<
-    Record<"single" | "parallel", { aggregate: JudgeAggregate; status: ExecutorStatus | null }>
-  >
-  rubric_questions: Record<string, string>
-  trace_summary: TraceSummary | null
-  artifact_manifest: ArtifactManifest | null
-  /* Honest fallback when artifact_manifest.json is missing: a direct listing
-     of workspace/outputs/ (no hashes, taken now rather than at run end). */
-  outputs_listing: OutputsListing | null
-  /* Task runs in the same run sharing this base task (ablation variants and
-     repeats) — drives the Deliverables variant switcher. */
-  variant_group: VariantSibling[]
-  final_message: string | null
-  stderr_tail: string | null
-  raw_event_count: number
-  evaluated: boolean
-}
-
-export interface Meta {
-  runs_dir: string
-  cwd: string
-  runtimes_dir?: string
-  skills_dir?: string
-  tasks_dirs: { dir: string; exists: boolean }[]
-  agents: string[]
-  judge_modes: string[]
-  auth_modes: string[]
-  backends: string[]
-  thinking_efforts: string[]
-}
-
-export interface TaskPackage {
-  id: string
-  dir_name: string
-  name: string
-  rubric_count: number
-  timeout_seconds: number | null
-  allow_web_search: boolean | null
-  rigor_count: number
-  has_human_reference: boolean
-  /* Readiness facts: a broken package (unparseable task.json, missing prompt)
-     is listed with `error` instead of being silently dropped; `warning` marks
-     runnable-but-unscorable states such as an empty rubrics file. */
-  error?: string | null
-  warning?: string | null
-}
-
-export interface TaskLibrary {
-  dir: string
-  exists: boolean
-  tasks: TaskPackage[]
-}
-
-export interface Launch {
-  run_id: string
-  argv: string[]
-  pid: number
-  started_at: string
-  log_path: string
-  running: boolean
-  exit_code: number | null
-}
-
-export interface RawEventsPage {
-  events: Record<string, unknown>[]
-  offset: number
-  total: number
-  next_offset: number | null
-}
-
-export interface LaunchPayload {
-  dry_run?: boolean
-  run_id: string
-  tasks_dir: string
-  tasks: string[]
-  executor_agent: string
-  executor_model: string
-  executor_backend: string
-  docker_image: string
-  auth_mode: string
-  thinking_effort: string
-  web_search: string
-  evaluator_agent: string
-  evaluator_model: string
-  judge_mode: string
-  evaluator_timeout_seconds: string
-  seed: string
-  batch_size: string
-  repeat: string
-  extra_args: string
-}
-
-export interface DirListing {
-  path: string
-  parent: string | null
-  task_count: number
-  dirs: { name: string; path: string; task_count: number; is_task_package: boolean }[]
-}
-
-export interface ImportFile {
-  path: string
-  content_b64: string
-}
-
-export interface ImportReport {
-  valid: boolean
-  errors: string[]
-  warnings: string[]
-  task: { id?: string; name?: string; rubric_count?: number }
-  file_count: number
-  installed_to?: string
-}
-
-export interface TaskPackageDetail {
-  dir: string
-  dir_name: string
-  id: string
-  name: string
-  timeout_seconds: number | null
-  allow_web_search: boolean | null
-  prompt: string | null
-  rubrics: {
-    id: string
-    fail_fast: boolean
-    expected: boolean
-    question: string
-  }[]
-  /* Public expert-step detail (step_id/step_type/instruction). The private
-     `reasoning` trace is never included — see contracts.HumanReferenceStepDetail. */
-  human_reference_steps: HumanReferenceStepDetail[]
-  human_reference_step_count: number
-  /* Public rigor requirements (id/rubric_id/requirement). All fields are
-     executor-facing content — no private field is withheld. */
-  rigors: RigorDetail[]
-  rigor_count: number
-}
-
-export interface PreflightCheck {
-  id: string
-  label: string
-  status: "ok" | "warn" | "fail"
-  hint: string
-}
-
-export interface SharedConfig {
-  evaluator_agent: string
-  evaluator_model: string
-  evaluator_auth_mode: string
-  judge_mode: string
-  evaluator_timeout_seconds: number | string | null
-  executor_backend: string
-  docker_image: string
-  executor_auth_mode: string
-  seed: number | string | null
-  batch_size: number | string | null
-  repeat: number | string | null
-  max_evaluator_parallel?: number | string | null
-  claude_max_turns?: number | string | null
-  /* Run-level web-search override: "task" follows each task package's
-     allow_web_search; "allow"/"deny" force it where the runner enforces web
-     access (Claude Code's tool allowlist, Codex's --search). */
-  web_search_mode?: string
-  extra_args?: string
-  /* Shared executor skills injected into every agent under test. Groups are
-     kept separate from individual ids so the two never overlap (the runner
-     expands groups and rejects a skill installed twice). */
-  executor_skills?: string[]
-  executor_skill_groups?: string[]
-  /* Instruction ablation (research): a sweep over a task's human_reference expert
-     steps. Mode is none/traverse/select/ablation; instruction_steps carries the
-     chosen step ids for select mode. Shared across contenders like the judge. */
-  instruction_mode?: string
-  instruction_steps?: string[]
-  /* Rigor injection (research): restates selected rubric-level requirements as
-     hard requirements in the prompt. Mode is none/select; rigors carries the
-     chosen rigor ids. Shared across contenders like the judge, and it does not
-     expand executor variants. */
-  rigor_mode?: string
-  rigors?: string[]
-  evaluator_provider_id?: string
-  evaluator_gateway?: {
-    opencode_provider?: string
-    opencode_base_url?: string
-    opencode_api_key_env?: string
-  } | null
-  judge_env?: Record<string, { value?: string; from_env?: string }> | null
-}
-
-export interface Profile {
-  id: string
-  name: string
-  shared: Partial<SharedConfig>
-  per_contender_fields: string[]
-}
-
-export interface ProfilesPayload {
-  default_profile_id: string | null
-  profiles: Profile[]
-  persisted?: boolean
-}
-
-export interface AgentTemplate {
-  template_id: string
-  title: string
-  docs_url: string
-  description: string
-  spec: Record<string, unknown>
-}
-
-export interface CustomRuntimePayload {
-  id: string
-  label?: string
-  description?: string
-  icon?: string
-  command: string
-  args: string[]
-  judge_args?: string[] | null
-  model_flag?: string
-  prompt_via: string
-  prompt_flag?: string
-  parser: string
-  env?: Record<string, string>
-  protocol: string
-  base_url_env?: string
-  api_key_env?: string
-  docker_image?: string
-  docker_env_passthrough?: string[]
-}
-
-export interface ExperimentRecord {
-  id: string
-  created_at: string
-  tasks_dir: string
-  tasks: string[]
-  shared: Partial<SharedConfig>
-  contenders: {
-    label: string
-    agent: string
-    agent_label?: string
-    model: string
-    run_id: string
-    backend: string
-    backend_downgraded: boolean
-  }[]
-  run_ids: string[]
-}
-
-export interface ExperimentSummary extends ExperimentRecord {
-  runs: (RunOverview | { run_id: string; status: "missing" })[]
-}
-
-export interface MatrixCell {
-  passed: number
-  total: number
-}
-
-export interface ExperimentDetail extends ExperimentRecord {
-  contenders: (ExperimentRecord["contenders"][number] & { run: RunOverview | null })[]
-  matrix: {
-    task_id: string
-    rubrics: { id: string; question: string; cells: Record<string, MatrixCell> }[]
-  }[]
-}
+export type * from "./api-types"
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init)
@@ -535,9 +60,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload as T
 }
 
+function jsonBody(payload: unknown): RequestInit {
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }
+}
+
 export const api = {
   meta: () => request<Meta>("/api/meta"),
-  runs: () => request<{ runs: RunOverview[] }>("/api/runs"),
+  runs: () => request<RunsPayload>("/api/runs"),
   run: (runId: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`),
   runLive: (runId: string) =>
     request<RunLivePayload>(`/api/runs/${encodeURIComponent(runId)}/live`),
@@ -563,117 +96,72 @@ export const api = {
         taskRunId,
       )}/artifact?path=${encodeURIComponent(path)}`,
     ),
-  coverage: () => request<CoveragePayload>("/api/coverage"),
-  tasklib: () => request<{ libraries: TaskLibrary[] }>("/api/tasklib"),
+  coverage: (profileId?: string | null) =>
+    request<CoveragePayload>(
+      `/api/coverage${profileId ? `?profile=${encodeURIComponent(profileId)}` : ""}`,
+    ),
+  tasklib: () => request<TaskLibrariesPayload>("/api/tasklib"),
   taskHistory: (dir?: string | null) =>
     request<TaskHistoryPayload>(
       `/api/tasklib/history${dir ? `?dir=${encodeURIComponent(dir)}` : ""}`,
     ),
-  launches: () => request<{ launches: Launch[] }>("/api/launches"),
-  launch: (payload: LaunchPayload) =>
-    request<Launch & { argv: string[]; dry_run?: boolean }>("/api/launch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
+  launches: () => request<LaunchesPayload>("/api/launches"),
+  launch: (payload: LaunchPayload) => request<Launch>("/api/launch", jsonBody(payload)),
+  planLaunch: (payload: LaunchPayload) =>
+    request<LaunchPlanResponse>("/api/launch", jsonBody({ ...payload, dry_run: true })),
   stop: (runId: string) =>
     request<Launch>(`/api/launches/${encodeURIComponent(runId)}/stop`, { method: "POST" }),
   browse: (path?: string | null) =>
     request<DirListing>(`/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   registerTasksDir: (dir: string) =>
-    request<{ libraries: TaskLibrary[] }>("/api/tasklib/dirs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dir }),
-    }),
+    request<TaskLibrariesPayload>("/api/tasklib/dirs", jsonBody({ dir })),
   taskDetail: (dir: string, name: string) =>
     request<TaskPackageDetail>(
       `/api/tasklib/task?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(name)}`,
     ),
   importTasks: (targetDir: string, files: ImportFile[], dryRun: boolean) =>
-    request<ImportReport>("/api/tasks/import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_dir: targetDir, files, dry_run: dryRun }),
-    }),
-  preflight: (params: Record<string, string>) =>
-    request<{ checks: PreflightCheck[] }>(
-      `/api/preflight?${new URLSearchParams(params).toString()}`,
+    request<ImportReport>(
+      "/api/tasks/import",
+      jsonBody({ target_dir: targetDir, files, dry_run: dryRun }),
     ),
+  preflight: (params: Record<string, string>) =>
+    request<PreflightPayload>(`/api/preflight?${new URLSearchParams(params).toString()}`),
   agents: () => request<AgentsPayload>("/api/agents"),
   agentStatus: (checkUpdates = false) =>
     request<AgentStatusPayload>(
       `/api/agents/status${checkUpdates ? "?check_updates=1" : ""}`,
     ),
-  agentTemplates: () => request<{ templates: AgentTemplate[] }>("/api/agents/templates"),
+  agentTemplates: () => request<AgentTemplatesPayload>("/api/agents/templates"),
   skills: () => request<SkillsPayload>("/api/skills"),
   saveAgent: (payload: CustomRuntimePayload) =>
-    request<CustomRuntime>("/api/agents", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
+    request<CustomRuntime>("/api/agents", jsonBody(payload)),
   deleteAgent: (specId: string) =>
-    request<{ deleted: string }>(`/api/agents/${encodeURIComponent(specId)}/delete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    }),
+    request<DeletedAgentPayload>(
+      `/api/agents/${encodeURIComponent(specId)}/delete`,
+      jsonBody({}),
+    ),
   installAgent: (agentId: string) =>
-    request<AgentInstallResult>("/api/agents/install", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ agent_id: agentId }),
-    }),
+    request<AgentInstallResult>("/api/agents/install", jsonBody({ agent_id: agentId })),
   providers: () => request<ProvidersPayload>("/api/providers"),
   providerCliStatus: () => request<ProviderCliStatusPayload>("/api/providers/cli-status"),
-  saveProviders: (payload: { providers: Omit<AiProvider, "agent" | "key_present" | "cli_status">[] }) =>
-    request<ProvidersPayload>("/api/providers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
+  saveProviders: (payload: SaveProvidersPayload) =>
+    request<ProvidersPayload>("/api/providers", jsonBody(payload)),
   refreshProviderModels: (id: string) =>
-    request<ProvidersPayload>(`/api/providers/${encodeURIComponent(id)}/refresh-models`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    }),
+    request<ProvidersPayload>(
+      `/api/providers/${encodeURIComponent(id)}/refresh-models`,
+      jsonBody({}),
+    ),
   profiles: () => request<ProfilesPayload>("/api/profiles"),
   saveProfiles: (payload: ProfilesPayload) =>
-    request<ProfilesPayload>("/api/profiles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-  experiments: () => request<{ experiments: ExperimentSummary[] }>("/api/experiments"),
+    request<ProfilesPayload>("/api/profiles", jsonBody(payload)),
+  experiments: () => request<ExperimentsPayload>("/api/experiments"),
   experiment: (id: string) =>
     request<ExperimentDetail>(`/api/experiments/${encodeURIComponent(id)}`),
-  createExperiment: (payload: {
-    name: string
-    tasks_dir: string
-    tasks: string[]
-    shared: Partial<SharedConfig>
-    contenders: Contender[]
-    /* When launching under a profile, the backend diffs the effective payload
-       against this profile and records any deviation in the run snapshot
-       (`modified`/`modified_fields`). Omit for a bare (custom) launch. */
-    profile_id?: string
-    dry_run?: boolean
-  }) =>
-    request<
-      {
-        name: string
-        plans: ExperimentPlanItem[]
-        execution_estimate?: ExecutionEstimate
-        dry_run?: boolean
-      } & Partial<ExperimentRecord>
-    >(
+  planExperiment: (payload: CreateExperimentPayload) =>
+    request<ExperimentPlanResponse>(
       "/api/experiments",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
+      jsonBody({ ...payload, dry_run: true }),
     ),
+  createExperiment: (payload: CreateExperimentPayload) =>
+    request<ExperimentLaunchResponse>("/api/experiments", jsonBody(payload)),
 }

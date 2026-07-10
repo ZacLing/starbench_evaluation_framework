@@ -864,7 +864,7 @@ codex/frontend-decomposition
 
 原始诊断基线和章节编号保持不变；本节记录后续实施结果。可信度修复落在
 `codex/hardening-contracts-paths`，Phase 4 读模型重构继续在 `codex/read-models`
-实施。
+实施，Phase 5 前端与 API 契约收敛在 `codex/frontend-decomposition` 实施。
 
 ### 14.1 已完成的正确性闭环
 
@@ -911,3 +911,31 @@ D-012（RunCatalog/查询性能）和 D-013（前端大模块拆分）没有被�
 
 Phase 4 的停止边界是查询性能和模块职责闭环，不引入数据库，也不改变文件系统作为
 唯一事实源的地位。D-012 至此关闭；D-013 继续由 Phase 5 处理。
+
+### 14.4 Phase 5：Frontend 与生成式 API 契约（已完成）
+
+- `NewRun.tsx` 从 3882 行收敛为 518 行编排层；Mode、Tasks、Agents、SharedConfig、
+  Review 分别进入步骤组件，draft、plan preview 和 preflight 分别由
+  `useRunDraft`、`usePlanPreview`、`usePreflight` 管理。draft 发生变化时旧 plan 立即
+  失效，Launch 不可能消费过期预览。
+- Python `contracts.py` 成为 HTTP wire DTO 的唯一来源；生成器当前输出 131 个
+  TypeScript 类型，`api.ts` 只保留请求客户端和导出，测试禁止重新引入手写 wire
+  interface。Profile、experiment planning、preflight、runs、tasks、coverage 和
+  provider/agent payload 均走同一生成链路。
+- planning service 明确返回 `profile_modified` 与 `profile_modified_fields`，前端不再
+  推导 profile contract 偏差；dry-run 使用只读 preview path，不创建临时 snapshot，
+  只有真实 launch 才物化冻结配置。
+- Coverage read model 为完整 task × agent 矩阵生成 cell，并直接给出 `breached`、
+  `defended`、`inconclusive`、`untested` 四态；前端只负责呈现，不再根据 pass/fail
+  字段二次推断 HSW 结论。Agent/Task 视角共用 verdict primitive。
+- 页面按 route lazy load；production build 已消除原有大 chunk 警告。NewRun route
+  约 85 kB，Coverage 约 10 kB，基础入口约 353 kB，Recharts 只随图表 route 加载。
+- 浏览器回归覆盖：未选 task 时 Next 禁用并提示；整行可选择 task；无效实验名会清空
+  plan 并禁用 Launch，修复后 plan 与 Launch 自动恢复；Coverage 四态完整显示；
+  390 × 844 移动端和 1280 px 桌面端均无页面级横向溢出，浏览器 error log 为空。
+- 最终验证：411 项 Python tests 通过，generated contracts freshness 通过，frontend
+  lint 无 error（保留 11 条既有 Fast Refresh warning），production build 通过。
+
+Phase 5 的停止边界是关闭 D-013、消除前端对后端业务规则的重复解释，并建立可持续的
+wire contract 生成链路。本阶段不引入数据库、远程调度、多租户或 Kubernetes，也不
+改变文件系统 artifact 的事实源地位。至此本文 Phase 4/5 目标均已达到退出标准。

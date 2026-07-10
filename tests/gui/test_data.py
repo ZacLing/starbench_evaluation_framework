@@ -954,6 +954,7 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(cell["judged"], 3)
         self.assertEqual(cell["passed"], 0)
         self.assertEqual(cell["inconclusive"], 0)
+        self.assertEqual(cell["state"], "defended")
         codex = next(col for col in payload["columns"] if col["key"] == "codex::gpt-5.5")
         self.assertEqual(codex["run_count"], 2)
 
@@ -973,6 +974,7 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(cell["judged"], 2)
         self.assertEqual(cell["passed"], 0)
         self.assertEqual(cell["inconclusive"], 1)
+        self.assertEqual(cell["state"], "defended")
 
     def test_distinct_configs_become_columns_sorted_by_agent_then_model(self) -> None:
         payload = self._coverage()
@@ -993,16 +995,20 @@ class CoverageTest(unittest.TestCase):
         )
         demo = payload["rows"][0]
         self.assertTrue(demo["breached"])
-        self.assertEqual(self._cell(demo, "claude::claude-opus-4-8")["passed"], 1)
+        breached = self._cell(demo, "claude::claude-opus-4-8")
+        self.assertEqual(breached["passed"], 1)
+        self.assertEqual(breached["state"], "breached")
         # codex (3 judged) + claude (1 judged) count; the unknown column has
         # no demo_task cell at all.
         self.assertEqual(demo["tested_columns"], 2)
         self.assertTrue(all(not row["breached"] for row in payload["rows"][1:]))
 
-    def test_library_task_never_run_is_a_zero_cell_row(self) -> None:
+    def test_library_task_never_run_has_explicit_untested_cells(self) -> None:
         row = self._row(self._coverage(), "untouched_task")
         self.assertTrue(row["in_library"])
-        self.assertEqual(row["cells"], [])
+        self.assertTrue(row["cells"])
+        self.assertTrue(all(cell["state"] == "untested" for cell in row["cells"]))
+        self.assertTrue(all(cell["total"] == 0 for cell in row["cells"]))
         self.assertEqual(row["tested_columns"], 0)
         self.assertFalse(row["breached"])
 
@@ -1016,6 +1022,7 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(cell["total"], 1)
         self.assertEqual(cell["judged"], 0)
         self.assertEqual(cell["passed"], 0)
+        self.assertEqual(cell["state"], "inconclusive")
         # No task_summary, no status timestamps: honest null, never estimated.
         self.assertIsNone(cell["last_tested"])
 
@@ -1132,11 +1139,11 @@ class CoverageTest(unittest.TestCase):
         self.assertTrue(gemini["rostered"])
         # In the roster, never run: a column with no runs behind it…
         self.assertEqual(gemini["run_count"], 0)
-        # …and no task row carries a cell for it — the hole in the denominator.
+        # …and every row carries an explicit untested cell for the denominator hole.
         for row in payload["rows"]:
-            self.assertNotIn(
-                "gemini::gemini-3.1-pro", [cell["column_key"] for cell in row["cells"]]
-            )
+            cell = self._cell(row, "gemini::gemini-3.1-pro")
+            self.assertEqual(cell["state"], "untested")
+            self.assertEqual(cell["total"], 0)
 
     def test_empty_roster_is_not_a_roster_source(self) -> None:
         # A profile whose roster is empty declares no denominator: fall back.

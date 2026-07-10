@@ -385,11 +385,17 @@ def plan_experiment(
                     f"Contender {label}: assembled profile snapshot violates its "
                     f"contract: {error}"
                 )
-            fd, snapshot_path = tempfile.mkstemp(
-                prefix=f"starbench-profile-snapshot-{run_id}-", suffix=".json"
-            )
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
+            if payload.get("dry_run"):
+                # Plan previews are read-only and may run on every form edit.
+                # Show the transport in argv without leaking one temp file per
+                # preview; the non-dry launch request materializes the snapshot.
+                snapshot_path = "<generated-at-launch>"
+            else:
+                fd, snapshot_path = tempfile.mkstemp(
+                    prefix=f"starbench-profile-snapshot-{run_id}-", suffix=".json"
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
             argv += ["--profile-snapshot", snapshot_path]
 
         executor_env_spec = contender.get("env") if isinstance(contender.get("env"), dict) else {}
@@ -504,4 +510,6 @@ def plan_experiment(
         "shared": shared,
         "plans": plans,
         "execution_estimate": execution_estimate,
+        "profile_modified": bool(snapshot_modified_fields),
+        "profile_modified_fields": snapshot_modified_fields,
     }

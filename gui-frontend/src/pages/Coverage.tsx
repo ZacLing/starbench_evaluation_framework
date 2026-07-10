@@ -14,7 +14,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
-import { ErrorNote } from "@/pages/Dashboard"
+import { HswVerdict } from "@/components/verdict"
+import { ErrorNote } from "@/components/error-note"
 import { cn } from "@/lib/utils"
 import { api, type CoverageCell, type CoverageColumn, type CoverageRow } from "@/lib/api"
 import { fmtRelative } from "@/lib/format"
@@ -30,15 +31,8 @@ import { fmtRelative } from "@/lib/format"
    exact judged fraction. Every state stays glyph + word + color, never color
    alone; the meter adds a fourth, length-coded channel for magnitude. */
 
-type CellState = "breached" | "holds" | "inconclusive" | "no-verdicts"
-
-function cellState(cell: CoverageCell): CellState {
-  if (cell.judged === 0) return cell.inconclusive > 0 ? "inconclusive" : "no-verdicts"
-  return cell.passed > 0 ? "breached" : "holds"
-}
-
 export default function Coverage() {
-  const coverageQuery = useQuery({ queryKey: ["coverage"], queryFn: api.coverage })
+  const coverageQuery = useQuery({ queryKey: ["coverage"], queryFn: () => api.coverage() })
 
   if (coverageQuery.isPending) return <Skeleton className="h-96" />
   if (coverageQuery.isError) return <ErrorNote message={(coverageQuery.error as Error).message} />
@@ -154,24 +148,12 @@ function ReadingKey({ taskCount, configCount }: { taskCount: number; configCount
         breaches the task.
       </span>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-        <KeyItem glyph="—" word="untested" tone="text-muted-foreground/70" />
-        <KeyItem glyph="◌" word="no verdicts" tone="text-muted-foreground" />
-        <KeyItem glyph="!" word="inconclusive" tone="text-warn-ink" />
-        <KeyItem glyph="✓" word="holds" tone="text-pass-ink" />
-        <KeyItem glyph="⚠" word="breached" tone="text-fail-ink" />
+        <HswVerdict state="untested" />
+        <HswVerdict state="inconclusive" />
+        <HswVerdict state="defended" />
+        <HswVerdict state="breached" />
       </div>
     </div>
-  )
-}
-
-function KeyItem({ glyph, word, tone }: { glyph: string; word: string; tone: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span aria-hidden className={cn("w-3 text-center font-medium", tone)}>
-        {glyph}
-      </span>
-      <span className="text-muted-foreground">{word}</span>
-    </span>
   )
 }
 
@@ -191,14 +173,10 @@ function MatrixRow({ row, columns }: { row: CoverageRow; columns: CoverageColumn
               className={cn(
                 "align-top",
                 index > 0 && "border-l border-border/60",
-                !cell && "bg-muted/35",
+                (!cell || cell.state === "untested") && "bg-muted/35",
               )}
             >
-              {cell ? (
-                <MatrixCell taskId={row.task_id} column={column} cell={cell} />
-              ) : (
-                <Untested />
-              )}
+              {cell ? <MatrixCell taskId={row.task_id} column={column} cell={cell} /> : <Untested />}
             </TableCell>
           )
         })
@@ -214,12 +192,10 @@ function MatrixRow({ row, columns }: { row: CoverageRow; columns: CoverageColumn
 /* The sticky first column carries the task's overall posture so the row's
    verdict reads before the eye scans across the attack channels. */
 function TaskHeader({ row }: { row: CoverageRow }) {
-  const tested = row.cells.length
-  const breachedCount = row.cells.filter((cell) => cellState(cell) === "breached").length
-  const judgedCols = row.cells.filter((cell) => cell.judged > 0).length
-  const inconclusiveCols = row.cells.filter(
-    (cell) => cell.judged === 0 && cell.inconclusive > 0,
-  ).length
+  const measured = row.cells.filter((cell) => cell.state !== "untested")
+  const breachedCount = measured.filter((cell) => cell.state === "breached").length
+  const defendedCount = measured.filter((cell) => cell.state === "defended").length
+  const inconclusiveCount = measured.filter((cell) => cell.state === "inconclusive").length
 
   return (
     <div className="grid min-w-0 gap-1.5 py-0.5">
@@ -227,27 +203,16 @@ function TaskHeader({ row }: { row: CoverageRow }) {
         {row.task_id}
       </span>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        {tested === 0 ? (
-          <span className="text-xs text-muted-foreground">not yet tested</span>
+        {measured.length === 0 ? (
+          <HswVerdict state="untested" />
         ) : breachedCount > 0 ? (
-          <span className="flex items-center gap-1 font-mono text-xs font-medium tabular-nums text-fail-ink">
-            <span aria-hidden>⚠</span>
-            breached {breachedCount}/{tested}
-          </span>
-        ) : judgedCols > 0 ? (
-          <span className="flex items-center gap-1 font-mono text-xs font-medium tabular-nums text-pass-ink">
-            <span aria-hidden>✓</span>
-            holds {judgedCols}/{tested} judged
-          </span>
-        ) : inconclusiveCols > 0 ? (
-          <span className="flex items-center gap-1 font-mono text-xs font-medium tabular-nums text-warn-ink">
-            <span aria-hidden>!</span>
-            inconclusive {inconclusiveCols}/{tested}
-          </span>
+          <HswVerdict state="breached" count={`${breachedCount}/${measured.length}`} />
+        ) : defendedCount > 0 ? (
+          <HswVerdict state="defended" count={`${defendedCount}/${measured.length}`} />
+        ) : inconclusiveCount > 0 ? (
+          <HswVerdict state="inconclusive" count={`${inconclusiveCount}/${measured.length}`} />
         ) : (
-          <span className="font-mono text-xs tabular-nums text-muted-foreground">
-            {tested} tested · no verdicts
-          </span>
+          <HswVerdict state="untested" />
         )}
         {!row.in_library && (
           <Badge variant="outline" className="font-normal text-muted-foreground">
@@ -321,43 +286,26 @@ function MatrixCell({
   cell: CoverageCell
 }) {
   const navigate = useNavigate()
-  const state = cellState(cell)
+  const state = cell.state
+  if (state === "untested") return <Untested />
   const pending = Math.max(0, cell.total - cell.judged - cell.inconclusive)
   const recency = fmtRelative(cell.last_tested)
 
-  const head =
-    state === "breached"
-      ? { glyph: "⚠", word: "breached", ink: "text-fail-ink" }
-      : state === "holds"
-        ? { glyph: "✓", word: "holds", ink: "text-pass-ink" }
-        : state === "inconclusive"
-          ? { glyph: "!", word: "inconclusive", ink: "text-warn-ink" }
-        : { glyph: "◌", word: "no verdicts", ink: "text-muted-foreground" }
-
   const value =
     state === "inconclusive"
-      ? `${cell.inconclusive} invalid`
-      : state === "no-verdicts"
-      ? `${cell.total} run${cell.total === 1 ? "" : "s"}`
+      ? `${cell.inconclusive || cell.total} invalid`
       : `${cell.passed}/${cell.judged}`
   const valueInk =
     state === "breached"
       ? "text-fail-ink"
-      : state === "holds"
+      : state === "defended"
         ? "text-pass-ink"
-        : state === "inconclusive"
-          ? "text-warn-ink"
-        : "text-muted-foreground"
+        : "text-warn-ink"
 
   const body = (
     <div className="grid min-h-[3.5rem] content-start gap-2 py-0.5">
       <div className="flex items-baseline justify-between gap-2">
-        <span className={cn("flex items-center gap-1.5 text-xs font-medium", head.ink)}>
-          <span aria-hidden className="text-[0.8125rem] leading-none">
-            {head.glyph}
-          </span>
-          {head.word}
-        </span>
+        <HswVerdict state={state} />
         {recency && (
           <span className="shrink-0 font-mono text-[0.6875rem] tabular-nums text-muted-foreground">
             {recency}
@@ -385,12 +333,10 @@ function MatrixCell({
     column.model ? ` ${column.model}` : ""
   }`
   const stateLabel =
-    state === "no-verdicts"
-      ? `${cell.total} run${cell.total === 1 ? "" : "s"}, no verdicts yet`
-      : state === "inconclusive"
+    state === "inconclusive"
         ? `${cell.inconclusive} inconclusive run${cell.inconclusive === 1 ? "" : "s"}, excluded from HSW scoring`
-      : state === "holds"
-        ? `holds, 0 of ${cell.judged} judged attempts passed`
+      : state === "defended"
+        ? `defended, 0 of ${cell.judged} judged attempts passed`
         : `breached, ${cell.passed} of ${cell.judged} judged attempts passed`
   const pendingLabel = pending > 0 ? `, ${pending} run${pending === 1 ? "" : "s"} pending` : ""
   const inconclusiveLabel =

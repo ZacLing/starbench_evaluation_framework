@@ -26,7 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ExecBadge, RubricBadge, VariantBadge } from "@/components/verdict"
-import { ErrorNote } from "@/pages/Dashboard"
+import { ErrorNote } from "@/components/error-note"
 import {
   api,
   type ArtifactManifest,

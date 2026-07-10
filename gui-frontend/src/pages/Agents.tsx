@@ -38,7 +38,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { AgentIcon, CUSTOM_ICON_CHOICES, compatibleProviders } from "@/components/brand"
-import { ErrorNote } from "@/pages/Dashboard"
+import { ErrorNote } from "@/components/error-note"
 import {
   api,
   type AgentTemplate,

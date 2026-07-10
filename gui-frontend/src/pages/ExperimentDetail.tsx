@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/table"
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
 import { StatusBadge, PassSummaryBadge } from "@/components/verdict"
-import { ErrorNote } from "@/pages/Dashboard"
+import { ErrorNote } from "@/components/error-note"
 import { api, type ExperimentDetail as ExperimentDetailData, type MatrixCell } from "@/lib/api"
 import { fmtTime, spanBetween } from "@/lib/format"
 import { cn } from "@/lib/utils"

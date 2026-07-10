@@ -45,59 +45,24 @@ import {
 } from "@/components/brand"
 import { Hint } from "@/components/hint"
 import { ProviderModelPicker } from "@/components/model-picker"
-import { ErrorNote } from "@/pages/Dashboard"
+import { ErrorNote } from "@/components/error-note"
 import {
   api,
   type AgentsPayload,
   type AiProvider,
   type Meta,
-  type ProfilesPayload,
+  type Profile,
+  type RosterEntry,
   type SharedConfig,
   type TaskLibrary,
 } from "@/lib/api"
 import { shortDir } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
-/* ---------- profile shape ----------
-   The generated `Profile` in api.ts only types the fields the New-experiment
-   wizard reads (id/name/shared/per_contender_fields). A profile on disk can
-   also carry a server-assigned `rev` and the two blocks that make it a full,
-   launchable measurement contract: `roster` (the executor agent columns) and
-   `task_set`. We type them here and read the payload structurally rather than
-   editing the generated contract. */
-interface RosterEntry {
-  agent: string
-  model?: string
-  label?: string
-  provider_id?: string
-  thinking_effort?: string
-}
-
-interface TaskSet {
-  tasks_dir: string
-  task_ids: string[]
-}
-
-interface FullProfile {
-  id: string
-  name: string
-  rev?: number
-  shared: Partial<SharedConfig>
-  per_contender_fields: string[]
-  roster?: RosterEntry[]
-  task_set?: TaskSet
-}
-
-interface FullProfilesPayload {
-  default_profile_id: string | null
-  profiles: FullProfile[]
-  persisted?: boolean
-}
-
 /* Editor state: a profile plus the two flags that decide whether the optional
    `roster`/`task_set` keys are written at all, so a profile that never declared
    them is not given empty ones by accident. */
-interface Draft extends FullProfile {
+interface Draft extends Profile {
   hasRoster: boolean
   hasTaskSet: boolean
 }
@@ -289,7 +254,7 @@ function resolveLibrary(
   )
 }
 
-function toDraft(profile: FullProfile): Draft {
+function toDraft(profile: Profile): Draft {
   return {
     id: profile.id,
     name: profile.name,
@@ -331,7 +296,7 @@ function newDraft(): Draft {
 /* A draft minus the editor-only flags, with the optional blocks written only
    when declared and numeric fields coerced so an unchanged save round-trips to
    the same content (the server bumps `rev` on any content change). */
-function fromDraft(draft: Draft): FullProfile {
+function fromDraft(draft: Draft): Profile {
   const shared: Record<string, unknown> = { ...draft.shared }
   for (const key of NUMERIC_SHARED) {
     const value = shared[key]
@@ -349,7 +314,7 @@ function fromDraft(draft: Draft): FullProfile {
       out.thinking_effort = entry.thinking_effort
     return out
   })
-  const profile: FullProfile = {
+  const profile: Profile = {
     id: draft.id.trim(),
     name: draft.name.trim(),
     shared: shared as Partial<SharedConfig>,
@@ -366,7 +331,7 @@ export default function Profiles() {
   const queryClient = useQueryClient()
   const profilesQuery = useQuery({
     queryKey: ["profiles"],
-    queryFn: async () => (await api.profiles()) as unknown as FullProfilesPayload,
+    queryFn: api.profiles,
   })
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
@@ -399,16 +364,16 @@ export default function Profiles() {
 
   const profilesJsonPath = meta ? `${meta.runs_dir}/profiles.json` : null
 
-  const persistAll = async (next: FullProfile[], defaultId: string | null, message: string) => {
+  const persistAll = async (next: Profile[], defaultId: string | null, message: string) => {
     await api.saveProfiles({
       default_profile_id: defaultId,
       profiles: next,
-    } as unknown as ProfilesPayload)
+    })
     await queryClient.invalidateQueries({ queryKey: ["profiles"] })
     toast.success(message)
   }
 
-  const openEdit = (profile: FullProfile) => {
+  const openEdit = (profile: Profile) => {
     setIsNew(false)
     setEditingOriginalId(profile.id)
     setEditing(toDraft(profile))
@@ -420,7 +385,7 @@ export default function Profiles() {
     setEditing(newDraft())
   }
 
-  const openDuplicate = (profile: FullProfile) => {
+  const openDuplicate = (profile: Profile) => {
     let id = `${profile.id}-copy`
     let n = 2
     while (profiles.some((p) => p.id === id)) id = `${profile.id}-copy-${n++}`
@@ -429,7 +394,7 @@ export default function Profiles() {
     setEditing({ ...toDraft(profile), id, name: `${profile.name} (copy)`, rev: undefined })
   }
 
-  const makeDefault = async (profile: FullProfile) => {
+  const makeDefault = async (profile: Profile) => {
     try {
       await persistAll(
         profiles,
@@ -441,7 +406,7 @@ export default function Profiles() {
     }
   }
 
-  const removeProfile = async (profile: FullProfile) => {
+  const removeProfile = async (profile: Profile) => {
     const next = profiles.filter((p) => p.id !== profile.id)
     const nextDefault =
       payload.default_profile_id === profile.id ? null : payload.default_profile_id
@@ -564,7 +529,7 @@ function ProfileCard({
   onMakeDefault,
   onDelete,
 }: {
-  profile: FullProfile
+  profile: Profile
   refs: RuntimeRef[]
   isDefault: boolean
   explicitDefault: boolean
