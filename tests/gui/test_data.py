@@ -40,6 +40,27 @@ class GuiDataTest(unittest.TestCase):
         self.assertEqual(run["executor_stats"]["timeout"], 1)
         self.assertEqual(run["judge_totals"]["single"], 2)
         self.assertEqual(run["judge_passes"]["single"], 1)
+        self.assertEqual(run["judge_inconclusive"]["single"], 0)
+
+    def test_run_rollup_excludes_inconclusive_from_pass_rate_denominator(self) -> None:
+        run_root = make_run(self.runs_dir, "run_inconclusive")
+        task_root = run_root / "demo_task__baseline_01"
+        summary_path = task_root / "task_summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        aggregate = summary["judges"]["single"]["aggregate"]
+        aggregate.update(
+            {
+                "outcome": "inconclusive_judge",
+                "overall_pass": None,
+                "error": "Judge output contract: invalid answer",
+            }
+        )
+        write_json(summary_path, summary)
+
+        run = data.list_runs(self.runs_dir)[0]
+        self.assertEqual(run["judge_totals"]["single"], 0)
+        self.assertEqual(run["judge_passes"]["single"], 0)
+        self.assertEqual(run["judge_inconclusive"]["single"], 1)
 
     def test_interrupted_run_without_summary(self) -> None:
         run_root = make_run(self.runs_dir, "run_cut", complete=False)
@@ -895,8 +916,26 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(cell["total"], 6)
         self.assertEqual(cell["judged"], 3)
         self.assertEqual(cell["passed"], 0)
+        self.assertEqual(cell["inconclusive"], 0)
         codex = next(col for col in payload["columns"] if col["key"] == "codex::gpt-5.5")
         self.assertEqual(codex["run_count"], 2)
+
+    def test_inconclusive_judge_does_not_count_as_hsw_fail(self) -> None:
+        task_root = self.runs_dir / "run_a" / "demo_task__baseline_01"
+        summary_path = task_root / "task_summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        aggregate = summary["judges"]["single"]["aggregate"]
+        aggregate["outcome"] = "inconclusive_judge"
+        aggregate["overall_pass"] = None
+        aggregate["error"] = "Judge output contract: answer must be a JSON boolean"
+        write_json(summary_path, summary)
+        write_json(task_root / "judges" / "single_aggregate.json", aggregate)
+
+        cell = self._cell(self._row(self._coverage(), "demo_task"), "codex::gpt-5.5")
+        self.assertEqual(cell["total"], 6)
+        self.assertEqual(cell["judged"], 2)
+        self.assertEqual(cell["passed"], 0)
+        self.assertEqual(cell["inconclusive"], 1)
 
     def test_distinct_configs_become_columns_sorted_by_agent_then_model(self) -> None:
         payload = self._coverage()

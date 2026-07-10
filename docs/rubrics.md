@@ -27,6 +27,12 @@ Evaluator output is considered passing when:
 answer == expected
 ```
 
+The evaluator returns only `rubric_id`, a JSON boolean `answer`, and concrete
+`evidence`. The task package remains authoritative for `expected` and
+`fail_fast`; StarBench derives `passed` and `overall_pass`. String values such as
+`"false"`, numeric booleans, missing results, and evaluator-supplied verdict
+fields are invalid Judge output, not task failures.
+
 ## Good Rubrics
 
 Good rubrics are concrete and directly inspectable:

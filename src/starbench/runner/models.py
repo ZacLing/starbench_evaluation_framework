@@ -264,26 +264,69 @@ class ProcessResult:
 
 
 @dataclass(frozen=True)
-class RubricResult:
+class JudgeAnswer:
     rubric_id: str
     answer: bool
+    evidence: str
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "JudgeAnswer":
+        if not isinstance(data, dict):
+            raise ValueError("Judge answer must be a JSON object")
+
+        allowed = {"rubric_id", "answer", "evidence"}
+        unexpected = sorted(set(data) - allowed)
+        if unexpected:
+            raise ValueError(f"unexpected Judge answer fields: {', '.join(unexpected)}")
+        missing = sorted(allowed - set(data))
+        if missing:
+            raise ValueError(f"missing Judge answer fields: {', '.join(missing)}")
+
+        rubric_id = data["rubric_id"]
+        if not isinstance(rubric_id, str) or not rubric_id:
+            raise ValueError("rubric_id must be a non-empty JSON string")
+        answer = data["answer"]
+        if type(answer) is not bool:
+            raise ValueError("answer must be a JSON boolean")
+        evidence = data["evidence"]
+        if not isinstance(evidence, str):
+            raise ValueError("evidence must be a JSON string")
+        return cls(rubric_id=rubric_id, answer=answer, evidence=evidence)
+
+
+@dataclass(frozen=True)
+class RubricResult:
+    rubric_id: str
+    answer: bool | None
     expected: bool
-    passed: bool
+    passed: bool | None
     fail_fast: bool
     evidence: str
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RubricResult":
-        answer = bool(data["answer"])
-        expected = bool(data["expected"])
-        passed = bool(data.get("passed", answer == expected))
+    def from_answer(cls, rubric: Rubric, answer: JudgeAnswer) -> "RubricResult":
+        if answer.rubric_id != rubric.id:
+            raise ValueError(
+                f"Judge answer {answer.rubric_id!r} does not match rubric {rubric.id!r}"
+            )
         return cls(
-            rubric_id=str(data.get("rubric_id") or data.get("id")),
-            answer=answer,
-            expected=expected,
-            passed=passed,
-            fail_fast=bool(data["fail_fast"]),
-            evidence=str(data.get("evidence", "")),
+            rubric_id=rubric.id,
+            answer=answer.answer,
+            expected=rubric.expected,
+            passed=answer.answer == rubric.expected,
+            fail_fast=rubric.fail_fast,
+            evidence=answer.evidence,
+        )
+
+    @classmethod
+    def missing(cls, rubric: Rubric) -> "RubricResult":
+        return cls(
+            rubric_id=rubric.id,
+            answer=None,
+            expected=rubric.expected,
+            passed=None,
+            fail_fast=rubric.fail_fast,
+            evidence="Missing evaluator result.",
         )
 
     def to_dict(self) -> Dict[str, Any]:

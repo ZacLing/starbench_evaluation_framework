@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..domain import TaskRunOutcome, aggregate_outcome
+
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 RUNNING_MTIME_WINDOW_SECONDS = 120
@@ -188,12 +190,15 @@ def _task_dirs(run_root: Path, run_config: Optional[Dict[str, Any]]) -> List[str
 def _judge_cell(aggregate: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not isinstance(aggregate, dict):
         return None
+    outcome = aggregate_outcome(aggregate)
     return {
+        "outcome": outcome.value if outcome is not None else None,
         "overall_pass": aggregate.get("overall_pass"),
         "passed_count": aggregate.get("passed_count"),
         "total_count": aggregate.get("total_count"),
         "missing": len(aggregate.get("missing") or []),
         "fail_fast_failures": len(aggregate.get("fail_fast_failures") or []),
+        "error": aggregate.get("error"),
     }
 
 
@@ -316,6 +321,7 @@ def run_overview(run_root: Path, active_run_ids: Optional[set] = None) -> Dict[s
     executor_stats = {"success": 0, "failed": 0, "timeout": 0, "pending": 0}
     judge_passes = {"single": 0, "parallel": 0}
     judge_totals = {"single": 0, "parallel": 0}
+    judge_inconclusive = {"single": 0, "parallel": 0}
     for row in rows:
         state = row["executor_status"]
         if state in ("success", "failed", "timeout"):
@@ -325,9 +331,16 @@ def run_overview(run_root: Path, active_run_ids: Optional[set] = None) -> Dict[s
         for mode in ("single", "parallel"):
             cell = row["judges"].get(mode)
             if cell is not None:
-                judge_totals[mode] += 1
-                if cell.get("overall_pass"):
+                if type(cell.get("overall_pass")) is bool:
+                    judge_totals[mode] += 1
+                if cell.get("overall_pass") is True:
                     judge_passes[mode] += 1
+                if cell.get("outcome") in {
+                    TaskRunOutcome.INCONCLUSIVE_JUDGE.value,
+                    TaskRunOutcome.INCONCLUSIVE_EXECUTOR.value,
+                    TaskRunOutcome.INVALID_TASK.value,
+                }:
+                    judge_inconclusive[mode] += 1
 
     started_at, ended_at, _ = _progress_bounds(run_root)
     return {
@@ -337,6 +350,7 @@ def run_overview(run_root: Path, active_run_ids: Optional[set] = None) -> Dict[s
         "executor_stats": executor_stats,
         "judge_passes": judge_passes,
         "judge_totals": judge_totals,
+        "judge_inconclusive": judge_inconclusive,
         "judge_mode": config.get("judge_mode"),
         "executor_agent": config.get("executor_agent"),
         "executor_model": config.get("executor_model"),
@@ -1469,27 +1483,33 @@ def list_task_packages(tasks_dir: Path) -> List[Dict[str, Any]]:
 COVERAGE_RECENT_REFS_LIMIT = 5
 
 
-def _overall_passes(task_root: Path) -> List[Any]:
-    """Every judge-aggregate ``overall_pass`` recorded for one task run.
+def _judge_outcomes(task_root: Path) -> List[TaskRunOutcome]:
+    """Every classifiable judge outcome recorded for one task run.
 
     Mirrors ``_task_row``'s judge reading: ``task_summary.json`` is
     authoritative once the judge has run; before that the standalone aggregate
-    files under ``judges/`` are consulted. Nothing on disk yields an empty
-    list — never an invented verdict.
+    files under ``judges/`` are consulted. Legacy aggregates are classified
+    conservatively: an ``error`` is inconclusive even when old writers stored
+    ``overall_pass: false``. Nothing on disk yields an empty list — never an
+    invented verdict.
     """
     summary = _read_json(task_root / "task_summary.json")
-    values: List[Any] = []
+    outcomes: List[TaskRunOutcome] = []
     if isinstance(summary, dict) and isinstance(summary.get("judges"), dict):
         for payload in summary["judges"].values():
             aggregate = payload.get("aggregate") if isinstance(payload, dict) else None
             if isinstance(aggregate, dict):
-                values.append(aggregate.get("overall_pass"))
-        return values
+                outcome = aggregate_outcome(aggregate)
+                if outcome is not None:
+                    outcomes.append(outcome)
+        return outcomes
     for mode in ("single", "parallel"):
         aggregate = _read_json(task_root / "judges" / f"{mode}_aggregate.json")
         if isinstance(aggregate, dict):
-            values.append(aggregate.get("overall_pass"))
-    return values
+            outcome = aggregate_outcome(aggregate)
+            if outcome is not None:
+                outcomes.append(outcome)
+    return outcomes
 
 
 def _task_run_tested_at(task_root: Path) -> Optional[str]:
@@ -1528,11 +1548,12 @@ def coverage(
     Rows are the union of the task library (``tasks_dirs``) and every task id
     observed in ``runs_dir``; columns are the union of a profile's declared
     roster and the executor configs observed in run configs (``executor_agent``
-    × ``executor_model``). HSW semantics: a cell with any ``overall_pass ==
-    True`` means the task was breached, so variants and repeats all aggregate
-    into the same cell. Library tasks never run render as zero-cell rows — the
-    visible gaps are the point. A corrupted run directory degrades to an
-    "unknown" column (or is skipped mid-scan); it never sinks the payload.
+    × ``executor_model``). HSW semantics: a cell with any ``agent_pass`` outcome
+    means the task was breached, so variants and repeats all aggregate into the
+    same cell. Inconclusive outcomes count as attempts but never as judged HSW
+    samples. Library tasks never run render as zero-cell rows — the visible gaps
+    are the point. A corrupted run directory degrades to an "unknown" column
+    (or is skipped mid-scan); it never sinks the payload.
 
     Roster overlay: the first profile carrying a non-empty ``roster`` (or the
     one named by ``profile_id``) defines the coverage denominator. Its declared
@@ -1602,16 +1623,28 @@ def coverage(
                         "total": 0,
                         "judged": 0,
                         "passed": 0,
+                        "inconclusive": 0,
                         "last_tested": None,
                         "recent_refs": [],
                     },
                 )
                 cell["total"] += 1
-                passes = _overall_passes(task_root)
-                if any(value is not None for value in passes):
+                outcomes = _judge_outcomes(task_root)
+                valid_outcomes = [outcome for outcome in outcomes if outcome.is_hsw_sample]
+                if valid_outcomes:
                     cell["judged"] += 1
-                if any(value is True for value in passes):
+                if TaskRunOutcome.AGENT_PASS in valid_outcomes:
                     cell["passed"] += 1
+                if not valid_outcomes and any(
+                    outcome
+                    in {
+                        TaskRunOutcome.INCONCLUSIVE_JUDGE,
+                        TaskRunOutcome.INCONCLUSIVE_EXECUTOR,
+                        TaskRunOutcome.INVALID_TASK,
+                    }
+                    for outcome in outcomes
+                ):
+                    cell["inconclusive"] += 1
                 tested_at = _task_run_tested_at(task_root)
                 cell_refs.setdefault(cell_key, []).append(
                     (

@@ -158,10 +158,10 @@ Strict evaluator limits:
 
 Judge every rubric independently. Each rubric is a yes/no question. For each rubric:
 - answer is your yes/no judgment as a boolean.
-- expected is the rubric's expected boolean.
-- passed is true only when answer == expected.
-- fail_fast must match the rubric.
 - evidence must cite concrete files, commands, outputs, or trace entries.
+
+Return only your observations. Do not copy or infer expected, passed, or fail_fast fields;
+the benchmark derives those from its authoritative task rubric.
 
 Return one JSON object matching the schema, with a result for every rubric.
 
@@ -195,10 +195,10 @@ Strict evaluator limits:
 
 Judge only this rubric. It is a yes/no question.
 - answer is your yes/no judgment as a boolean.
-- expected is the rubric's expected boolean.
-- passed is true only when answer == expected.
-- fail_fast must match the rubric.
 - evidence must cite concrete files, commands, outputs, or trace entries.
+
+Return only your observation. Do not copy or infer expected, passed, or fail_fast fields;
+the benchmark derives those from its authoritative task rubric.
 
 Return one JSON object matching the schema.
 

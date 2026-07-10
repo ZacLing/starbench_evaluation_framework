@@ -1,19 +1,29 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://starbench.dev/schemas/v1/judge_aggregate.schema.json",
-  "title": "StarBench judge aggregate",
+  "$id": "https://starbench.dev/schemas/v2/judge_aggregate.schema.json",
+  "title": "StarBench judge aggregate v2",
   "type": "object",
   "additionalProperties": true,
   "properties": {
     "schema_version": {
       "type": "integer",
-      "minimum": 1
+      "enum": [2]
     },
     "mode": {
       "type": "string"
     },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "agent_pass",
+        "agent_fail",
+        "inconclusive_judge",
+        "inconclusive_executor",
+        "invalid_task"
+      ]
+    },
     "overall_pass": {
-      "type": "boolean"
+      "type": ["boolean", "null"]
     },
     "passed_count": {
       "type": "integer",
@@ -51,7 +61,7 @@
             "type": "boolean"
           },
           "passed": {
-            "type": "boolean"
+            "type": ["boolean", "null"]
           },
           "fail_fast": {
             "type": "boolean"
@@ -60,9 +70,22 @@
             "type": "string"
           }
         },
-        "required": ["rubric_id", "expected", "passed", "fail_fast", "evidence"]
+        "required": ["rubric_id", "answer", "expected", "passed", "fail_fast", "evidence"]
       }
+    },
+    "error": {
+      "type": "string"
     }
   },
-  "required": ["mode", "overall_pass", "results"]
+  "required": [
+    "schema_version",
+    "mode",
+    "outcome",
+    "overall_pass",
+    "passed_count",
+    "total_count",
+    "missing",
+    "fail_fast_failures",
+    "results"
+  ]
 }

@@ -2,8 +2,8 @@
 
 StarBench keeps the first public artifact schemas dependency-light so the
 runner and GUI can share validation without introducing a new runtime package.
-This module intentionally supports only the JSON Schema keywords used by
-``schemas/starbench/v1``.
+This module intentionally supports only the JSON Schema keywords used by the
+versioned schemas under ``schemas/starbench``.
 """
 from __future__ import annotations
 
@@ -13,8 +13,11 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-SCHEMA_ROOT = Path(__file__).resolve().parents[3] / "schemas" / "starbench" / "v1"
 ARTIFACT_SCHEMA_VERSION = 1
+JUDGE_AGGREGATE_SCHEMA_VERSION = 2
+SCHEMA_BASE = Path(__file__).resolve().parents[3] / "schemas" / "starbench"
+# Backward-compatible public name for callers that enumerate the v1 inventory.
+SCHEMA_ROOT = SCHEMA_BASE / "v1"
 
 
 class ContractValidationError(ValueError):
@@ -49,15 +52,21 @@ ANNOTATION_KEYWORDS = {
 }
 
 
-def load_schema(name: str) -> Dict[str, Any]:
-    path = SCHEMA_ROOT / name
+def load_schema(name: str, *, version: int = ARTIFACT_SCHEMA_VERSION) -> Dict[str, Any]:
+    path = SCHEMA_BASE / f"v{version}" / name
     if not path.exists():
         raise FileNotFoundError(f"Missing StarBench contract schema: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def validate_payload(schema_name: str, data: Any, *, path: str = "$") -> None:
-    validate_json_schema(load_schema(schema_name), data, path=path)
+def validate_payload(
+    schema_name: str,
+    data: Any,
+    *,
+    path: str = "$",
+    version: int = ARTIFACT_SCHEMA_VERSION,
+) -> None:
+    validate_json_schema(load_schema(schema_name, version=version), data, path=path)
 
 
 def validate_json_schema(schema: Dict[str, Any], data: Any, *, path: str = "$") -> None:

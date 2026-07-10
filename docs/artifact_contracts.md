@@ -231,10 +231,31 @@ Schema: `schemas/starbench/v1/artifact_manifest.schema.json`.
 
 ### 5.8 Judge artifacts
 
-Judge aggregate files summarize rubric verdicts. Their current structure is
-captured by:
+Judge aggregate files summarize rubric verdicts. New writers emit
+`schema_version: 2`, captured by:
 
-- `schemas/starbench/v1/judge_aggregate.schema.json`
+- `schemas/starbench/v2/judge_aggregate.schema.json`
+
+`schemas/starbench/v1/judge_aggregate.schema.json` remains the read contract for
+legacy aggregates whose `overall_pass` was always boolean and which carried no
+explicit outcome.
+
+The raw evaluator owns only `rubric_id`, boolean `answer`, and `evidence`.
+`expected` and `fail_fast` come from the task package; StarBench derives each
+row's `passed` value and the aggregate `overall_pass`. An evaluator must never
+self-report those authoritative verdict fields.
+
+Current aggregates carry an explicit `outcome`:
+
+- `agent_pass` and `agent_fail` are valid HSW samples;
+- `inconclusive_judge` means the response was missing, malformed, or incomplete
+  and must not enter HSW pass-rate denominators;
+- `inconclusive_executor` and `invalid_task` are reserved non-scoring outcomes
+  for the corresponding lifecycle boundaries.
+
+For an inconclusive aggregate, `overall_pass` is `null` and missing rubric rows
+carry `answer: null` and `passed: null`. This is deliberately different from
+`false`: a measurement failure is not evidence that an agent failed the task.
 
 The evaluator response schemas under `src/starbench/runner/schemas/` remain
 runtime prompt/response schemas, not public artifact schemas.

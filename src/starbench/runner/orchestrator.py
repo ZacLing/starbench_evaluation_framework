@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Sequence
 from ..adapters import ExecutorContext, JudgeContext, resolve
 from ..contracts import ARTIFACT_SCHEMA_VERSION
 from .env_scope import scoped_base_envs
+from .evaluation import inconclusive_judge_aggregate
 from .executor import json_dump, materialize_task, run_executor
 from .judge import rubric_launch_order, run_parallel_judges, run_single_judge
 from ..skills.registry import expand_skill_groups, load_registry_skills
@@ -381,14 +382,12 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                     except Exception as exc:
                         modes["single"] = {
                             "status": {"status": "failed", "error": f"{type(exc).__name__}: {exc}"},
-                            "aggregate": {
-                                "schema_version": ARTIFACT_SCHEMA_VERSION,
-                                "mode": "single",
-                                "overall_pass": False,
-                                "error": f"{type(exc).__name__}: {exc}",
-                                "executor_timing": executor_timing,
-                                "results": [],
-                            },
+                            "aggregate": inconclusive_judge_aggregate(
+                                task.rubrics,
+                                mode="single",
+                                error=f"{type(exc).__name__}: {exc}",
+                                executor_timing=executor_timing,
+                            ),
                         }
                     progress.evaluator_finished(
                         run_task_id=record["run_task_id"],
@@ -415,14 +414,12 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                         )
                     except Exception as exc:
                         modes["parallel"] = {
-                            "aggregate": {
-                                "schema_version": ARTIFACT_SCHEMA_VERSION,
-                                "mode": "parallel",
-                                "overall_pass": False,
-                                "error": f"{type(exc).__name__}: {exc}",
-                                "executor_timing": executor_timing,
-                                "results": [],
-                            },
+                            "aggregate": inconclusive_judge_aggregate(
+                                task.rubrics,
+                                mode="parallel",
+                                error=f"{type(exc).__name__}: {exc}",
+                                executor_timing=executor_timing,
+                            ),
                         }
                 result = {
                     "schema_version": ARTIFACT_SCHEMA_VERSION,

@@ -18,6 +18,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Sequence
 
+from ..domain import aggregate_outcome
+
 
 def _rate(numerator: int | float, denominator: int | float) -> float | None:
     if not denominator:
@@ -52,13 +54,20 @@ def build_instruction_ablation_summary(batch_summaries: Sequence[Dict[str, Any]]
                         "instruction_steps": task_result.get("instruction_steps", []),
                         "executor_skill_ids": task_result.get("executor_skill_ids", []),
                         "executor_skills": task_result.get("executor_skills", []),
+                        "_attempt_ids": [],
                         "_run_task_ids": [],
+                        "_inconclusive_count": 0,
                         "_overall_pass_count": 0,
                         "_passed_count_sum": 0,
                         "_total_count_sum": 0,
                         "_rubrics": {},
                     },
                 )
+                group["_attempt_ids"].append(task_result["run_task_id"])
+                outcome = aggregate_outcome(aggregate)
+                if outcome is None or not outcome.is_hsw_sample:
+                    group["_inconclusive_count"] += 1
+                    continue
                 group["_run_task_ids"].append(task_result["run_task_id"])
                 if aggregate.get("overall_pass"):
                     group["_overall_pass_count"] += 1
@@ -100,6 +109,8 @@ def build_instruction_ablation_summary(batch_summaries: Sequence[Dict[str, Any]]
                 "instruction_steps": group["instruction_steps"],
                 "executor_skill_ids": group["executor_skill_ids"],
                 "executor_skills": group["executor_skills"],
+                "attempts": len(group["_attempt_ids"]),
+                "inconclusive": group["_inconclusive_count"],
                 "runs": runs,
                 "run_task_ids": group["_run_task_ids"],
                 "overall_pass_count": group["_overall_pass_count"],

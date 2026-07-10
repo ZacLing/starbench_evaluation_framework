@@ -26,14 +26,14 @@ import { fmtRelative } from "@/lib/format"
 
    The cell is an instrument reading, not a stack of text: a state line
    (glyph + word + freshness) over an attempt meter (one segment per run:
-   filled = breach, neutral = held, hollow = ran but not yet judged) and the
+   filled = breach, neutral = held, amber = inconclusive, hollow = pending) and the
    exact judged fraction. Every state stays glyph + word + color, never color
    alone; the meter adds a fourth, length-coded channel for magnitude. */
 
-type CellState = "breached" | "holds" | "no-verdicts"
+type CellState = "breached" | "holds" | "inconclusive" | "no-verdicts"
 
 function cellState(cell: CoverageCell): CellState {
-  if (cell.judged === 0) return "no-verdicts"
+  if (cell.judged === 0) return cell.inconclusive > 0 ? "inconclusive" : "no-verdicts"
   return cell.passed > 0 ? "breached" : "holds"
 }
 
@@ -156,6 +156,7 @@ function ReadingKey({ taskCount, configCount }: { taskCount: number; configCount
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
         <KeyItem glyph="—" word="untested" tone="text-muted-foreground/70" />
         <KeyItem glyph="◌" word="no verdicts" tone="text-muted-foreground" />
+        <KeyItem glyph="!" word="inconclusive" tone="text-warn-ink" />
         <KeyItem glyph="✓" word="holds" tone="text-pass-ink" />
         <KeyItem glyph="⚠" word="breached" tone="text-fail-ink" />
       </div>
@@ -216,6 +217,9 @@ function TaskHeader({ row }: { row: CoverageRow }) {
   const tested = row.cells.length
   const breachedCount = row.cells.filter((cell) => cellState(cell) === "breached").length
   const judgedCols = row.cells.filter((cell) => cell.judged > 0).length
+  const inconclusiveCols = row.cells.filter(
+    (cell) => cell.judged === 0 && cell.inconclusive > 0,
+  ).length
 
   return (
     <div className="grid min-w-0 gap-1.5 py-0.5">
@@ -233,7 +237,12 @@ function TaskHeader({ row }: { row: CoverageRow }) {
         ) : judgedCols > 0 ? (
           <span className="flex items-center gap-1 font-mono text-xs font-medium tabular-nums text-pass-ink">
             <span aria-hidden>✓</span>
-            holds {tested}/{tested}
+            holds {judgedCols}/{tested} judged
+          </span>
+        ) : inconclusiveCols > 0 ? (
+          <span className="flex items-center gap-1 font-mono text-xs font-medium tabular-nums text-warn-ink">
+            <span aria-hidden>!</span>
+            inconclusive {inconclusiveCols}/{tested}
           </span>
         ) : (
           <span className="font-mono text-xs tabular-nums text-muted-foreground">
@@ -313,7 +322,7 @@ function MatrixCell({
 }) {
   const navigate = useNavigate()
   const state = cellState(cell)
-  const unjudged = Math.max(0, cell.total - cell.judged)
+  const pending = Math.max(0, cell.total - cell.judged - cell.inconclusive)
   const recency = fmtRelative(cell.last_tested)
 
   const head =
@@ -321,10 +330,14 @@ function MatrixCell({
       ? { glyph: "⚠", word: "breached", ink: "text-fail-ink" }
       : state === "holds"
         ? { glyph: "✓", word: "holds", ink: "text-pass-ink" }
+        : state === "inconclusive"
+          ? { glyph: "!", word: "inconclusive", ink: "text-warn-ink" }
         : { glyph: "◌", word: "no verdicts", ink: "text-muted-foreground" }
 
   const value =
-    state === "no-verdicts"
+    state === "inconclusive"
+      ? `${cell.inconclusive} invalid`
+      : state === "no-verdicts"
       ? `${cell.total} run${cell.total === 1 ? "" : "s"}`
       : `${cell.passed}/${cell.judged}`
   const valueInk =
@@ -332,6 +345,8 @@ function MatrixCell({
       ? "text-fail-ink"
       : state === "holds"
         ? "text-pass-ink"
+        : state === "inconclusive"
+          ? "text-warn-ink"
         : "text-muted-foreground"
 
   const body = (
@@ -350,7 +365,12 @@ function MatrixCell({
         )}
       </div>
       <div className="flex items-center gap-2.5">
-        <AttemptMeter passed={cell.passed} judged={cell.judged} total={cell.total} />
+        <AttemptMeter
+          passed={cell.passed}
+          judged={cell.judged}
+          inconclusive={cell.inconclusive}
+          total={cell.total}
+        />
         <span className={cn("shrink-0 font-mono text-sm font-semibold tabular-nums", valueInk)}>
           {value}
         </span>
@@ -367,10 +387,16 @@ function MatrixCell({
   const stateLabel =
     state === "no-verdicts"
       ? `${cell.total} run${cell.total === 1 ? "" : "s"}, no verdicts yet`
+      : state === "inconclusive"
+        ? `${cell.inconclusive} inconclusive run${cell.inconclusive === 1 ? "" : "s"}, excluded from HSW scoring`
       : state === "holds"
         ? `holds, 0 of ${cell.judged} judged attempts passed`
         : `breached, ${cell.passed} of ${cell.judged} judged attempts passed`
-  const unjudgedLabel = unjudged > 0 ? `, ${unjudged} run${unjudged === 1 ? "" : "s"} not yet judged` : ""
+  const pendingLabel = pending > 0 ? `, ${pending} run${pending === 1 ? "" : "s"} pending` : ""
+  const inconclusiveLabel =
+    cell.inconclusive > 0 && state !== "inconclusive"
+      ? `, ${cell.inconclusive} inconclusive`
+      : ""
 
   return (
     <button
@@ -380,7 +406,7 @@ function MatrixCell({
           `/runs/${encodeURIComponent(ref.run_id)}/tasks/${encodeURIComponent(ref.run_task_id)}`,
         )
       }
-      aria-label={`${taskId} × ${configLabel}: ${stateLabel}${unjudgedLabel} — open latest task run`}
+      aria-label={`${taskId} × ${configLabel}: ${stateLabel}${inconclusiveLabel}${pendingLabel} — open latest task run`}
       className="-mx-2 -my-1.5 block w-[calc(100%+1rem)] rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
     >
       {body}
@@ -389,42 +415,46 @@ function MatrixCell({
 }
 
 /* Attempt meter: one segment per run, read left to right. Filled = the agent
-   passed (a breach), neutral = the attempt was judged and held, hollow-dashed =
-   the run happened but carries no verdict yet. Breaches group left so the bar
+   passed (a breach), neutral = the attempt was judged and held, amber = an
+   invalid measurement, hollow-dashed = pending. Breaches group left so the bar
    doubles as a magnitude gauge — the more red from the left, the worse the
    defense held. Large attempt counts collapse to a proportional fill. */
 function AttemptMeter({
   passed,
   judged,
+  inconclusive,
   total,
 }: {
   passed: number
   judged: number
+  inconclusive: number
   total: number
 }) {
   const held = Math.max(0, judged - passed)
-  const unjudged = Math.max(0, total - judged)
+  const pending = Math.max(0, total - judged - inconclusive)
 
   if (total > 16) {
-    const frac = judged > 0 ? passed / judged : 0
+    const width = (count: number) => `${Math.round((count / total) * 100)}%`
     return (
       <div
-        className="h-2 w-full overflow-hidden rounded-full bg-foreground/10"
+        className="flex h-2 w-full overflow-hidden rounded-full border border-dashed border-foreground/20"
         aria-hidden
-        title={`${passed}/${judged} judged attempts breached${unjudged ? `, ${unjudged} unjudged` : ""}`}
+        title={`${passed}/${judged} judged attempts breached${inconclusive ? `, ${inconclusive} inconclusive` : ""}${pending ? `, ${pending} pending` : ""}`}
       >
-        <div
-          className="h-full rounded-full bg-fail"
-          style={{ width: `${Math.max(frac > 0 ? 6 : 0, Math.round(frac * 100))}%` }}
-        />
+        {passed > 0 && <span className="h-full bg-fail" style={{ width: width(passed) }} />}
+        {held > 0 && <span className="h-full bg-foreground/[0.14]" style={{ width: width(held) }} />}
+        {inconclusive > 0 && (
+          <span className="h-full bg-warn-ink/65" style={{ width: width(inconclusive) }} />
+        )}
       </div>
     )
   }
 
-  const segments: ("breach" | "held" | "unjudged")[] = [
+  const segments: ("breach" | "held" | "inconclusive" | "pending")[] = [
     ...Array<"breach">(passed).fill("breach"),
     ...Array<"held">(held).fill("held"),
-    ...Array<"unjudged">(unjudged).fill("unjudged"),
+    ...Array<"inconclusive">(inconclusive).fill("inconclusive"),
+    ...Array<"pending">(pending).fill("pending"),
   ]
   if (segments.length === 0) {
     return <div className="h-2 w-full rounded-full bg-foreground/10" aria-hidden />
@@ -434,7 +464,7 @@ function AttemptMeter({
     <div
       className="flex h-2 flex-1 items-stretch gap-[2px]"
       aria-hidden
-      title={`${passed}/${judged} judged attempts breached${unjudged ? `, ${unjudged} unjudged` : ""}`}
+      title={`${passed}/${judged} judged attempts breached${inconclusive ? `, ${inconclusive} inconclusive` : ""}${pending ? `, ${pending} pending` : ""}`}
     >
       {segments.map((segment, index) => (
         <span
@@ -443,7 +473,8 @@ function AttemptMeter({
             "min-w-[3px] flex-1 rounded-[2px]",
             segment === "breach" && "bg-fail",
             segment === "held" && "bg-foreground/[0.14]",
-            segment === "unjudged" && "border border-dashed border-foreground/30 bg-transparent",
+            segment === "inconclusive" && "bg-warn-ink/65",
+            segment === "pending" && "border border-dashed border-foreground/30 bg-transparent",
           )}
         />
       ))}

@@ -14,14 +14,18 @@ from typing import Any, Dict
 
 from starbench.contracts import (
     ARTIFACT_SCHEMA_VERSION,
+    JUDGE_AGGREGATE_SCHEMA_VERSION,
     ContractValidationError,
+    load_schema,
     validate_json_schema,
+    validate_payload,
 )
 from starbench.runner.task_loader import load_task
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_ROOT = ROOT / "schemas" / "starbench" / "v1"
+SCHEMA_V2_ROOT = ROOT / "schemas" / "starbench" / "v2"
 EXAMPLE_TASKS = ROOT / "examples" / "tasks"
 
 
@@ -42,6 +46,7 @@ EXPECTED_SCHEMAS = {
     "task_summary.schema.json",
     "trace_summary.schema.json",
 }
+EXPECTED_V2_SCHEMAS = {"judge_aggregate.schema.json"}
 
 
 def read_json(path: Path) -> Any:
@@ -101,9 +106,6 @@ def fake_codex_script(path: Path) -> None:
                         {
                             "rubric_id": rid,
                             "answer": True,
-                            "expected": True,
-                            "passed": True,
-                            "fail_fast": rid in ("R001", "R002", "R003", "R004", "R005"),
                             "evidence": f"fake evidence for {rid}"
                         }
                         for rid in rubric_ids(prompt)
@@ -125,12 +127,45 @@ def fake_codex_script(path: Path) -> None:
 
 
 class ArtifactSchemaTests(unittest.TestCase):
+    def test_versioned_schema_loader_reads_judge_v2(self) -> None:
+        schema_payload = load_schema(
+            "judge_aggregate.schema.json",
+            version=JUDGE_AGGREGATE_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            schema_payload["$id"],
+            "https://starbench.dev/schemas/v2/judge_aggregate.schema.json",
+        )
+
+        with self.assertRaisesRegex(ContractValidationError, "missing required key 'outcome'"):
+            validate_payload(
+                "judge_aggregate.schema.json",
+                {
+                    "schema_version": 2,
+                    "mode": "single",
+                    "overall_pass": False,
+                    "passed_count": 0,
+                    "total_count": 1,
+                    "missing": [],
+                    "fail_fast_failures": [],
+                    "results": [],
+                },
+                version=JUDGE_AGGREGATE_SCHEMA_VERSION,
+            )
+
     def test_schema_inventory_is_valid_json(self) -> None:
         self.assertEqual(EXPECTED_SCHEMAS, {path.name for path in SCHEMA_ROOT.glob("*.json")})
         for name in sorted(EXPECTED_SCHEMAS):
             payload = schema(name)
             self.assertEqual(payload["$schema"], "https://json-schema.org/draft/2020-12/schema")
             self.assertTrue(payload["$id"].startswith("https://starbench.dev/schemas/v1/"))
+            self.assertEqual(payload["type"], "object")
+
+        self.assertEqual(EXPECTED_V2_SCHEMAS, {path.name for path in SCHEMA_V2_ROOT.glob("*.json")})
+        for name in sorted(EXPECTED_V2_SCHEMAS):
+            payload = read_json(SCHEMA_V2_ROOT / name)
+            self.assertEqual(payload["$schema"], "https://json-schema.org/draft/2020-12/schema")
+            self.assertTrue(payload["$id"].startswith("https://starbench.dev/schemas/v2/"))
             self.assertEqual(payload["type"], "object")
 
     def test_bundled_example_tasks_match_input_schemas(self) -> None:
@@ -242,9 +277,12 @@ class ArtifactSchemaTests(unittest.TestCase):
                 executor_status,
                 trace_summary,
                 artifact_manifest,
-                judge_aggregate,
             ):
                 assert_current_schema_version(self, payload)
+            self.assertEqual(
+                judge_aggregate.get("schema_version"),
+                JUDGE_AGGREGATE_SCHEMA_VERSION,
+            )
 
             validate_json_schema(schema("task_manifest.schema.json"), task_manifest)
             validate_json_schema(schema("task_summary.schema.json"), task_summary)
@@ -265,7 +303,7 @@ class ArtifactSchemaTests(unittest.TestCase):
             validate_json_schema(schema("trace_summary.schema.json"), trace_summary)
             validate_json_schema(schema("artifact_manifest.schema.json"), artifact_manifest)
             validate_json_schema(
-                schema("judge_aggregate.schema.json"),
+                read_json(SCHEMA_V2_ROOT / "judge_aggregate.schema.json"),
                 judge_aggregate,
             )
 

@@ -41,7 +41,7 @@ class ClosedLoopTests(unittest.TestCase):
                     (root / "test_stellar_measure.py").write_text("\n".join([f"def test_{i}():\n    assert True" for i in range(4)]))
 
                 def rubric_ids(prompt):
-                    ids = re.findall(r'"id":\s*"(R\d+)"', prompt)
+                    ids = re.findall(r'"id":\s*"([A-Z]\d+)"', prompt)
                     return ids or ["R001"]
 
                 args = sys.argv[1:]
@@ -63,10 +63,7 @@ class ClosedLoopTests(unittest.TestCase):
                         "results": [
                             {
                                 "rubric_id": rid,
-                                "answer": False if rid in ("R015", "R016") else True,
-                                "expected": False if rid in ("R015", "R016") else True,
-                                "passed": True,
-                                "fail_fast": rid in ("R001", "R002", "R003", "R004", "R005", "R015", "R016"),
+                                "answer": False if rid in ("R015", "R016", "U016") else True,
                                 "evidence": f"fake evidence for {rid}"
                             }
                             for rid in ids
@@ -109,7 +106,7 @@ class ClosedLoopTests(unittest.TestCase):
                     (root / "test_stellar_measure.py").write_text("\n".join([f"def test_{i}():\n    assert True" for i in range(4)]))
 
                 def rubric_ids(prompt):
-                    ids = re.findall(r'"id":\s*"(R\d+)"', prompt)
+                    ids = re.findall(r'"id":\s*"([A-Z]\d+)"', prompt)
                     return ids or ["R001"]
 
                 prompt = sys.stdin.read()
@@ -120,10 +117,7 @@ class ClosedLoopTests(unittest.TestCase):
                         "results": [
                             {
                                 "rubric_id": rid,
-                                "answer": False if rid in ("R015", "R016") else True,
-                                "expected": False if rid in ("R015", "R016") else True,
-                                "passed": True,
-                                "fail_fast": rid in ("R001", "R002", "R003", "R004", "R005", "R015", "R016"),
+                                "answer": False if rid in ("R015", "R016", "U016") else True,
                                 "evidence": f"fake evidence for {rid}"
                             }
                             for rid in ids
@@ -159,7 +153,7 @@ class ClosedLoopTests(unittest.TestCase):
                 output_schema = value_after(args, "--output-schema")
                 final_path_value = value_after(args, "--output-last-message")
                 if output_schema and final_path_value:
-                    ids = re.findall(r'"id":\s*"(R\d+)"', prompt) or ["R001"]
+                    ids = re.findall(r'"id":\s*"([A-Z]\d+)"', prompt) or ["R001"]
                     final_path = Path(final_path_value)
                     final_path.parent.mkdir(parents=True, exist_ok=True)
                     final_path.write_text(json.dumps({
@@ -168,9 +162,6 @@ class ClosedLoopTests(unittest.TestCase):
                             {
                                 "rubric_id": rid,
                                 "answer": False,
-                                "expected": True,
-                                "passed": False,
-                                "fail_fast": False,
                                 "evidence": "executor failed"
                             }
                             for rid in ids

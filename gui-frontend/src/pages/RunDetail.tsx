@@ -135,8 +135,13 @@ export default function RunDetail() {
   const stoppable = launchesQuery.data?.launches.some(
     (launch) => launch.run_id === runId && launch.running,
   )
-  const singleJudged = run.tasks.filter((task) => task.judges.single)
+  const singleJudged = run.tasks.filter(
+    (task) => typeof task.judges.single?.overall_pass === "boolean",
+  )
   const singlePassed = singleJudged.filter((task) => task.judges.single?.overall_pass)
+  const singleInconclusive = run.tasks.filter(
+    (task) => task.judges.single?.outcome === "inconclusive_judge",
+  ).length
   const hasParallel = run.tasks.some((task) => task.judges.parallel)
   const execDone =
     run.executor_stats.success + run.executor_stats.failed + run.executor_stats.timeout
@@ -182,8 +187,10 @@ export default function RunDetail() {
           }
           hint={
             singleJudged.length
-              ? `${fmtRate(percent(singlePassed.length, singleJudged.length))} single-judge pass rate`
-              : "no judge results yet"
+              ? `${fmtRate(percent(singlePassed.length, singleJudged.length))} single-judge pass rate${singleInconclusive ? ` · ${singleInconclusive} inconclusive` : ""}`
+              : singleInconclusive
+                ? `${singleInconclusive} inconclusive · not scored`
+                : "no judge results yet"
           }
           progress={percent(singlePassed.length, singleJudged.length)}
         />
@@ -835,7 +842,7 @@ function AblationCard({
             <TableHead>Task</TableHead>
             <TableHead>Variant</TableHead>
             <TableHead>Judge</TableHead>
-            <TableHead className="text-right">Runs</TableHead>
+            <TableHead className="text-right">Valid / attempts</TableHead>
             <TableHead className="text-right">Overall pass</TableHead>
             <TableHead className="text-right">Rubric pass</TableHead>
             <TableHead className="text-right">Δ overall</TableHead>
@@ -851,7 +858,7 @@ function AblationCard({
                 <TableCell className="font-mono text-sm">{group.instruction_variant}</TableCell>
                 <TableCell className="text-sm text-muted-foreground">{group.judge_mode}</TableCell>
                 <TableCell className="text-right font-mono text-sm tabular-nums">
-                  {group.runs}
+                  {group.attempts === undefined ? group.runs : `${group.runs}/${group.attempts}`}
                 </TableCell>
                 <TableCell className="text-right font-mono text-sm tabular-nums">
                   {fmtRate(group.overall_pass_rate)}

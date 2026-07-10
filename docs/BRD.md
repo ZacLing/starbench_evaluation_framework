@@ -408,16 +408,18 @@ StarBench 是本地/CLI 优先的评测框架，不是多租户 SaaS。
 - 功能描述：
   - 每个 task package 提供 rubrics。
   - evaluator 根据 executor outputs、final message、trace summary、artifact manifest、prompt 和 rubrics 评估。
-  - 每条 rubric 输出 answer、expected、passed、evidence。
+  - Judge 每条 rubric 只输出 rubric_id、JSON boolean answer、evidence。
+  - expected、fail_fast 来自 task package，passed 由 runner 派生；Judge 不得自报最终 verdict。
 - 验收标准：
-  - judge aggregate 包含 overall_pass、passed_count、total_count、missing、fail_fast_failures。
+  - judge aggregate 包含 outcome、overall_pass、passed_count、total_count、missing、fail_fast_failures。
+  - Judge 输出缺失、类型非法或不可解析时 outcome 为 inconclusive_judge，overall_pass 为 null，不进入 HSW pass@n。
   - evidence 可在 GUI verdict pane 查看。
   - rubrics 不暴露给 executor。
 - 模块映射：
   - `src/starbench/runner/judge.py`
   - `src/starbench/runner/evaluation.py`
   - `src/starbench/runner/prompts.py`
-  - `schemas/starbench/v1/judge_aggregate.schema.json`
+  - `schemas/starbench/v2/judge_aggregate.schema.json`（新写入）；v1 仅用于历史读取兼容。
 
 #### JUDGE-002 Judge mode
 
@@ -659,7 +661,7 @@ StarBench 是本地/CLI 优先的评测框架，不是多租户 SaaS。
 - 功能描述：
   - GUI 应聚合 library tasks 与 observed runs，形成任务 × executor config 矩阵。
   - config column 可来自 profile roster 或历史 run config。
-  - cell 展示 total、judged、passed、last_tested、recent_refs。
+  - cell 展示 total、judged、passed、inconclusive、last_tested、recent_refs。
   - 对 HSW 语义，某 task 在某配置上 `passed > 0` 表示该 task 被突破，需要被重点关注。
 - 验收标准：
   - rostered 但未测试的 column 显示 coverage hole。

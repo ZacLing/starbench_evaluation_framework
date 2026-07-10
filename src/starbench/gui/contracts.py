@@ -432,6 +432,7 @@ class CoverageCell(TypedDict):
     and repeats on disk. HSW semantics: ``passed > 0`` means some configuration
     solved the task — the task is breached, which is bad news for the bench.
 
+    ``inconclusive`` counts attempted measurements excluded from HSW scoring.
     ``last_tested`` is a timestamp recorded on disk (executor ``ended_at``,
     else the summary/status file's mtime); absent evidence is ``null``, never
     an estimate.
@@ -441,6 +442,7 @@ class CoverageCell(TypedDict):
     total: int
     judged: int
     passed: int
+    inconclusive: int
     last_tested: Optional[str]
     recent_refs: List[CoverageRunRef]
 
@@ -644,6 +646,7 @@ class RunRow(TypedDict):
     # Judge tallies keyed by mode ("single" / "parallel").
     judge_passes: Dict[str, int]
     judge_totals: Dict[str, int]
+    judge_inconclusive: Dict[str, int]
     judge_mode: Optional[str]
     executor_agent: Optional[str]
     executor_model: Optional[str]

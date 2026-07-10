@@ -840,7 +840,11 @@ function JudgePanel({
     <Card className="gap-0 overflow-hidden py-0">
       <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-4 py-3">
         <span className="text-sm font-semibold capitalize">{mode} judge</span>
-        {aggregate.overall_pass ? (
+        {aggregate.outcome === "inconclusive_judge" || aggregate.overall_pass === null ? (
+          <Badge className="border-transparent bg-warn-soft text-warn-ink">
+            ◌ Inconclusive · not scored
+          </Badge>
+        ) : aggregate.overall_pass ? (
           <Badge className="border-transparent bg-pass-soft text-pass-ink">
             ✓ Pass · {aggregate.passed_count}/{aggregate.total_count}
           </Badge>
@@ -865,6 +869,11 @@ function JudgePanel({
           </span>
         )}
       </div>
+      {aggregate.error && (
+        <div className="border-b bg-warn-soft/50 px-4 py-2.5 text-sm text-warn-ink">
+          Judge result was not scored: {aggregate.error}
+        </div>
+      )}
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -881,7 +890,7 @@ function JudgePanel({
             const isOpen = expanded.has(row.rubric_id)
             /* fail-fast rows carry a warning edge; a tripped one is the red
                line that sank the whole verdict, so it shouts louder. */
-            const failFastTripped = row.fail_fast && !row.passed
+            const failFastTripped = row.fail_fast && row.passed === false
             return [
               <TableRow
                 key={row.rubric_id}

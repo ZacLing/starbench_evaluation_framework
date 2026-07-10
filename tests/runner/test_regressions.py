@@ -331,29 +331,56 @@ class RegressionFixTests(unittest.TestCase):
 
         self.assertEqual(OPENCODE_JUDGE_AGENT, "plan")
 
-    def test_normalize_single_result_accepts_top_level_list(self) -> None:
+    def test_normalize_single_result_accepts_strict_judge_answers(self) -> None:
         from starbench.runner.evaluation import normalize_single_result
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "single_result.json"
             path.write_text(
                 json.dumps(
-                    [
-                        {
-                            "rubric_id": "R001",
-                            "answer": True,
-                            "expected": True,
-                            "passed": True,
-                            "fail_fast": False,
-                            "evidence": "ok",
-                        }
-                    ]
+                    {
+                        "mode": "single",
+                        "results": [
+                            {"rubric_id": "R001", "answer": True, "evidence": "ok"}
+                        ],
+                        "overall_notes": "complete",
+                    }
                 ),
                 encoding="utf-8",
             )
             results = normalize_single_result(path)
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0].rubric_id, "R001")
+
+    def test_normalize_single_result_rejects_legacy_top_level_list(self) -> None:
+        from starbench.runner.evaluation import normalize_single_result
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "single_result.json"
+            path.write_text(
+                json.dumps(
+                    [{"rubric_id": "R001", "answer": True, "evidence": "ok"}]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "Judge output contract"):
+                normalize_single_result(path)
+
+    def test_normalize_parallel_result_rejects_string_false(self) -> None:
+        from starbench.runner.evaluation import normalize_parallel_results
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "result.json"
+            path.write_text(
+                json.dumps(
+                    {"rubric_id": "R001", "answer": "false", "evidence": "missing"}
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "Judge output contract"):
+                normalize_parallel_results([path])
 
     def test_rubric_launch_order_is_deterministic_per_task(self) -> None:
         from starbench.runner.run_benchmark import rubric_launch_order

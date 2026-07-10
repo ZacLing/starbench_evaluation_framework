@@ -292,6 +292,7 @@ export interface CoverageCell {
   total: number
   judged: number
   passed: number
+  inconclusive: number
   last_tested: string | null
   recent_refs: CoverageRunRef[]
 }
@@ -421,6 +422,7 @@ export interface RunRow {
   executor_stats: Record<string, number>
   judge_passes: Record<string, number>
   judge_totals: Record<string, number>
+  judge_inconclusive: Record<string, number>
   judge_mode: string | null
   executor_agent: string | null
   executor_model: string | null

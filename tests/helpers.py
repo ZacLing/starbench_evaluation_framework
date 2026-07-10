@@ -141,6 +141,7 @@ def make_task_run(
     evidence_override = evidence_override or {}
     aggregate = {
         "mode": "single",
+        "outcome": "agent_pass" if overall_pass else "agent_fail",
         "overall_pass": overall_pass,
         "passed_count": 2 if overall_pass else 1,
         "total_count": 2,

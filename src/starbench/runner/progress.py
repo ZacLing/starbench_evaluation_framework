@@ -150,6 +150,7 @@ class BenchmarkProgress:
             exit_code=(status or {}).get("exit_code"),
             timed_out=(status or {}).get("timed_out"),
             duration_seconds=duration,
+            outcome=(aggregate or {}).get("outcome"),
             overall_pass=(aggregate or {}).get("overall_pass"),
             passed_count=(aggregate or {}).get("passed_count"),
             total_count=(aggregate or {}).get("total_count"),

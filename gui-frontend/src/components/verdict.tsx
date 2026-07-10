@@ -45,6 +45,18 @@ export function VerdictBadge({ cell }: { cell: JudgeCell | null | undefined }) {
   if (!cell || cell.total_count === null || cell.total_count === undefined) {
     return <span className="text-muted-foreground">–</span>
   }
+  if (
+    cell.overall_pass === null ||
+    cell.outcome === "inconclusive_judge" ||
+    cell.outcome === "inconclusive_executor" ||
+    cell.outcome === "invalid_task"
+  ) {
+    return (
+      <Badge className="border-transparent bg-warn-soft text-warn-ink">
+        ◌ Inconclusive
+      </Badge>
+    )
+  }
   const count = `${cell.passed_count}/${cell.total_count}`
   return cell.overall_pass ? (
     <Badge className="border-transparent bg-pass-soft font-mono text-pass-ink tabular-nums">
@@ -57,7 +69,10 @@ export function VerdictBadge({ cell }: { cell: JudgeCell | null | undefined }) {
   )
 }
 
-export function RubricBadge({ passed }: { passed: boolean }) {
+export function RubricBadge({ passed }: { passed: boolean | null }) {
+  if (passed === null) {
+    return <Badge variant="secondary">Not judged</Badge>
+  }
   return passed ? (
     <Badge className="border-transparent bg-pass-soft text-pass-ink">✓ Pass</Badge>
   ) : (

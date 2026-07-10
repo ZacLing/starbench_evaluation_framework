@@ -104,12 +104,21 @@ export interface ExecutorStats {
   pending?: number
 }
 
+export type TaskRunOutcome =
+  | "agent_pass"
+  | "agent_fail"
+  | "inconclusive_judge"
+  | "inconclusive_executor"
+  | "invalid_task"
+
 export interface JudgeCell {
+  outcome: TaskRunOutcome | null
   overall_pass: boolean | null
   passed_count: number | null
   total_count: number | null
   missing: number
   fail_fast_failures: number
+  error: string | null
 }
 
 export interface RunOverview {
@@ -119,6 +128,7 @@ export interface RunOverview {
   executor_stats: ExecutorStats
   judge_passes: { single: number; parallel: number }
   judge_totals: { single: number; parallel: number }
+  judge_inconclusive: { single: number; parallel: number }
   judge_mode: string | null
   executor_agent: string | null
   executor_model: string | null
@@ -163,6 +173,8 @@ export interface AblationGroup {
   judge_mode: string
   instruction_variant: string
   runs: number
+  attempts?: number
+  inconclusive?: number
   overall_pass_count: number
   overall_pass_rate: number | null
   mean_rubric_pass_rate: number | null
@@ -183,19 +195,21 @@ export interface RubricResult {
   rubric_id: string
   answer: boolean | null
   expected: boolean
-  passed: boolean
+  passed: boolean | null
   fail_fast: boolean
   evidence: string
 }
 
 export interface JudgeAggregate {
   mode: string
-  overall_pass: boolean
+  outcome: TaskRunOutcome
+  overall_pass: boolean | null
   passed_count: number
   total_count: number
   missing: string[]
   fail_fast_failures: string[]
   results: RubricResult[]
+  error?: string
 }
 
 export interface ExecutorStatus {

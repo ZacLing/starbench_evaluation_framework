@@ -27,9 +27,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from ..adapters import JudgeContext, RuntimeAdapter
-from ..contracts import ARTIFACT_SCHEMA_VERSION
 from .evaluation import (
     aggregate_results,
+    inconclusive_judge_aggregate,
     normalize_parallel_results,
     normalize_single_result,
     write_aggregate,
@@ -142,14 +142,12 @@ async def run_single_judge(
             executor_timing=executor_timing,
         )
     except Exception as exc:
-        aggregate = {
-            "schema_version": ARTIFACT_SCHEMA_VERSION,
-            "mode": "single",
-            "overall_pass": False,
-            "error": f"{type(exc).__name__}: {exc}",
-            "executor_timing": executor_timing,
-            "results": [],
-        }
+        aggregate = inconclusive_judge_aggregate(
+            task.rubrics,
+            mode="single",
+            error=f"{type(exc).__name__}: {exc}",
+            executor_timing=executor_timing,
+        )
     write_aggregate(judges / "single_aggregate.json", aggregate)
     json_dump(judges / "single_status.json", status)
     return {"status": status, "aggregate": aggregate}
@@ -211,13 +209,11 @@ async def run_parallel_judges(
             executor_timing=executor_timing,
         )
     except Exception as exc:
-        aggregate = {
-            "schema_version": ARTIFACT_SCHEMA_VERSION,
-            "mode": "parallel",
-            "overall_pass": False,
-            "error": f"{type(exc).__name__}: {exc}",
-            "executor_timing": executor_timing,
-            "results": [],
-        }
+        aggregate = inconclusive_judge_aggregate(
+            task.rubrics,
+            mode="parallel",
+            error=f"{type(exc).__name__}: {exc}",
+            executor_timing=executor_timing,
+        )
     write_aggregate(paths["judges"] / "parallel_aggregate.json", aggregate)
     return {"aggregate": aggregate}
