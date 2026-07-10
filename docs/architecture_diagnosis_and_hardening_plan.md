@@ -862,8 +862,9 @@ codex/frontend-decomposition
 
 ## 14. 实施进度（2026-07-10）
 
-原始诊断基线和章节编号保持不变；本节记录后续实施结果。当前实施分支为
-`codex/hardening-contracts-paths`。
+原始诊断基线和章节编号保持不变；本节记录后续实施结果。可信度修复落在
+`codex/hardening-contracts-paths`，Phase 4 读模型重构继续在 `codex/read-models`
+实施。
 
 ### 14.1 已完成的正确性闭环
 
@@ -891,3 +892,22 @@ Schema smoke。
 D-012（RunCatalog/查询性能）和 D-013（前端大模块拆分）没有被当作 bug 修复混入本
 分支，继续保留在 Phase 4/5 路线中。它们影响扩展性和维护成本，但不阻塞本轮可信度
 修复的完成判定。
+
+### 14.3 Phase 4：Read Model 与 GUI backend（已完成）
+
+- `data.py` 已成为兼容 facade；runs、tasks、coverage、artifacts、trace、live 和 task
+  facts 分别落入独立 read model，核心模块均控制在 500 行以内。
+- `experiments.py` 已成为兼容 facade；profile persistence、planning inputs、profile
+  snapshot、planning 和 experiment records 分别落入应用服务。
+- 新增可删除重建的 `RunCatalog`：artifact signature 只失效对应 run，写入使用
+  fsync + atomic replace；catalog 缺失、损坏或位于只读挂载时均从 artifacts 正确
+  降级重建。
+- JSONL 查询使用持久化 byte-offset index；events 只解码目标页，trace 保留物理非空
+  行号，文件 append 时仅增量扫描，截断、替换或损坏 index 时自动重建。
+- HTTP handler 已收敛为 URL/body 解析、状态码和异常映射；预检、目录注册、读查询、
+  launch transaction 与 rollback 进入可直接测试的 `ConsoleApplication`。
+- 回归覆盖 catalog 删除/损坏/并发构建/单 run 失效/只读降级，以及 JSONL malformed
+  row、append、截断语义、损坏和只读降级；完整 Python suite 408 tests 通过。
+
+Phase 4 的停止边界是查询性能和模块职责闭环，不引入数据库，也不改变文件系统作为
+唯一事实源的地位。D-012 至此关闭；D-013 继续由 Phase 5 处理。

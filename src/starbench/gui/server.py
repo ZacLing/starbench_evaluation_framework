@@ -17,19 +17,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from . import agents, data, experiments, library, providers, skills
+from . import data
 from .agents import AgentError, DEFAULT_RUNTIMES_DIR
 from .experiments import ExperimentError
-from .launcher import (
-    AGENT_CHOICES,
-    LaunchError,
-    LaunchRegistry,
-    build_run_argv,
-    launch_transaction,
-    scoped_launch_env,
-)
+from .launcher import LaunchError, LaunchRegistry
 from .library import LibraryError
 from .providers import ProviderError
+from .services.console import ConsoleApplication
 from .skills import DEFAULT_SKILLS_DIR, SkillError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -61,6 +55,14 @@ class ConsoleState:
         self.runtimes_dir = (runtimes_dir or DEFAULT_RUNTIMES_DIR).resolve()
         self.skills_dir = (skills_dir or DEFAULT_SKILLS_DIR).resolve()
         self.registry = LaunchRegistry(self.runs_dir)
+        self.application = ConsoleApplication(
+            runs_dir=self.runs_dir,
+            tasks_dirs=self.tasks_dirs,
+            cwd=self.cwd,
+            registry=self.registry,
+            runtimes_dir=self.runtimes_dir,
+            skills_dir=self.skills_dir,
+        )
 
 
 class ConsoleHandler(BaseHTTPRequestHandler):
@@ -168,16 +170,14 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 and segments[:2] == ["api", "agents"]
                 and segments[3] == "delete"
             ):
-                self._send_json(
-                    agents.delete_custom_agent(self.state.runtimes_dir, segments[2])
-                )
+                self._send_json(self.state.application.delete_agent(segments[2]))
             elif (
                 len(segments) == 4
                 and segments[:2] == ["api", "providers"]
                 and segments[3] == "refresh-models"
             ):
                 self._send_json(
-                    providers.refresh_provider_models(self.state.runs_dir, segments[2])
+                    self.state.application.refresh_provider_models(segments[2])
                 )
             else:
                 self._send_error_json("Not found.", HTTPStatus.NOT_FOUND)
@@ -196,18 +196,17 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_error_json(f"Internal error: {error}", HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _route_api_get(self, segments: Sequence[str], query: Dict[str, Any]) -> None:
-        state = self.state
-        active = state.registry.active_run_ids()
+        app = self.state.application
         if segments == ["meta"]:
-            self._send_json(self._meta())
+            self._send_json(app.meta())
         elif segments == ["runs"]:
-            self._send_json({"runs": data.list_runs(state.runs_dir, active)})
+            self._send_json(app.list_runs())
         elif len(segments) == 2 and segments[0] == "runs":
-            self._send_json(data.run_detail(state.runs_dir, segments[1], active))
+            self._send_json(app.run_detail(segments[1]))
         elif len(segments) == 3 and segments[0] == "runs" and segments[2] == "live":
-            self._send_json(data.run_live(state.runs_dir, segments[1], active))
+            self._send_json(app.run_live(segments[1]))
         elif len(segments) == 4 and segments[0] == "runs" and segments[2] == "tasks":
-            self._send_json(data.task_run_detail(state.runs_dir, segments[1], segments[3]))
+            self._send_json(app.task_run_detail(segments[1], segments[3]))
         elif (
             len(segments) == 5
             and segments[0] == "runs"
@@ -216,9 +215,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         ):
             offset = self._query_int(query, "offset", 0)
             limit = self._query_int(query, "limit", 100)
-            self._send_json(
-                data.raw_events(state.runs_dir, segments[1], segments[3], offset, limit)
-            )
+            self._send_json(app.raw_events(segments[1], segments[3], offset, limit))
         elif (
             len(segments) == 5
             and segments[0] == "runs"
@@ -227,9 +224,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         ):
             offset = self._query_int(query, "offset", 0)
             limit = self._query_int(query, "limit", data.TRACE_DEFAULT_LIMIT)
-            self._send_json(
-                data.task_trace(state.runs_dir, segments[1], segments[3], offset, limit)
-            )
+            self._send_json(app.task_trace(segments[1], segments[3], offset, limit))
         elif (
             len(segments) == 5
             and segments[0] == "runs"
@@ -237,132 +232,56 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             and segments[4] == "artifact"
         ):
             self._send_json(
-                data.read_artifact(
-                    state.runs_dir, segments[1], segments[3], query.get("path", [""])[0]
+                app.read_artifact(
+                    segments[1], segments[3], query.get("path", [""])[0]
                 )
             )
         elif segments == ["coverage"]:
             profile_id = query.get("profile", [None])[0]
-            self._send_json(data.coverage(state.runs_dir, state.tasks_dirs, profile_id))
+            self._send_json(app.coverage(profile_id))
         elif segments == ["tasklib"]:
-            self._send_json({"libraries": self._libraries()})
+            self._send_json({"libraries": app.libraries()})
         elif segments == ["tasklib", "history"]:
             tasks_dir_arg = query.get("dir", [None])[0]
-            tasks_dir = self._registered_dir(tasks_dir_arg) if tasks_dir_arg else None
-            self._send_json(data.task_history(state.runs_dir, tasks_dir))
+            self._send_json(app.task_history(tasks_dir_arg))
         elif segments == ["tasklib", "task"]:
-            tasks_dir = self._registered_dir(query.get("dir", [""])[0])
             self._send_json(
-                library.task_package_detail(tasks_dir, query.get("name", [""])[0])
+                app.task_package_detail(
+                    query.get("dir", [""])[0], query.get("name", [""])[0]
+                )
             )
         elif segments == ["fs", "list"]:
-            self._send_json(
-                library.browse_directories(query.get("path", [None])[0], cwd=state.cwd)
-            )
+            self._send_json(app.browse_directories(query.get("path", [None])[0]))
         elif segments == ["preflight"]:
-            first = lambda key, default="": query.get(key, [default])[0]  # noqa: E731
-            self._send_json({"checks": self._preflight(first)})
+            params = {
+                key: str(values[0]) if values else "" for key, values in query.items()
+            }
+            self._send_json(app.preflight(params))
         elif segments == ["agents"]:
-            self._send_json(agents.list_agents(state.runtimes_dir))
+            self._send_json(app.list_agents())
         elif segments == ["agents", "status"]:
             # npm update checks hit the network; the fast default paints the
             # page from local probes only, and the UI opts in explicitly.
             check_updates = str(query.get("check_updates", [""])[0]).strip().lower() in ("1", "true")
-            self._send_json(
-                agents.agent_statuses(state.runtimes_dir, check_updates=check_updates)
-            )
+            self._send_json(app.agent_statuses(check_updates=check_updates))
         elif segments == ["agents", "templates"]:
-            self._send_json({"templates": agents.agent_templates()})
+            self._send_json(app.agent_templates())
         elif segments == ["skills"]:
-            self._send_json(skills.list_skills(state.skills_dir))
+            self._send_json(app.list_skills())
         elif segments == ["launches"]:
-            self._send_json({"launches": state.registry.list()})
+            self._send_json(app.list_launches())
         elif segments == ["profiles"]:
-            self._send_json(experiments.load_profiles(state.runs_dir))
+            self._send_json(app.load_profiles())
         elif segments == ["providers"]:
-            self._send_json(providers.load_providers(state.runs_dir))
+            self._send_json(app.load_providers())
         elif segments == ["providers", "cli-status"]:
-            self._send_json(providers.load_provider_cli_statuses(state.runs_dir))
+            self._send_json(app.provider_cli_statuses())
         elif segments == ["experiments"]:
-            self._send_json({"experiments": experiments.list_experiments(state.runs_dir, active)})
+            self._send_json(app.list_experiments())
         elif len(segments) == 2 and segments[0] == "experiments":
-            self._send_json(
-                experiments.experiment_detail(state.runs_dir, segments[1], active)
-            )
+            self._send_json(app.experiment_detail(segments[1]))
         else:
             self._send_error_json("Not found.", HTTPStatus.NOT_FOUND)
-
-    def _custom_meta(self, agent: str) -> Optional[Dict[str, Any]]:
-        if not agent.startswith("custom:"):
-            return None
-        return agents.get_custom_agent(self.state.runtimes_dir, agent.split(":", 1)[1])
-
-    def _preflight(self, first: Any) -> list:
-        executor_agent = first("executor_agent", "codex")
-        evaluator_agent = first("evaluator_agent", "codex")
-        docker_image = first("docker_image")
-        executor_meta = self._custom_meta(executor_agent)
-        evaluator_meta = self._custom_meta(evaluator_agent)
-        if first("executor_backend", "local") == "docker":
-            if executor_meta:
-                docker_image = executor_meta.get("docker_image") or ""
-            elif not docker_image:
-                from ..adapters import DEFAULT_DOCKER_IMAGES
-
-                docker_image = DEFAULT_DOCKER_IMAGES.get(executor_agent, "")
-        def env_keys(name: str) -> list[str]:
-            return [item for item in first(name).split(",") if item]
-
-        legacy_opencode_key = first("opencode_api_key_env") or None
-        return library.preflight(
-            executor_agent=executor_agent,
-            evaluator_agent=evaluator_agent,
-            executor_backend=first("executor_backend", "local"),
-            docker_image=docker_image,
-            executor_auth_mode=first("executor_auth_mode", "env"),
-            evaluator_auth_mode=first("evaluator_auth_mode", "env"),
-            executor_opencode_api_key_env=(
-                first("executor_opencode_api_key_env") or legacy_opencode_key
-            ),
-            evaluator_opencode_api_key_env=(
-                first("evaluator_opencode_api_key_env") or legacy_opencode_key
-            ),
-            executor_bin=(executor_meta or {}).get("cli", {}).get("bin")
-            or first("executor_bin")
-            or None,
-            evaluator_bin=(evaluator_meta or {}).get("cli", {}).get("bin")
-            or first("evaluator_bin")
-            or None,
-            executor_env_keys=env_keys("executor_env_keys")
-            or (
-                [executor_meta["api_key_env"]]
-                if executor_meta and executor_meta.get("api_key_env")
-                else None
-            ),
-            evaluator_env_keys=env_keys("evaluator_env_keys")
-            or (
-                [evaluator_meta["api_key_env"]]
-                if evaluator_meta and evaluator_meta.get("api_key_env")
-                else None
-            ),
-        )
-
-    def _libraries(self) -> list:
-        return [
-            {
-                "dir": str(tasks_dir),
-                "exists": tasks_dir.is_dir(),
-                "tasks": data.list_task_packages(tasks_dir),
-            }
-            for tasks_dir in self.state.tasks_dirs
-        ]
-
-    def _registered_dir(self, raw: str) -> Path:
-        target = Path(raw).resolve() if raw else None
-        for tasks_dir in self.state.tasks_dirs:
-            if target == tasks_dir:
-                return tasks_dir
-        raise LibraryError(f"Not a registered task directory: {raw}")
 
     @staticmethod
     def _query_int(query: Dict[str, Any], key: str, fallback: int) -> int:
@@ -371,22 +290,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             return fallback
 
-    def _meta(self) -> Dict[str, Any]:
-        state = self.state
-        return {
-            "runs_dir": str(state.runs_dir),
-            "cwd": str(state.cwd),
-            "runtimes_dir": str(state.runtimes_dir),
-            "skills_dir": str(state.skills_dir),
-            "tasks_dirs": [
-                {"dir": str(path), "exists": path.is_dir()} for path in state.tasks_dirs
-            ],
-            "agents": list(AGENT_CHOICES),
-            "judge_modes": ["single", "parallel", "both"],
-            "auth_modes": ["env", "global", "copy-auth"],
-            "backends": ["local", "docker"],
-            "thinking_efforts": ["none", "low", "medium", "high"],
-        }
 
     # -- actions ------------------------------------------------------------
 
@@ -394,106 +297,47 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         payload = self._read_body()
         if payload is None:
             raise LaunchError("Request body must be a JSON object.")
-        state = self.state
-        argv = build_run_argv(payload, runs_dir=state.runs_dir)
-        if payload.get("dry_run"):
-            self._send_json({"argv": argv, "dry_run": True})
-            return
-        run_id = str(payload["run_id"]).strip()
-        state.runs_dir.mkdir(parents=True, exist_ok=True)
-        log_path = state.runs_dir / f"{run_id}.launch.log"
-        launch = state.registry.launch(run_id, argv, cwd=state.cwd, log_path=log_path)
-        self._send_json(launch, HTTPStatus.CREATED)
+        result = self.state.application.launch(payload)
+        status = HTTPStatus.CREATED if result.created else HTTPStatus.OK
+        self._send_json(result.payload, status)
 
     def _handle_stop(self, run_id: str) -> None:
-        launch = self.state.registry.stop(run_id)
-        self._send_json(launch)
+        self._send_json(self.state.application.stop(run_id))
 
     def _handle_task_import(self) -> None:
         payload = self._read_body()
         if payload is None:
             raise LibraryError("Request body must be a JSON object.")
-        files = payload.get("files")
-        if not isinstance(files, list):
-            raise LibraryError("`files` must be a list of {path, content_b64} objects.")
-        dry_run = bool(payload.get("dry_run"))
-        target_dir = self._registered_dir(str(payload.get("target_dir") or ""))
-        report = library.install_task_package(files, target_dir=target_dir, dry_run=dry_run)
-        self._send_json(report, HTTPStatus.OK if dry_run or not report["valid"] else HTTPStatus.CREATED)
+        result = self.state.application.import_task(payload)
+        status = HTTPStatus.CREATED if result.created else HTTPStatus.OK
+        self._send_json(result.payload, status)
 
     def _handle_create_experiment(self) -> None:
         payload = self._read_body()
         if payload is None:
             raise ExperimentError("Request body must be a JSON object.")
-        state = self.state
-        plan = experiments.plan_experiment(
-            payload,
-            runs_dir=state.runs_dir,
-            runtimes_dir=state.runtimes_dir,
-            skills_dir=state.skills_dir,
-        )
-        if payload.get("dry_run"):
-            self._send_json({**plan, "dry_run": True})
-            return
-        launch_specs = [
-            {
-                "run_id": item["run_id"],
-                "argv": item["argv"],
-                "cwd": state.cwd,
-                "log_path": state.runs_dir / f"{item['run_id']}.launch.log",
-                # Executor and judge injections ship under separate scope
-                # prefixes so the runner keeps their environments isolated.
-                "env_extra": scoped_launch_env(
-                    item.get("executor_env_spec"), item.get("judge_env_spec")
-                ),
-            }
-            for item in plan["plans"]
-        ]
-        try:
-            launched = launch_transaction(state.registry, launch_specs)
-        except LaunchError as error:
-            experiments.record_experiment(
-                state.runs_dir,
-                name=plan["name"],
-                payload=payload,
-                plans=plan["plans"],
-                launch_status="failed",
-                launch_error=str(error),
-            )
-            raise ExperimentError(f"Experiment launch rolled back: {error}") from error
-        try:
-            record = experiments.record_experiment(
-                state.runs_dir,
-                name=plan["name"],
-                payload=payload,
-                plans=plan["plans"],
-                launch_status="started",
-            )
-        except Exception as error:
-            state.registry.rollback([item["run_id"] for item in plan["plans"]])
-            raise ExperimentError(
-                f"Experiment record could not be persisted; launched runs were rolled back: {error}"
-            ) from error
-        self._send_json({**record, "launches": launched}, HTTPStatus.CREATED)
+        result = self.state.application.create_experiment(payload)
+        status = HTTPStatus.CREATED if result.created else HTTPStatus.OK
+        self._send_json(result.payload, status)
 
     def _handle_save_profiles(self) -> None:
         payload = self._read_body()
         if payload is None:
             raise ExperimentError("Request body must be a JSON object.")
-        self._send_json(experiments.save_profiles(self.state.runs_dir, payload))
+        self._send_json(self.state.application.save_profiles(payload))
 
     def _handle_save_providers(self) -> None:
         payload = self._read_body()
         if payload is None:
             raise ProviderError("Request body must be a JSON object.")
-        self._send_json(providers.save_providers(self.state.runs_dir, payload))
+        self._send_json(self.state.application.save_providers(payload))
 
     def _handle_save_agent(self) -> None:
         payload = self._read_body()
         if payload is None:
             raise AgentError("Request body must be a JSON object.")
         self._send_json(
-            agents.save_custom_agent(self.state.runtimes_dir, payload), HTTPStatus.CREATED
+            self.state.application.save_agent(payload), HTTPStatus.CREATED
         )
 
     def _handle_install_agent(self) -> None:
@@ -501,23 +345,14 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         if payload is None:
             raise AgentError("Request body must be a JSON object.")
         agent_id = str(payload.get("agent_id") or "").strip()
-        if not agent_id:
-            raise AgentError("`agent_id` is required.")
-        self._send_json(agents.install_agent(agent_id))
+        self._send_json(self.state.application.install_agent(agent_id))
 
     def _handle_register_tasks_dir(self) -> None:
         payload = self._read_body()
         if payload is None:
             raise LibraryError("Request body must be a JSON object.")
         raw = str(payload.get("dir") or "").strip()
-        if not raw:
-            raise LibraryError("`dir` is required.")
-        path = Path(raw).expanduser().resolve()
-        if not path.is_dir():
-            raise LibraryError(f"Not a directory: {path}")
-        if path not in self.state.tasks_dirs:
-            self.state.tasks_dirs.append(path)
-        self._send_json({"libraries": self._libraries()})
+        self._send_json(self.state.application.register_tasks_dir(raw))
 
 
 def make_handler(state: ConsoleState) -> type:
