@@ -1330,10 +1330,21 @@ function StepTasks({
   const selectedRunnableCount = tasks.filter((id) =>
     runnableTasks.some((task) => task.id === id),
   ).length
+  const allRunnableSelected =
+    runnableTasks.length > 0 && selectedRunnableCount === runnableTasks.length
+  const someRunnableSelected = selectedRunnableCount > 0 && !allRunnableSelected
   const requiresTaskSelection = runnableTasks.length > 0 && selectedRunnableCount === 0
   const toggleTask = (task: TaskPackage, checked: boolean) => {
     if (task.error) return
     setTasks(checked ? [...tasks, task.id] : tasks.filter((id) => id !== task.id))
+  }
+  const toggleAllRunnableTasks = (checked: boolean) => {
+    const runnableIds = new Set(runnableTasks.map((task) => task.id))
+    setTasks(
+      checked
+        ? Array.from(new Set([...tasks, ...runnableIds]))
+        : tasks.filter((id) => !runnableIds.has(id)),
+    )
   }
   return (
     <Card>
@@ -1402,13 +1413,32 @@ function StepTasks({
               </p>
             )}
             <div className="overflow-hidden rounded-md border">
-              <Table>
+              <Table className="min-w-[82rem]">
                 <TableHeader>
                   <TableRow className="bg-muted/50 hover:bg-muted/50">
-                    <TableHead className="w-9" />
-                    <TableHead className="min-w-[22rem]">Task</TableHead>
-                    <TableHead className="min-w-[11rem]">History</TableHead>
-                    <TableHead className="min-w-[24rem]">Configs</TableHead>
+                    <TableHead className="w-11 pl-4">
+                      <Checkbox
+                        checked={
+                          allRunnableSelected
+                            ? true
+                            : someRunnableSelected
+                              ? "indeterminate"
+                              : false
+                        }
+                        aria-label={
+                          allRunnableSelected
+                            ? "Deselect all runnable tasks"
+                            : "Select all runnable tasks"
+                        }
+                        onCheckedChange={(value) => toggleAllRunnableTasks(Boolean(value))}
+                      />
+                    </TableHead>
+                    <TableHead className="min-w-[19rem]">Task</TableHead>
+                    <TableHead className="w-24 text-right">Rubrics</TableHead>
+                    <TableHead className="w-28">Time limit</TableHead>
+                    <TableHead className="min-w-[13rem]">Capabilities</TableHead>
+                    <TableHead className="min-w-[12rem]">Test history</TableHead>
+                    <TableHead className="min-w-[24rem]">Configurations</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1420,12 +1450,35 @@ function StepTasks({
                       <TableRow
                         key={task.dir_name}
                         data-state={checked ? "selected" : undefined}
+                        tabIndex={broken ? undefined : 0}
+                        aria-selected={checked}
+                        aria-label={`${checked ? "Deselect" : "Select"} task ${task.id}`}
+                        onClick={(event) => {
+                          if (broken) return
+                          const target = event.target as HTMLElement
+                          if (
+                            target.closest(
+                              "button, a, input, select, textarea, [role=checkbox]",
+                            )
+                          ) {
+                            return
+                          }
+                          toggleTask(task, !checked)
+                        }}
+                        onKeyDown={(event) => {
+                          if (broken || event.target !== event.currentTarget) return
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault()
+                            toggleTask(task, !checked)
+                          }
+                        }}
                         className={cn(
                           broken && "bg-fail-soft/30 hover:bg-fail-soft/40",
-                          checked && "bg-accent/60 hover:bg-accent/70",
+                          !broken && "cursor-pointer hover:bg-accent/35 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+                          checked && "bg-accent/60 hover:bg-accent/75",
                         )}
                       >
-                        <TableCell>
+                        <TableCell className="pl-4">
                           <Checkbox
                             checked={checked}
                             disabled={broken}
@@ -1445,15 +1498,27 @@ function StepTasks({
                             ) : (
                               <>
                                 <div className="truncate text-xs text-muted-foreground" title={task.name}>
-                                  {task.name} · {task.rubric_count} rubrics
+                                  {task.name}
                                 </div>
                                 {task.warning && (
                                   <div className="text-xs text-warn-ink">{task.warning}</div>
                                 )}
-                                <TaskBadges task={task} />
                               </>
                             )}
                           </div>
+                        </TableCell>
+                        <TableCell className="text-right align-top font-mono text-xs tabular-nums">
+                          {broken ? "—" : task.rubric_count}
+                        </TableCell>
+                        <TableCell className="align-top font-mono text-xs tabular-nums text-muted-foreground">
+                          {broken || !task.timeout_seconds ? "—" : fmtDuration(task.timeout_seconds)}
+                        </TableCell>
+                        <TableCell className="whitespace-normal align-top">
+                          {broken ? (
+                            <span className="text-xs text-muted-foreground">Unavailable</span>
+                          ) : (
+                            <TaskCapabilitySummary task={task} />
+                          )}
                         </TableCell>
                         <TableCell className="whitespace-normal">
                           <TaskHistoryStatus
@@ -1489,6 +1554,15 @@ function StepTasks({
       </CardContent>
     </Card>
   )
+}
+
+function TaskCapabilitySummary({ task }: { task: TaskPackage }) {
+  const hasDeclaredCapability =
+    task.allow_web_search !== null || task.has_human_reference || task.rigor_count > 0
+  if (!hasDeclaredCapability) {
+    return <span className="text-xs text-muted-foreground">None declared</span>
+  }
+  return <TaskBadges task={task} showTimeout={false} />
 }
 
 function TaskHistoryStatus({
