@@ -101,6 +101,7 @@ export interface ExecutorStats {
   success: number
   failed: number
   timeout: number
+  skipped?: number
   pending?: number
 }
 

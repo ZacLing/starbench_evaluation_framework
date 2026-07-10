@@ -123,6 +123,27 @@ def inconclusive_judge_aggregate(
     return aggregate
 
 
+def inconclusive_executor_aggregate(
+    rubrics: List[Rubric],
+    *,
+    mode: str,
+    error: str,
+    executor_timing: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Represent a skipped Judge when the executor produced no valid sample."""
+
+    aggregate = aggregate_results(
+        rubrics,
+        [],
+        mode=mode,
+        executor_timing=executor_timing,
+    )
+    aggregate["outcome"] = TaskRunOutcome.INCONCLUSIVE_EXECUTOR.value
+    aggregate["overall_pass"] = None
+    aggregate["error"] = error
+    return aggregate
+
+
 def write_aggregate(path: Path, aggregate: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {**aggregate, "schema_version": JUDGE_AGGREGATE_SCHEMA_VERSION}

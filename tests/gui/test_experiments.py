@@ -20,6 +20,25 @@ class ExperimentTest(unittest.TestCase):
         self.runs_dir.mkdir()
         self.tasks_dir = self.tmp / "tasks"
         self.tasks_dir.mkdir()
+        self._write_minimal_task(self.tasks_dir / "demo_task")
+
+    @staticmethod
+    def _write_minimal_task(package: Path) -> None:
+        write_json(package / "task.json", {"id": "demo_task", "name": "Demo task"})
+        write_json(
+            package / "rubrics.json",
+            {
+                "rubrics": [
+                    {
+                        "id": "R001",
+                        "fail_fast": False,
+                        "expected": True,
+                        "question": "Output exists?",
+                    }
+                ]
+            },
+        )
+        (package / "prompt.md").write_text("Produce an output.", encoding="utf-8")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -136,6 +155,14 @@ class ExperimentTest(unittest.TestCase):
         with self.assertRaises(ExperimentError) as ctx:
             experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         self.assertIn("bad", str(ctx.exception))
+
+    def test_invalid_task_is_rejected_before_a_launch_plan_is_created(self) -> None:
+        rubrics_path = self.tasks_dir / "demo_task" / "rubrics.json"
+        rubric = json.loads(rubrics_path.read_text(encoding="utf-8"))["rubrics"][0]
+        write_json(rubrics_path, {"rubrics": [rubric, dict(rubric)]})
+
+        with self.assertRaisesRegex(ExperimentError, "invalid_task.*Duplicate rubric"):
+            experiments.plan_experiment(self.experiment_payload(), runs_dir=self.runs_dir)
 
     def test_profiles_roundtrip_and_builtin_default(self) -> None:
         loaded = experiments.load_profiles(self.runs_dir)
@@ -301,6 +328,7 @@ class ExperimentCustomRuntimeTest(unittest.TestCase):
         self.runs_dir.mkdir()
         self.tasks_dir = self.tmp / "tasks"
         self.tasks_dir.mkdir()
+        ExperimentTest._write_minimal_task(self.tasks_dir / "demo_task")
         self.runtimes_dir = self.tmp / "runtimes"
         self.runtimes_dir.mkdir()
         write_json(
@@ -753,7 +781,7 @@ class ExperimentRigorTest(unittest.TestCase):
                 pkg / "rigors.json",
                 {
                     "rigors": [
-                        {"id": rid, "rubric_id": rid, "requirement": f"must {rid}"}
+                        {"id": rid, "rubric_id": "R001", "requirement": f"must {rid}"}
                         for rid in rigor_ids
                     ]
                 },

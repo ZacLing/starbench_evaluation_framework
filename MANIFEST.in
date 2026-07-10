@@ -1,6 +1,7 @@
 include README.md
 include LICENSE
 recursive-include src/starbench/runner/schemas *.json
+recursive-include src/starbench/contracts/schemas *.json
 recursive-include examples/tasks *
 recursive-include tasks *
 recursive-include docs *.md

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Iterable, List, Sequence
 
 from starbench.contracts import ContractValidationError, validate_payload
+from starbench.domain import assert_no_symlinks, parse_safe_id, resolve_within
 
 from .models import ExecutorSkill, HumanReferenceStep, Rigor, Rubric, TaskRunSpec, TaskSpec
 
@@ -21,7 +22,10 @@ def _discover_material_paths(
     extra_excluded_paths: Sequence[Path] | None = None,
 ) -> List[Path]:
     if configured_materials is not None:
-        return [(task_dir / material).resolve() for material in configured_materials]
+        return [
+            resolve_within(task_dir, material, kind="task material path")
+            for material in configured_materials
+        ]
 
     excluded = {config_path.resolve(), prompt_path.resolve(), rubrics_path.resolve()}
     if human_reference_path.exists():
@@ -43,23 +47,54 @@ def _discover_material_paths(
 
 
 def load_task(task_dir: Path) -> TaskSpec:
+    task_dir = task_dir.expanduser()
+    if task_dir.is_symlink():
+        raise ValueError(f"Task package root cannot be a symbolic link: {task_dir}")
     task_dir = task_dir.resolve()
-    config_path = task_dir / "task.json"
+    assert_no_symlinks(task_dir, kind="task package")
+    config_path = resolve_within(task_dir, "task.json", kind="task config path")
     if not config_path.exists():
         raise FileNotFoundError(f"Missing task.json in {task_dir}")
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
     _validate_contract("task.schema.json", config, config_path)
-    prompt_path = task_dir / config.get("prompt", "prompt.md")
-    rubrics_path = task_dir / config.get("rubrics", "rubrics.json")
-    human_reference_path = task_dir / config.get("human_reference", "human_reference.json")
-    rigors_path = task_dir / config.get("rigors", "rigors.json")
+    task_id = parse_safe_id(config["id"], kind="task id")
+    prompt_path = resolve_within(
+        task_dir, config.get("prompt", "prompt.md"), kind="task prompt path"
+    )
+    rubrics_path = resolve_within(
+        task_dir, config.get("rubrics", "rubrics.json"), kind="task rubrics path"
+    )
+    human_reference_path = resolve_within(
+        task_dir,
+        config.get("human_reference", "human_reference.json"),
+        kind="task human reference path",
+    )
+    rigors_path = resolve_within(
+        task_dir, config.get("rigors", "rigors.json"), kind="task rigors path"
+    )
     executor_skills_value = config.get("executor_skills", "executor_skills.json")
-    executor_skills_path = task_dir / executor_skills_value if executor_skills_value else None
+    executor_skills_path = (
+        resolve_within(
+            task_dir, executor_skills_value, kind="task executor skills manifest path"
+        )
+        if executor_skills_value
+        else None
+    )
     subtle_difference_value = config.get("subtle_difference")
-    subtle_difference_path = task_dir / subtle_difference_value if subtle_difference_value else None
+    subtle_difference_path = (
+        resolve_within(
+            task_dir, subtle_difference_value, kind="task subtle difference path"
+        )
+        if subtle_difference_value
+        else None
+    )
     files_dir_value = config.get("files_dir", "files")
-    files_dir = task_dir / files_dir_value if files_dir_value else None
+    files_dir = (
+        resolve_within(task_dir, files_dir_value, kind="task files directory")
+        if files_dir_value
+        else None
+    )
     if files_dir is not None and not files_dir.exists():
         files_dir = None
     configured_materials = config.get("materials")
@@ -114,7 +149,14 @@ def load_task(task_dir: Path) -> TaskSpec:
 
     rubrics_data = json.loads(rubrics_path.read_text(encoding="utf-8"))
     _validate_contract("rubrics.schema.json", rubrics_data, rubrics_path)
-    rubrics = [Rubric.from_dict(item) for item in rubrics_data["rubrics"]]
+    rubrics: List[Rubric] = []
+    seen_rubric_ids = set()
+    for item in rubrics_data["rubrics"]:
+        rubric = Rubric.from_dict(item)
+        if rubric.id in seen_rubric_ids:
+            raise ValueError(f"Duplicate rubric id {rubric.id} in {rubrics_path}")
+        seen_rubric_ids.add(rubric.id)
+        rubrics.append(rubric)
     human_reference_steps: List[HumanReferenceStep] = []
     if human_reference_path.exists():
         human_reference_data = json.loads(human_reference_path.read_text(encoding="utf-8"))
@@ -137,13 +179,18 @@ def load_task(task_dir: Path) -> TaskSpec:
             rigor = Rigor.from_dict(item)
             if rigor.id in seen_rigor_ids:
                 raise ValueError(f"Duplicate rigor id {rigor.id} in {rigors_path}")
+            if rigor.rubric_id not in seen_rubric_ids:
+                raise ValueError(
+                    f"Rigor {rigor.id} references unknown rubric id "
+                    f"{rigor.rubric_id} in {rigors_path}"
+                )
             seen_rigor_ids.add(rigor.id)
             rigors.append(rigor)
     else:
         rigors_path = None
 
     return TaskSpec(
-        id=str(config["id"]),
+        id=task_id,
         name=str(config.get("name", config["id"])),
         source_dir=task_dir,
         prompt_path=prompt_path,
@@ -172,15 +219,35 @@ def _validate_contract(schema_name: str, data: object, source_path: Path) -> Non
 def discover_tasks(tasks_dir: Path, selected_ids: Sequence[str] | None = None) -> List[TaskSpec]:
     selected = set(selected_ids or [])
     candidates = sorted(path for path in tasks_dir.iterdir() if (path / "task.json").exists())
-    tasks = [load_task(path) for path in candidates]
     if selected:
-        tasks = [task for task in tasks if task.id in selected or task.source_dir.name in selected]
+        selected_candidates: List[Path] = []
+        for candidate in candidates:
+            if candidate.name in selected:
+                selected_candidates.append(candidate)
+                continue
+            try:
+                candidate_config = json.loads(
+                    (candidate / "task.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            if isinstance(candidate_config, dict) and candidate_config.get("id") in selected:
+                selected_candidates.append(candidate)
+        tasks = [load_task(path) for path in selected_candidates]
         found = {task.id for task in tasks} | {task.source_dir.name for task in tasks}
         missing = sorted(selected - found)
         if missing:
             raise ValueError(f"Selected task(s) not found: {', '.join(missing)}")
+    else:
+        tasks = [load_task(path) for path in candidates]
     if not tasks:
         raise ValueError(f"No tasks found in {tasks_dir}")
+    task_ids = [task.id for task in tasks]
+    duplicate_task_ids = sorted(
+        {task_id for task_id in task_ids if task_ids.count(task_id) > 1}
+    )
+    if duplicate_task_ids:
+        raise ValueError(f"Duplicate task id(s): {', '.join(duplicate_task_ids)}")
     return tasks
 
 

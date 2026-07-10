@@ -26,4 +26,5 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "starbench.runner" = ["schemas/*.json"]
+"starbench.contracts" = ["schemas/v1/*.json", "schemas/v2/*.json"]
 "starbench.gui" = ["static/*", "static/assets/*"]

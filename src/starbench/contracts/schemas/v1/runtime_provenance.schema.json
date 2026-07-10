@@ -1,0 +1,468 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/runtime_provenance.schema.json",
+  "title": "StarBench runtime provenance",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "captured_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T"
+    },
+    "starbench": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "git_dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "git_commit",
+        "git_dirty"
+      ]
+    },
+    "executor": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "executor"
+          ]
+        },
+        "agent": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "local",
+            "docker"
+          ]
+        },
+        "docker_image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "docker_image_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "docker_repo_digests": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "docker_image_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_command": {
+          "type": "string"
+        },
+        "cli_bin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_version_output": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_version_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "custom_runtime_spec": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sha256_error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "public_metadata": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "judge_args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "model_flag": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "prompt_via": {
+                  "type": "string",
+                  "enum": [
+                    "stdin",
+                    "arg"
+                  ]
+                },
+                "prompt_flag": {
+                  "type": "string"
+                },
+                "parser": {
+                  "type": "string",
+                  "enum": [
+                    "headless-json",
+                    "jsonl-events",
+                    "text"
+                  ]
+                },
+                "docker_image": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source_path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "command",
+                "args",
+                "judge_args",
+                "model_flag",
+                "prompt_via",
+                "prompt_flag",
+                "parser",
+                "docker_image",
+                "source_path"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "path",
+            "sha256",
+            "sha256_error",
+            "public_metadata"
+          ]
+        }
+      },
+      "required": [
+        "role",
+        "agent",
+        "label",
+        "model",
+        "backend",
+        "docker_image",
+        "docker_image_id",
+        "docker_repo_digests",
+        "docker_image_error",
+        "cli_command",
+        "cli_bin",
+        "cli_path",
+        "cli_version",
+        "cli_version_output",
+        "cli_version_error",
+        "custom_runtime_spec"
+      ]
+    },
+    "evaluator": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "evaluator"
+          ]
+        },
+        "agent": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "local",
+            "docker"
+          ]
+        },
+        "docker_image": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "docker_image_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "docker_repo_digests": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "docker_image_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_command": {
+          "type": "string"
+        },
+        "cli_bin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_version_output": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cli_version_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "custom_runtime_spec": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": true,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sha256_error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "public_metadata": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "judge_args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "model_flag": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "prompt_via": {
+                  "type": "string",
+                  "enum": [
+                    "stdin",
+                    "arg"
+                  ]
+                },
+                "prompt_flag": {
+                  "type": "string"
+                },
+                "parser": {
+                  "type": "string",
+                  "enum": [
+                    "headless-json",
+                    "jsonl-events",
+                    "text"
+                  ]
+                },
+                "docker_image": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source_path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "command",
+                "args",
+                "judge_args",
+                "model_flag",
+                "prompt_via",
+                "prompt_flag",
+                "parser",
+                "docker_image",
+                "source_path"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "path",
+            "sha256",
+            "sha256_error",
+            "public_metadata"
+          ]
+        }
+      },
+      "required": [
+        "role",
+        "agent",
+        "label",
+        "model",
+        "backend",
+        "docker_image",
+        "docker_image_id",
+        "docker_repo_digests",
+        "docker_image_error",
+        "cli_command",
+        "cli_bin",
+        "cli_path",
+        "cli_version",
+        "cli_version_output",
+        "cli_version_error",
+        "custom_runtime_spec"
+      ]
+    }
+  },
+  "required": [
+    "schema",
+    "captured_at",
+    "starbench",
+    "executor",
+    "evaluator"
+  ]
+}

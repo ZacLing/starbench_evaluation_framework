@@ -12,6 +12,7 @@ setup(
     include_package_data=True,
     package_data={
         "starbench.runner": ["schemas/*.json"],
+        "starbench.contracts": ["schemas/v1/*.json", "schemas/v2/*.json"],
         "starbench.gui": ["static/*", "static/assets/*"],
     },
     python_requires=">=3.9",

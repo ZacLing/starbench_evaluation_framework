@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/executor_status.schema.json",
+  "title": "StarBench executor status",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "command": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "exit_code": {
+      "type": ["integer", "null"]
+    },
+    "status": {
+      "type": "string"
+    },
+    "timed_out": {
+      "type": "boolean"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "ended_at": {
+      "type": "string"
+    },
+    "duration_seconds": {
+      "type": "number"
+    },
+    "executor_backend": {
+      "type": "string"
+    },
+    "docker_image": {
+      "type": ["string", "null"]
+    },
+    "executor_runtime_provenance": {
+      "type": "object",
+      "description": "Optional executor runtime snapshot; absent on runs created before provenance capture. Shape matches the `executor` object in runtime_provenance.schema.json."
+    },
+    "trace_summary_path": {
+      "type": "string"
+    },
+    "artifact_manifest_path": {
+      "type": "string"
+    },
+    "artifact_file_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": ["command", "exit_code", "status", "timed_out", "started_at", "ended_at", "duration_seconds"]
+}
+

@@ -8,15 +8,14 @@ honest partial picture of interrupted or in-flight runs.
 from __future__ import annotations
 
 import json
-import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from ..domain import TaskRunOutcome, aggregate_outcome
+from ..domain import SAFE_ID_PATTERN, TaskRunOutcome, aggregate_outcome
 
-SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+SAFE_ID = SAFE_ID_PATTERN
 
 RUNNING_MTIME_WINDOW_SECONDS = 120
 
@@ -254,7 +253,7 @@ def progress_snapshot(run_root: Path) -> Optional[Dict[str, Any]]:
     executor_done = 0
     evaluator_done = 0
     executor_stats = {"success": 0, "failed": 0, "timeout": 0}
-    evaluator_stats = {"success": 0, "failed": 0, "timeout": 0}
+    evaluator_stats = {"success": 0, "failed": 0, "timeout": 0, "skipped": 0}
     active_executors: List[str] = []
     for event in events:
         kind = event.get("event")

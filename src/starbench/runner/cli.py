@@ -25,6 +25,7 @@ from typing import Any, Dict, Sequence
 
 from ..adapters import BUILTIN_AGENTS, DEFAULT_DOCKER_IMAGES, resolve
 from ..contracts import ContractValidationError, validate_payload
+from ..domain import parse_safe_id
 from .custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .orchestrator import run_benchmark
 
@@ -249,6 +250,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars and progress stderr output.")
     args = parser.parse_args(argv)
+    if args.run_id is not None:
+        try:
+            args.run_id = parse_safe_id(args.run_id, kind="run id")
+        except ValueError as error:
+            parser.error(str(error))
     if args.batch_size < 1:
         parser.error("--batch-size must be at least 1")
     if args.max_evaluator_parallel < 1:

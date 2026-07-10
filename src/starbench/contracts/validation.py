@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from importlib import resources
 from typing import Any, Dict
 
 
 ARTIFACT_SCHEMA_VERSION = 1
 JUDGE_AGGREGATE_SCHEMA_VERSION = 2
-SCHEMA_BASE = Path(__file__).resolve().parents[3] / "schemas" / "starbench"
+SCHEMA_BASE = resources.files("starbench.contracts").joinpath("schemas")
 # Backward-compatible public name for callers that enumerate the v1 inventory.
-SCHEMA_ROOT = SCHEMA_BASE / "v1"
+SCHEMA_ROOT = SCHEMA_BASE.joinpath("v1")
 
 
 class ContractValidationError(ValueError):
@@ -36,6 +36,8 @@ SUPPORTED_KEYWORDS = {
     "items",
     "minItems",
     "minimum",
+    "minLength",
+    "maxLength",
     "pattern",
 }
 
@@ -53,10 +55,12 @@ ANNOTATION_KEYWORDS = {
 
 
 def load_schema(name: str, *, version: int = ARTIFACT_SCHEMA_VERSION) -> Dict[str, Any]:
-    path = SCHEMA_BASE / f"v{version}" / name
-    if not path.exists():
-        raise FileNotFoundError(f"Missing StarBench contract schema: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    resource = SCHEMA_BASE.joinpath(f"v{version}").joinpath(name)
+    try:
+        payload = resource.read_text(encoding="utf-8")
+    except FileNotFoundError as error:
+        raise FileNotFoundError(f"Missing StarBench contract schema: {resource}") from error
+    return json.loads(payload)
 
 
 def validate_payload(
@@ -105,6 +109,18 @@ def validate_json_schema(schema: Dict[str, Any], data: Any, *, path: str = "$") 
     pattern = schema.get("pattern")
     if pattern is not None and isinstance(data, str) and re.search(pattern, data) is None:
         raise ContractValidationError(f"{path}: {data!r} does not match {pattern!r}")
+
+    if isinstance(data, str):
+        min_length = schema.get("minLength")
+        if min_length is not None and len(data) < min_length:
+            raise ContractValidationError(
+                f"{path}: expected at least {min_length} character(s), got {len(data)}"
+            )
+        max_length = schema.get("maxLength")
+        if max_length is not None and len(data) > max_length:
+            raise ContractValidationError(
+                f"{path}: expected at most {max_length} character(s), got {len(data)}"
+            )
 
 
 def _validate_object(schema: Dict[str, Any], data: Dict[str, Any], *, path: str) -> None:

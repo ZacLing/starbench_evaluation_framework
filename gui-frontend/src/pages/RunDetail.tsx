@@ -140,7 +140,12 @@ export default function RunDetail() {
   )
   const singlePassed = singleJudged.filter((task) => task.judges.single?.overall_pass)
   const singleInconclusive = run.tasks.filter(
-    (task) => task.judges.single?.outcome === "inconclusive_judge",
+    (task) => {
+      const outcome = task.judges.single?.outcome
+      return outcome === "inconclusive_judge" ||
+        outcome === "inconclusive_executor" ||
+        outcome === "invalid_task"
+    },
   ).length
   const hasParallel = run.tasks.some((task) => task.judges.parallel)
   const execDone =

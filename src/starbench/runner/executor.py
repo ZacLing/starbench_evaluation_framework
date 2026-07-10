@@ -28,6 +28,7 @@ from typing import Any, Dict, List
 
 from ..adapters import BUILTIN_AGENTS, ExecutorContext, RuntimeAdapter, get_builtin
 from ..contracts import ARTIFACT_SCHEMA_VERSION
+from ..domain import assert_no_symlinks, safe_child
 from .models import TaskRunSpec
 from .prompts import build_augmented_prompt_text
 from .trace import build_artifact_manifest, write_trace_summary
@@ -52,16 +53,25 @@ def json_dump(path: Path, data: Dict[str, Any]) -> None:
 
 
 def copy_task_material(source: Path, destination: Path) -> None:
-    if destination.exists():
+    assert_no_symlinks(source, kind="task material")
+    if destination.exists() or destination.is_symlink():
         if destination.is_dir():
             shutil.rmtree(destination)
         else:
             destination.unlink()
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if source.is_dir():
-        shutil.copytree(source, destination)
-    else:
-        shutil.copy2(source, destination)
+    try:
+        if source.is_dir():
+            shutil.copytree(source, destination, symlinks=True)
+        else:
+            shutil.copy2(source, destination, follow_symlinks=False)
+        assert_no_symlinks(destination, kind="staged task material")
+    except Exception:
+        if destination.is_symlink() or destination.is_file():
+            destination.unlink(missing_ok=True)
+        elif destination.exists():
+            shutil.rmtree(destination, ignore_errors=True)
+        raise
 
 
 def _is_ignored_executor_skill_path(path: Path) -> bool:
@@ -69,6 +79,7 @@ def _is_ignored_executor_skill_path(path: Path) -> bool:
 
 
 def hash_executor_skill_directory(source: Path) -> str:
+    assert_no_symlinks(source, kind="executor skill")
     hasher = hashlib.sha256()
     for path in sorted(source.rglob("*")):
         relative_path = path.relative_to(source)
@@ -97,6 +108,7 @@ def install_executor_skills(
     install_root = executor_adapter.executor_skill_install_root(paths, executor_backend)
     install_root.mkdir(parents=True, exist_ok=True)
     for skill in task_run.selected_executor_skills:
+        assert_no_symlinks(skill.source_path, kind=f"executor skill {skill.id}")
         digest = hash_executor_skill_directory(skill.source_path)
         if skill.sha256 is not None and skill.sha256 != digest:
             raise ValueError(
@@ -104,16 +116,25 @@ def install_executor_skills(
             )
 
         destination = install_root / skill.id
-        if destination.exists():
+        if destination.exists() or destination.is_symlink():
             if destination.is_dir():
                 shutil.rmtree(destination)
             else:
                 destination.unlink()
-        shutil.copytree(
-            skill.source_path,
-            destination,
-            ignore=shutil.ignore_patterns(*IGNORED_EXECUTOR_SKILL_NAMES),
-        )
+        try:
+            shutil.copytree(
+                skill.source_path,
+                destination,
+                symlinks=True,
+                ignore=shutil.ignore_patterns(*IGNORED_EXECUTOR_SKILL_NAMES),
+            )
+            assert_no_symlinks(destination, kind=f"installed executor skill {skill.id}")
+        except Exception:
+            if destination.is_symlink() or destination.is_file():
+                destination.unlink(missing_ok=True)
+            elif destination.exists():
+                shutil.rmtree(destination, ignore_errors=True)
+            raise
         try:
             installed_to = str(destination.relative_to(paths["task_root"]))
         except ValueError:
@@ -134,7 +155,7 @@ def materialize_task(
     executor_adapter: RuntimeAdapter | None = None,
 ) -> Dict[str, Path]:
     task = task_run.task
-    task_root = run_root / run_task_id
+    task_root = safe_child(run_root, run_task_id, kind="run task id")
     workspace = task_root / "workspace"
     inputs = workspace / "inputs"
     outputs = workspace / "outputs"
@@ -156,8 +177,10 @@ def materialize_task(
     for material_path in task.material_paths:
         try:
             relative_path = material_path.relative_to(task.source_dir)
-        except ValueError:
-            relative_path = Path(material_path.name)
+        except ValueError as error:
+            raise ValueError(
+                f"Task material is outside task package {task.source_dir}: {material_path}"
+            ) from error
         destination = inputs / relative_path
         copy_task_material(material_path, destination)
         input_materials.append(str(relative_path))

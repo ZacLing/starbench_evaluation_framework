@@ -62,6 +62,28 @@ class GuiDataTest(unittest.TestCase):
         self.assertEqual(run["judge_passes"]["single"], 0)
         self.assertEqual(run["judge_inconclusive"]["single"], 1)
 
+    def test_executor_inconclusive_is_counted_but_never_judged(self) -> None:
+        run_root = make_run(self.runs_dir, "run_executor_failure")
+        task_root = run_root / "demo_task__baseline_01"
+        summary_path = task_root / "task_summary.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        aggregate = summary["judges"]["single"]["aggregate"]
+        aggregate.update(
+            {
+                "outcome": "inconclusive_executor",
+                "overall_pass": None,
+                "error": "Executor failed before judging.",
+            }
+        )
+        summary["outcome"] = "inconclusive_executor"
+        summary["executor"]["status"] = "failed"
+        write_json(summary_path, summary)
+
+        run = data.list_runs(self.runs_dir)[0]
+        self.assertEqual(run["judge_totals"]["single"], 0)
+        self.assertEqual(run["judge_passes"]["single"], 0)
+        self.assertEqual(run["judge_inconclusive"]["single"], 1)
+
     def test_interrupted_run_without_summary(self) -> None:
         run_root = make_run(self.runs_dir, "run_cut", complete=False)
         progress = run_root / "progress_events.jsonl"

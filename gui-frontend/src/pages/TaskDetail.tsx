@@ -840,7 +840,7 @@ function JudgePanel({
     <Card className="gap-0 overflow-hidden py-0">
       <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-4 py-3">
         <span className="text-sm font-semibold capitalize">{mode} judge</span>
-        {aggregate.outcome === "inconclusive_judge" || aggregate.overall_pass === null ? (
+        {aggregate.overall_pass === null ? (
           <Badge className="border-transparent bg-warn-soft text-warn-ink">
             ◌ Inconclusive · not scored
           </Badge>
@@ -871,7 +871,12 @@ function JudgePanel({
       </div>
       {aggregate.error && (
         <div className="border-b bg-warn-soft/50 px-4 py-2.5 text-sm text-warn-ink">
-          Judge result was not scored: {aggregate.error}
+          {aggregate.outcome === "inconclusive_executor"
+            ? "Judge was skipped because the executor did not produce a valid sample: "
+            : aggregate.outcome === "invalid_task"
+              ? "The task contract was invalid, so this run was not scored: "
+              : "Judge result was not scored: "}
+          {aggregate.error}
         </div>
       )}
       <Table>

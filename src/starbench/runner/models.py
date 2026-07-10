@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+from ..domain.identifiers import parse_safe_id
+from ..domain.paths import assert_no_symlinks, resolve_within
+
 
 @dataclass(frozen=True)
 class Rubric:
@@ -15,7 +18,7 @@ class Rubric:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Rubric":
         return cls(
-            id=str(data["id"]),
+            id=parse_safe_id(data["id"], kind="rubric id"),
             fail_fast=bool(data["fail_fast"]),
             expected=bool(data["expected"]),
             question=str(data["question"]),
@@ -41,7 +44,7 @@ class HumanReferenceStep:
     @classmethod
     def from_dict(cls, data: Dict[str, Any], step_index: int = 0) -> "HumanReferenceStep":
         return cls(
-            step_id=str(data["step_id"]),
+            step_id=parse_safe_id(data["step_id"], kind="human reference step id"),
             step_index=int(data.get("step_index", step_index)),
             step_type=str(data["step_type"]),
             instruction=str(data["instruction"]),
@@ -66,8 +69,10 @@ class Rigor:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Rigor":
         return cls(
-            id=str(data["id"]),
-            rubric_id=str(data.get("rubric_id", data["id"])),
+            id=parse_safe_id(data["id"], kind="rigor id"),
+            rubric_id=parse_safe_id(
+                data.get("rubric_id", data["id"]), kind="rigor rubric id"
+            ),
             requirement=str(data["requirement"]),
         )
 
@@ -94,14 +99,15 @@ class ExecutorSkill:
 
     @classmethod
     def from_base_dir(cls, data: Dict[str, Any], *, base_dir: Path) -> "ExecutorSkill":
-        skill_id = str(data["id"])
-        if not skill_id or skill_id in {".", ".."} or "/" in skill_id or "\\" in skill_id:
-            raise ValueError(f"Invalid executor skill id: {skill_id!r}")
+        skill_id = parse_safe_id(data["id"], kind="executor skill id")
 
         source_value = str(data.get("path") or f"skills/{skill_id}")
-        source_path = (base_dir / source_value).resolve()
+        source_path = resolve_within(
+            base_dir, source_value, kind=f"executor skill {skill_id} path"
+        )
         if not source_path.exists() or not source_path.is_dir():
             raise FileNotFoundError(f"Missing executor skill directory for {skill_id}: {source_path}")
+        assert_no_symlinks(source_path, kind=f"executor skill {skill_id}")
 
         skill_md = source_path / "SKILL.md"
         if not skill_md.exists() or not skill_md.is_file():
@@ -282,9 +288,7 @@ class JudgeAnswer:
         if missing:
             raise ValueError(f"missing Judge answer fields: {', '.join(missing)}")
 
-        rubric_id = data["rubric_id"]
-        if not isinstance(rubric_id, str) or not rubric_id:
-            raise ValueError("rubric_id must be a non-empty JSON string")
+        rubric_id = parse_safe_id(data["rubric_id"], kind="Judge rubric id")
         answer = data["answer"]
         if type(answer) is not bool:
             raise ValueError("answer must be a JSON boolean")

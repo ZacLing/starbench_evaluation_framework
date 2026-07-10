@@ -35,8 +35,9 @@ from typing import Any, Dict, List, Sequence
 
 from ..adapters import ExecutorContext, JudgeContext, resolve
 from ..contracts import ARTIFACT_SCHEMA_VERSION
+from ..domain import compact_safe_id, parse_safe_id, safe_child
 from .env_scope import scoped_base_envs
-from .evaluation import inconclusive_judge_aggregate
+from .evaluation import inconclusive_executor_aggregate, inconclusive_judge_aggregate, write_aggregate
 from .executor import json_dump, materialize_task, run_executor
 from .judge import rubric_launch_order, run_parallel_judges, run_single_judge
 from ..skills.registry import expand_skill_groups, load_registry_skills
@@ -50,12 +51,17 @@ def make_run_task_ids(task_runs: Sequence[Any]) -> List[str]:
     counts: Dict[str, int] = {}
     run_task_ids: List[str] = []
     for task_run in task_runs:
-        base_id = task_run.task.id
+        base_id = parse_safe_id(task_run.task.id, kind="task id")
         if task_run.instruction_variant != "baseline":
             base_id = f"{base_id}__{task_run.instruction_variant}"
+        base_id = compact_safe_id(base_id, kind="run task id")
         counts[base_id] = counts.get(base_id, 0) + 1
         suffix = counts[base_id]
-        run_task_ids.append(base_id if suffix == 1 else f"{base_id}__{suffix:03d}")
+        run_task_ids.append(
+            base_id
+            if suffix == 1
+            else compact_safe_id(f"{base_id}__{suffix:03d}", kind="run task id")
+        )
     return run_task_ids
 
 
@@ -135,8 +141,11 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     ordered_task_runs = [task_run for _, task_run in indexed]
     run_task_ids = make_run_task_ids(ordered_task_runs)
 
-    run_id = args.run_id or datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ")
-    run_root = args.runs_dir / run_id
+    run_id = parse_safe_id(
+        args.run_id or datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ"),
+        kind="run id",
+    )
+    run_root = safe_child(args.runs_dir, run_id, kind="run id")
     try:
         run_root.mkdir(parents=True, exist_ok=False)
     except FileExistsError:
@@ -367,6 +376,58 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                 paths = record["paths"]
                 modes: Dict[str, Any] = {}
                 executor_timing = executor_timing_from_status(executor_status)
+                if executor_status.get("status") != "success":
+                    executor_state = str(executor_status.get("status") or "failed")
+                    executor_error = executor_status.get("error")
+                    reason = (
+                        f"Executor did not complete successfully: {executor_error}"
+                        if executor_error
+                        else "Executor did not complete successfully "
+                        f"(status={executor_state}, exit_code={executor_status.get('exit_code')})."
+                    )
+                    skipped_status = {
+                        "schema_version": ARTIFACT_SCHEMA_VERSION,
+                        "status": "skipped",
+                        "reason": "executor_not_successful",
+                        "error": reason,
+                    }
+                    requested_modes = [
+                        mode
+                        for mode in ("single", "parallel")
+                        if args.judge_mode in (mode, "both")
+                    ]
+                    for mode in requested_modes:
+                        aggregate = inconclusive_executor_aggregate(
+                            task.rubrics,
+                            mode=mode,
+                            error=reason,
+                            executor_timing=executor_timing,
+                        )
+                        modes[mode] = {"status": skipped_status, "aggregate": aggregate}
+                        write_aggregate(paths["judges"] / f"{mode}_aggregate.json", aggregate)
+                        json_dump(paths["judges"] / f"{mode}_status.json", skipped_status)
+                        rubric_ids = [None] if mode == "single" else [
+                            rubric.id for rubric in task.rubrics
+                        ]
+                        for rubric_id in rubric_ids:
+                            progress.evaluator_skipped(
+                                run_task_id=record["run_task_id"],
+                                mode=mode,
+                                rubric_id=rubric_id,
+                                aggregate=aggregate,
+                            )
+                    result = {
+                        "schema_version": ARTIFACT_SCHEMA_VERSION,
+                        "run_task_id": record["run_task_id"],
+                        "task_id": task.id,
+                        "outcome": "inconclusive_executor",
+                        **record["task_run"].instruction_metadata(),
+                        "executor_timing": executor_timing,
+                        "executor": executor_status,
+                        "judges": modes,
+                    }
+                    json_dump(paths["task_root"] / "task_summary.json", result)
+                    return result
                 if args.judge_mode in ("single", "both"):
                     progress.evaluator_started(run_task_id=record["run_task_id"], mode="single")
                     try:

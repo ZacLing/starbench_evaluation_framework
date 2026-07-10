@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..adapters import DEFAULT_DOCKER_IMAGES, list_builtin
 from ..contracts import ARTIFACT_SCHEMA_VERSION, ContractValidationError, validate_payload
+from ..runner.task_loader import discover_tasks
 from . import injection, providers as providers_module, skills as skills_module
 from .agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
 from .data import SAFE_ID, _read_json, read_human_reference_steps, read_rigors, run_overview
@@ -758,6 +759,19 @@ def plan_experiment(
     if len(contenders) > 12:
         raise ExperimentError("At most 12 contenders per experiment.")
 
+    tasks_dir_value = payload.get("tasks_dir")
+    task_selectors = payload.get("tasks")
+    if not isinstance(tasks_dir_value, str) or not tasks_dir_value:
+        raise ExperimentError("invalid_task: a task folder is required.")
+    if not isinstance(task_selectors, list) or not all(
+        isinstance(item, str) for item in task_selectors
+    ):
+        raise ExperimentError("invalid_task: tasks must be a list of task ids.")
+    try:
+        selected_tasks = discover_tasks(Path(tasks_dir_value), task_selectors)
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError) as error:
+        raise ExperimentError(f"invalid_task: {error}") from error
+
     # Executor skills are shared across contenders (a controlled comparison, like
     # the shared judge). Validate the selection now — an unknown skill or group
     # is a plan-time error — and keep the group-expanded id list for the summary.
@@ -785,7 +799,10 @@ def plan_experiment(
         for step in (shared.get("instruction_steps") or [])
         if isinstance(step, str) and str(step).strip()
     ]
-    resolved_steps = _resolve_selected_steps(payload.get("tasks_dir"), payload.get("tasks"))
+    resolved_steps = [
+        (task.id, [step.step_id for step in task.human_reference_steps])
+        for task in selected_tasks
+    ]
     if instruction_mode in ("traverse", "ablation"):
         # The runner rejects the WHOLE run when any selected task lacks expert
         # steps in these modes (verified semantics, not a baseline fallback).
@@ -833,7 +850,9 @@ def plan_experiment(
     if rigor_mode == "select":
         if not rigor_ids:
             raise ExperimentError("Rigor mode select needs at least one rigor requirement chosen.")
-        resolved_rigors = _resolve_selected_rigors(payload.get("tasks_dir"), payload.get("tasks"))
+        resolved_rigors = [
+            (task.id, [rigor.id for rigor in task.rigors]) for task in selected_tasks
+        ]
         known_rigor_ids = {
             rigor_id for _, rigor_id_list in resolved_rigors for rigor_id in rigor_id_list
         }

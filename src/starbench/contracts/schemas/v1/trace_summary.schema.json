@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/trace_summary.schema.json",
+  "title": "StarBench trace summary",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "thread_id": {
+      "type": ["string", "null"]
+    },
+    "event_type_counts": {
+      "type": "object"
+    },
+    "item_type_counts": {
+      "type": "object"
+    },
+    "reasoning_items": {
+      "type": "array"
+    },
+    "agent_messages": {
+      "type": "array"
+    },
+    "command_executions": {
+      "type": "array"
+    },
+    "file_changes": {
+      "type": "array"
+    },
+    "usage": {
+      "type": ["object", "null"]
+    }
+  },
+  "required": ["thread_id", "event_type_counts", "item_type_counts", "reasoning_items", "agent_messages", "command_executions", "file_changes", "usage"]
+}
+

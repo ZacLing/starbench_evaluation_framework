@@ -9,6 +9,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import subprocess
 import zipfile
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..adapters import list_builtin
 from ..contracts import ContractValidationError, validate_payload
+from ..domain import parse_relative_path, safe_child
 from .data import (
     SAFE_ID,
     _read_json,
@@ -89,10 +91,12 @@ def _decode_files(files: Sequence[Dict[str, Any]]) -> List[Tuple[str, bytes]]:
     decoded: List[Tuple[str, bytes]] = []
     total = 0
     for entry in files:
-        rel = str(entry.get("path") or "")
-        rel = rel.replace("\\", "/").lstrip("/")
-        if not rel or ".." in rel.split("/"):
-            raise LibraryError(f"Unsafe file path in upload: {entry.get('path')!r}")
+        try:
+            rel = parse_relative_path(
+                entry.get("path") or "", kind="uploaded file path"
+            ).as_posix()
+        except ValueError as error:
+            raise LibraryError(str(error)) from error
         try:
             content = base64.b64decode(str(entry.get("content_b64") or ""), validate=True)
         except (binascii.Error, ValueError):
@@ -117,9 +121,16 @@ def _expand_zip(decoded: List[Tuple[str, bytes]]) -> List[Tuple[str, bytes]]:
         for info in archive.infolist():
             if info.is_dir():
                 continue
-            rel = info.filename.replace("\\", "/").lstrip("/")
-            if not rel or ".." in rel.split("/") or rel.startswith("__MACOSX/"):
+            if stat.S_ISLNK(info.external_attr >> 16):
+                raise LibraryError(f"Zip entry is a symbolic link: {info.filename!r}")
+            try:
+                rel = parse_relative_path(info.filename, kind="zip entry path").as_posix()
+            except ValueError as error:
+                raise LibraryError(str(error)) from error
+            if rel.startswith("__MACOSX/"):
                 continue
+            if total + info.file_size > MAX_IMPORT_BYTES:
+                raise LibraryError("Zip contents exceed the 20 MB import limit.")
             content = archive.read(info)
             total += len(content)
             if total > MAX_IMPORT_BYTES:
@@ -143,6 +154,8 @@ def _strip_common_root(files: List[Tuple[str, bytes]]) -> List[Tuple[str, bytes]
 def validate_task_package(files: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     decoded = _strip_common_root(_expand_zip(_decode_files(files)))
     by_path = {rel: content for rel, content in decoded}
+    if len(by_path) != len(decoded):
+        raise LibraryError("Upload contains duplicate file paths.")
     errors: List[str] = []
     warnings: List[str] = []
     task: Dict[str, Any] = {}
@@ -279,14 +292,14 @@ def install_task_package(
 
     if not target_dir.is_dir():
         raise LibraryError(f"Task directory not found: {target_dir}")
-    package_dir = target_dir / report["task"]["id"]
-    if package_dir.exists():
+    package_dir = safe_child(target_dir, report["task"]["id"], kind="task id")
+    if package_dir.exists() or package_dir.is_symlink():
         raise LibraryError(
             f"A package named {report['task']['id']} already exists in {target_dir}."
         )
     try:
         for rel, content in decoded:
-            destination = package_dir / rel
+            destination = package_dir / parse_relative_path(rel, kind="uploaded file path")
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
     except OSError as error:
@@ -306,7 +319,7 @@ PROMPT_PREVIEW_BYTES = 100_000
 def task_package_detail(tasks_dir: Path, dir_name: str) -> Dict[str, Any]:
     if not SAFE_ID.match(dir_name):
         raise LibraryError(f"Invalid task package name: {dir_name!r}")
-    package_dir = (tasks_dir / dir_name).resolve()
+    package_dir = safe_child(tasks_dir, dir_name, kind="task package name").resolve()
     try:
         package_dir.relative_to(tasks_dir.resolve())
     except ValueError:

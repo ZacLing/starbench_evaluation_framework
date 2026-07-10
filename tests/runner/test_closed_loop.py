@@ -221,8 +221,32 @@ class ClosedLoopTests(unittest.TestCase):
             self.assertEqual(status["status"], "failed")
             self.assertEqual(status["exit_code"], 3)
             summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
-            executor_status = summary["batches"][0]["tasks"][0]["executor"]
+            task_summary = summary["batches"][0]["tasks"][0]
+            executor_status = task_summary["executor"]
             self.assertEqual(executor_status["status"], "failed")
+            self.assertEqual(task_summary["outcome"], "inconclusive_executor")
+            single = task_summary["judges"]["single"]
+            self.assertEqual(single["status"]["status"], "skipped")
+            self.assertEqual(single["aggregate"]["outcome"], "inconclusive_executor")
+            self.assertIsNone(single["aggregate"]["overall_pass"])
+            self.assertFalse(
+                (run_root / "demo_python_cli" / "judges" / "single_result.json").exists(),
+                "a failed executor must never be sent to a Judge",
+            )
+            progress_rows = [
+                json.loads(line)
+                for line in (run_root / "progress_events.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            skipped = [
+                row
+                for row in progress_rows
+                if row.get("event") == "evaluator_finished"
+                and row.get("status") == "skipped"
+            ]
+            self.assertEqual(len(skipped), 1)
+            self.assertEqual(skipped[0]["outcome"], "inconclusive_executor")
 
     def test_closed_loop_with_custom_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

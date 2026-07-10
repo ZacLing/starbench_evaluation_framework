@@ -26,6 +26,7 @@ from starbench.runner.task_loader import load_task
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_ROOT = ROOT / "schemas" / "starbench" / "v1"
 SCHEMA_V2_ROOT = ROOT / "schemas" / "starbench" / "v2"
+PACKAGED_SCHEMA_ROOT = ROOT / "src" / "starbench" / "contracts" / "schemas"
 EXAMPLE_TASKS = ROOT / "examples" / "tasks"
 
 
@@ -167,6 +168,89 @@ class ArtifactSchemaTests(unittest.TestCase):
             self.assertEqual(payload["$schema"], "https://json-schema.org/draft/2020-12/schema")
             self.assertTrue(payload["$id"].startswith("https://starbench.dev/schemas/v2/"))
             self.assertEqual(payload["type"], "object")
+
+    def test_packaged_schemas_match_public_protocol_sources(self) -> None:
+        for version in ("v1", "v2"):
+            public_root = ROOT / "schemas" / "starbench" / version
+            packaged_root = PACKAGED_SCHEMA_ROOT / version
+            self.assertEqual(
+                {path.name for path in public_root.glob("*.json")},
+                {path.name for path in packaged_root.glob("*.json")},
+            )
+            for public_path in public_root.glob("*.json"):
+                with self.subTest(version=version, schema=public_path.name):
+                    self.assertEqual(
+                        public_path.read_bytes(),
+                        (packaged_root / public_path.name).read_bytes(),
+                    )
+
+    def test_built_wheel_loads_packaged_schemas_without_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            wheel_dir = tmp_path / "wheel"
+            install_dir = tmp_path / "installed"
+            wheel_dir.mkdir()
+            env = os.environ.copy()
+            env["PIP_CACHE_DIR"] = str(tmp_path / "pip-cache")
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "wheel",
+                    ".",
+                    "--no-deps",
+                    "--no-build-isolation",
+                    "--wheel-dir",
+                    str(wheel_dir),
+                ],
+                cwd=ROOT,
+                env=env,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            wheel = next(wheel_dir.glob("*.whl"))
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-deps",
+                    "--target",
+                    str(install_dir),
+                    str(wheel),
+                ],
+                cwd=tmp_path,
+                env=env,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            smoke = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    (
+                        "import sys; "
+                        f"sys.path.insert(0, {str(install_dir)!r}); "
+                        "from starbench.contracts import load_schema; "
+                        "assert load_schema('task.schema.json')['title'] == 'StarBench task.json'; "
+                        "assert load_schema('judge_aggregate.schema.json', version=2)['type'] == 'object'"
+                    ),
+                ],
+                cwd=tmp_path,
+                env=env,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertEqual(smoke.returncode, 0, msg=smoke.stderr)
 
     def test_bundled_example_tasks_match_input_schemas(self) -> None:
         for task_dir in sorted(path for path in EXAMPLE_TASKS.iterdir() if path.is_dir()):
@@ -343,10 +427,16 @@ class ValidatorKeywordTests(unittest.TestCase):
     def test_nested_unknown_keyword_raises(self) -> None:
         nested = {
             "type": "object",
-            "properties": {"name": {"type": "string", "minLength": 1}},
+            "properties": {"name": {"type": "string", "format": "email"}},
         }
-        with self.assertRaisesRegex(ContractValidationError, r"\$\.name.*minLength"):
+        with self.assertRaisesRegex(ContractValidationError, r"\$\.name.*format"):
             validate_json_schema(nested, {"name": "ok"})
+
+    def test_string_length_keywords_are_enforced(self) -> None:
+        with self.assertRaisesRegex(ContractValidationError, "at least 2 character"):
+            validate_json_schema({"type": "string", "minLength": 2}, "x")
+        with self.assertRaisesRegex(ContractValidationError, "at most 3 character"):
+            validate_json_schema({"type": "string", "maxLength": 3}, "long")
 
     def test_annotations_and_vendor_extensions_are_allowed(self) -> None:
         validate_json_schema(

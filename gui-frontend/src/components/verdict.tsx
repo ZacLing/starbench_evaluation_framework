@@ -85,6 +85,7 @@ export function ExecutorStatsInline({ stats }: { stats: ExecutorStats }) {
   if (stats.success) parts.push({ key: "s", label: `${stats.success} ✓`, className: "text-pass-ink" })
   if (stats.failed) parts.push({ key: "f", label: `${stats.failed} ✕`, className: "text-fail-ink" })
   if (stats.timeout) parts.push({ key: "t", label: `${stats.timeout} ◷`, className: "text-warn-ink" })
+  if (stats.skipped) parts.push({ key: "k", label: `${stats.skipped} skipped`, className: "text-warn-ink" })
   if (stats.pending) parts.push({ key: "p", label: `${stats.pending} pending`, className: "text-muted-foreground" })
   if (!parts.length) return <span className="text-muted-foreground">–</span>
   return (
