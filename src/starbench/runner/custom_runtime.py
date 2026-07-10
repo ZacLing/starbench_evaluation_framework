@@ -5,13 +5,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+from ..domain import parse_safe_id
+
 VALID_PARSERS = {"headless-json", "jsonl-events", "text"}
 VALID_PROMPT_VIA = {"stdin", "arg"}
+VALID_PROTOCOLS = {"openai", "anthropic", "gemini", "none"}
 
 
 @dataclass(frozen=True)
 class CustomRuntimeSpec:
     id: str
+    label: str
+    description: str
+    icon: str
+    protocol: str
+    base_url_env: str
+    api_key_env: str
     command: str
     args: List[str]
     judge_args: List[str]
@@ -22,11 +31,18 @@ class CustomRuntimeSpec:
     env: Dict[str, str]
     docker_image: str | None
     docker_env_passthrough: List[str]
+    judge_args_inherited: bool
     source_path: Path
 
     def public_metadata(self) -> Dict[str, Any]:
         return {
             "id": self.id,
+            "label": self.label,
+            "description": self.description,
+            "icon": self.icon,
+            "protocol": self.protocol,
+            "base_url_env": self.base_url_env,
+            "api_key_env": self.api_key_env,
             "command": self.command,
             "args": self.args,
             "judge_args": self.judge_args,
@@ -35,6 +51,8 @@ class CustomRuntimeSpec:
             "prompt_flag": self.prompt_flag,
             "parser": self.parser,
             "docker_image": self.docker_image,
+            "docker_env_passthrough": self.docker_env_passthrough,
+            "judge_args_inherited": self.judge_args_inherited,
             "source_path": str(self.source_path),
         }
 
@@ -48,6 +66,7 @@ def _string_list(value: Any, *, path: Path, key: str) -> List[str]:
 
 
 def load_custom_runtime(runtimes_dir: Path, runtime_id: str) -> CustomRuntimeSpec:
+    runtime_id = parse_safe_id(runtime_id, kind="custom runtime id")
     path = runtimes_dir / f"{runtime_id}.json"
     if not path.exists():
         raise ValueError(f"Missing custom runtime config: {path}")
@@ -82,6 +101,24 @@ def load_custom_runtime(runtimes_dir: Path, runtime_id: str) -> CustomRuntimeSpe
     args = _string_list(data.get("args"), path=path, key="args")
     judge_args_value = data.get("judge_args")
     judge_args = args if judge_args_value is None else _string_list(judge_args_value, path=path, key="judge_args")
+    protocol = data.get("protocol", "none")
+    if protocol not in VALID_PROTOCOLS:
+        raise ValueError(
+            f"Custom runtime {path}: protocol must be one of {sorted(VALID_PROTOCOLS)}, "
+            f"got {protocol!r}"
+        )
+    metadata: Dict[str, str] = {}
+    for key, default in (
+        ("label", runtime_id),
+        ("description", ""),
+        ("icon", ""),
+        ("base_url_env", ""),
+        ("api_key_env", ""),
+    ):
+        value = data.get(key, default)
+        if not isinstance(value, str):
+            raise ValueError(f"Custom runtime {path}: {key} must be a string")
+        metadata[key] = value
     model_flag = data.get("model_flag")
     if model_flag is not None and not isinstance(model_flag, str):
         raise ValueError(f"Custom runtime {path}: model_flag must be a string or null")
@@ -100,6 +137,12 @@ def load_custom_runtime(runtimes_dir: Path, runtime_id: str) -> CustomRuntimeSpe
         raise ValueError(f"Custom runtime {path}: prompt_flag must be a string or null")
     return CustomRuntimeSpec(
         id=runtime_id,
+        label=metadata["label"] or runtime_id,
+        description=metadata["description"],
+        icon=metadata["icon"],
+        protocol=protocol,
+        base_url_env=metadata["base_url_env"],
+        api_key_env=metadata["api_key_env"],
         command=command,
         args=args,
         judge_args=judge_args,
@@ -110,5 +153,6 @@ def load_custom_runtime(runtimes_dir: Path, runtime_id: str) -> CustomRuntimeSpe
         env=dict(env),
         docker_image=docker_image,
         docker_env_passthrough=docker_env_passthrough,
+        judge_args_inherited=judge_args_value is None,
         source_path=path,
     )

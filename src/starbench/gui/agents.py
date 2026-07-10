@@ -6,13 +6,10 @@ coding-agent CLIs the runner supports natively. Custom runtimes are
 via `--executor-agent custom:<id>` — so the console and the CLI share one
 source of truth and cannot drift.
 
-The console stores a few presentation-only keys in the same JSON (`label`,
-`icon`, `protocol`, `base_url_env`, `api_key_env`); the runner's loader
-ignores unknown keys. `protocol` decides which AI providers the console
-offers for the runtime, and `base_url_env` / `api_key_env` name the
-environment variables through which the selected provider's endpoint and
-credential are injected at launch. Validation is delegated to the runner's
-own loader so a spec the console accepts is a spec the CLI accepts.
+The shared ``CustomRuntimeSpec`` owns presentation, protocol, credential,
+command, parser, and Docker metadata. The GUI consumes that normalized object
+rather than reparsing raw JSON, so a spec the console accepts is exactly a spec
+the CLI accepts.
 """
 
 from __future__ import annotations
@@ -374,11 +371,6 @@ def _install_agent_locked(
     }
 
 
-def _read_raw_spec(path: Path) -> Dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return data if isinstance(data, dict) else {}
-
-
 def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
     # Response shape is defined once in contracts.AgentsPayload; the TS client
     # type is generated from it (make gen-types).
@@ -404,7 +396,6 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
             spec_id = path.stem
             try:
                 spec = load_custom_runtime(runtimes_dir, spec_id)
-                raw = _read_raw_spec(path)
             except (ValueError, OSError) as error:
                 custom.append(
                     {
@@ -416,27 +407,24 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
                     }
                 )
                 continue
-            protocol = str(raw.get("protocol") or "none")
             custom.append(
                 {
                     "id": f"custom:{spec_id}",
                     "spec_id": spec_id,
                     "builtin": False,
-                    "label": str(raw.get("label") or spec_id),
-                    "description": str(raw.get("description") or ""),
-                    "icon": str(raw.get("icon") or ""),
-                    "protocol": protocol if protocol in PROTOCOL_CHOICES else "none",
+                    "label": spec.label,
+                    "description": spec.description,
+                    "icon": spec.icon,
+                    "protocol": spec.protocol,
                     "provider_filter": _provider_filter_dict(
-                        provider_filter_for_protocol(
-                            protocol if protocol in PROTOCOL_CHOICES else "none"
-                        )
+                        provider_filter_for_protocol(spec.protocol)
                     ),
-                    "base_url_env": str(raw.get("base_url_env") or ""),
-                    "api_key_env": str(raw.get("api_key_env") or ""),
+                    "base_url_env": spec.base_url_env,
+                    "api_key_env": spec.api_key_env,
                     "command": spec.command,
                     "args": spec.args,
                     "judge_args": spec.judge_args,
-                    "judge_args_inherited": raw.get("judge_args") is None,
+                    "judge_args_inherited": spec.judge_args_inherited,
                     "model_flag": spec.model_flag,
                     "prompt_via": spec.prompt_via,
                     "prompt_flag": spec.prompt_flag,

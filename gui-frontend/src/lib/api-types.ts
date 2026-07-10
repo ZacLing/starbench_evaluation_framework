@@ -449,6 +449,14 @@ export interface ExperimentPlanItem {
   docker_image?: string
   executor_skills?: string[]
   executor_auth_mode?: string
+  evaluator_agent?: string
+  evaluator_auth_mode?: string
+  executor_bin?: string
+  evaluator_bin?: string
+  executor_opencode_api_key_env?: string
+  evaluator_opencode_api_key_env?: string
+  executor_credential_env_keys?: string[]
+  evaluator_credential_env_keys?: string[]
 }
 
 export interface Contender {

@@ -83,6 +83,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="OpenCode executable, or a shell-like command prefix. Use for other OpenAI-compatible models.",
     )
     parser.add_argument(
+        "--executor-bin",
+        help="Role-specific executable override for the selected executor runtime.",
+    )
+    parser.add_argument(
+        "--evaluator-bin",
+        help="Role-specific executable override for the selected evaluator runtime.",
+    )
+    parser.add_argument(
         "--executor-agent",
         default="codex",
         help=(
@@ -159,6 +167,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="OPENAI_API_KEY",
         help="Environment variable name that OpenCode should read as the provider API key.",
     )
+    for role in ("executor", "evaluator"):
+        parser.add_argument(
+            f"--{role}-opencode-provider",
+            help=f"OpenCode provider id used only by the {role} role.",
+        )
+        parser.add_argument(
+            f"--{role}-opencode-base-url",
+            help=f"OpenCode base URL used only by the {role} role.",
+        )
+        parser.add_argument(
+            f"--{role}-opencode-api-key-env",
+            help=f"OpenCode API-key environment variable used only by the {role} role.",
+        )
     parser.add_argument("--auth-mode", choices=["env", "global", "copy-auth"], default="env")
     parser.add_argument(
         "--executor-auth-mode",
@@ -298,6 +319,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.docker_image = DEFAULT_DOCKER_IMAGES.get(args.executor_agent, "")
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
+    for role in ("executor", "evaluator"):
+        for field in ("provider", "base_url", "api_key_env"):
+            role_name = f"{role}_opencode_{field}"
+            if getattr(args, role_name) is None:
+                setattr(args, role_name, getattr(args, f"opencode_{field}"))
     args.tasks_dir = args.tasks_dir.resolve()
     args.runs_dir = args.runs_dir.resolve()
     args.executor_skill_root = args.executor_skill_root.resolve()

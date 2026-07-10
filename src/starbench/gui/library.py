@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from ..adapters import list_builtin
 from ..contracts import ContractValidationError, validate_payload
 from ..domain import parse_relative_path, safe_child
+from ..execution.process import split_command
 from .data import (
     SAFE_ID,
     _read_json,
@@ -392,7 +393,11 @@ def _check(check_id: str, label: str, status: str, hint: str = "") -> Dict[str, 
 
 
 def _cli_check(role: str, agent: str, bin_override: Optional[str] = None) -> Dict[str, str]:
-    bin_name = bin_override or AGENT_BINS.get(agent, agent)
+    command = bin_override or AGENT_BINS.get(agent, agent)
+    try:
+        bin_name = split_command(command)[0]
+    except (IndexError, ValueError):
+        bin_name = command
     found = shutil.which(bin_name)
     if found:
         return _check(f"{role}_cli", f"{role.capitalize()} CLI `{bin_name}`", "ok", found)
@@ -491,11 +496,15 @@ def preflight(
     executor_auth_mode: str,
     evaluator_auth_mode: str,
     opencode_api_key_env: Optional[str] = None,
+    executor_opencode_api_key_env: Optional[str] = None,
+    evaluator_opencode_api_key_env: Optional[str] = None,
     executor_bin: Optional[str] = None,
     evaluator_bin: Optional[str] = None,
     executor_env_keys: Optional[List[str]] = None,
     evaluator_env_keys: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
+    executor_key_env = executor_opencode_api_key_env or opencode_api_key_env
+    evaluator_key_env = evaluator_opencode_api_key_env or opencode_api_key_env
     checks: List[Dict[str, str]] = []
     if executor_backend == "docker":
         checks.extend(_docker_checks(docker_image))
@@ -503,13 +512,13 @@ def preflight(
         checks.append(_cli_check("executor", executor_agent, executor_bin))
     checks.append(
         _auth_check(
-            "executor", executor_agent, executor_auth_mode, opencode_api_key_env, executor_env_keys
+            "executor", executor_agent, executor_auth_mode, executor_key_env, executor_env_keys
         )
     )
     checks.append(_cli_check("evaluator", evaluator_agent, evaluator_bin))
     checks.append(
         _auth_check(
-            "evaluator", evaluator_agent, evaluator_auth_mode, opencode_api_key_env, evaluator_env_keys
+            "evaluator", evaluator_agent, evaluator_auth_mode, evaluator_key_env, evaluator_env_keys
         )
     )
 

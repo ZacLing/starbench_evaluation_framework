@@ -52,7 +52,7 @@ class InstructionAblationTests(unittest.TestCase):
                         "rigors": [
                             {
                                 "id": "R001",
-                                "rubric_id": "R001",
+                                "rubric_id": "U001",
                                 "requirement": "The answer must include a boundary-condition table.",
                             }
                         ]

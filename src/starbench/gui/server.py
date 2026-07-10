@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import threading
 import webbrowser
 from http import HTTPStatus
@@ -24,6 +25,7 @@ from .launcher import (
     LaunchError,
     LaunchRegistry,
     build_run_argv,
+    launch_transaction,
     scoped_launch_env,
 )
 from .library import LibraryError
@@ -58,7 +60,7 @@ class ConsoleState:
         self.cwd = cwd
         self.runtimes_dir = (runtimes_dir or DEFAULT_RUNTIMES_DIR).resolve()
         self.skills_dir = (skills_dir or DEFAULT_SKILLS_DIR).resolve()
-        self.registry = LaunchRegistry()
+        self.registry = LaunchRegistry(self.runs_dir)
 
 
 class ConsoleHandler(BaseHTTPRequestHandler):
@@ -308,6 +310,10 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 from ..adapters import DEFAULT_DOCKER_IMAGES
 
                 docker_image = DEFAULT_DOCKER_IMAGES.get(executor_agent, "")
+        def env_keys(name: str) -> list[str]:
+            return [item for item in first(name).split(",") if item]
+
+        legacy_opencode_key = first("opencode_api_key_env") or None
         return library.preflight(
             executor_agent=executor_agent,
             evaluator_agent=evaluator_agent,
@@ -315,15 +321,30 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             docker_image=docker_image,
             executor_auth_mode=first("executor_auth_mode", "env"),
             evaluator_auth_mode=first("evaluator_auth_mode", "env"),
-            opencode_api_key_env=first("opencode_api_key_env") or None,
-            executor_bin=(executor_meta or {}).get("cli", {}).get("bin"),
-            evaluator_bin=(evaluator_meta or {}).get("cli", {}).get("bin"),
-            executor_env_keys=[executor_meta["api_key_env"]]
-            if executor_meta and executor_meta.get("api_key_env")
-            else None,
-            evaluator_env_keys=[evaluator_meta["api_key_env"]]
-            if evaluator_meta and evaluator_meta.get("api_key_env")
-            else None,
+            executor_opencode_api_key_env=(
+                first("executor_opencode_api_key_env") or legacy_opencode_key
+            ),
+            evaluator_opencode_api_key_env=(
+                first("evaluator_opencode_api_key_env") or legacy_opencode_key
+            ),
+            executor_bin=(executor_meta or {}).get("cli", {}).get("bin")
+            or first("executor_bin")
+            or None,
+            evaluator_bin=(evaluator_meta or {}).get("cli", {}).get("bin")
+            or first("evaluator_bin")
+            or None,
+            executor_env_keys=env_keys("executor_env_keys")
+            or (
+                [executor_meta["api_key_env"]]
+                if executor_meta and executor_meta.get("api_key_env")
+                else None
+            ),
+            evaluator_env_keys=env_keys("evaluator_env_keys")
+            or (
+                [evaluator_meta["api_key_env"]]
+                if evaluator_meta and evaluator_meta.get("api_key_env")
+                else None
+            ),
         )
 
     def _libraries(self) -> list:
@@ -414,26 +435,45 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         if payload.get("dry_run"):
             self._send_json({**plan, "dry_run": True})
             return
-        launched = []
-        for item in plan["plans"]:
-            state.runs_dir.mkdir(parents=True, exist_ok=True)
-            log_path = state.runs_dir / f"{item['run_id']}.launch.log"
-            launched.append(
-                state.registry.launch(
-                    item["run_id"],
-                    item["argv"],
-                    cwd=state.cwd,
-                    log_path=log_path,
-                    # Executor and judge injections ship under separate scope
-                    # prefixes so the runner keeps their environments isolated.
-                    env_extra=scoped_launch_env(
-                        item.get("executor_env_spec"), item.get("judge_env_spec")
-                    ),
-                )
+        launch_specs = [
+            {
+                "run_id": item["run_id"],
+                "argv": item["argv"],
+                "cwd": state.cwd,
+                "log_path": state.runs_dir / f"{item['run_id']}.launch.log",
+                # Executor and judge injections ship under separate scope
+                # prefixes so the runner keeps their environments isolated.
+                "env_extra": scoped_launch_env(
+                    item.get("executor_env_spec"), item.get("judge_env_spec")
+                ),
+            }
+            for item in plan["plans"]
+        ]
+        try:
+            launched = launch_transaction(state.registry, launch_specs)
+        except LaunchError as error:
+            experiments.record_experiment(
+                state.runs_dir,
+                name=plan["name"],
+                payload=payload,
+                plans=plan["plans"],
+                launch_status="failed",
+                launch_error=str(error),
             )
-        record = experiments.record_experiment(
-            state.runs_dir, name=plan["name"], payload=payload, plans=plan["plans"]
-        )
+            raise ExperimentError(f"Experiment launch rolled back: {error}") from error
+        try:
+            record = experiments.record_experiment(
+                state.runs_dir,
+                name=plan["name"],
+                payload=payload,
+                plans=plan["plans"],
+                launch_status="started",
+            )
+        except Exception as error:
+            state.registry.rollback([item["run_id"] for item in plan["plans"]])
+            raise ExperimentError(
+                f"Experiment record could not be persisted; launched runs were rolled back: {error}"
+            ) from error
         self._send_json({**record, "launches": launched}, HTTPStatus.CREATED)
 
     def _handle_save_profiles(self) -> None:
@@ -552,12 +592,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print(f"  {url}")
     if not args.no_browser:
         webbrowser.open(url)
+
+    def request_shutdown(_signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, request_shutdown)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        state.registry.stop_all()
         server.server_close()
+        signal.signal(signal.SIGTERM, previous_sigterm)
     return 0
 
 

@@ -89,6 +89,33 @@ class ReferenceShapeEquivalenceTest(unittest.TestCase):
         self.runs_dir.mkdir()
         self.tasks_dir = self.tmp / "tasks"
         self.tasks_dir.mkdir()
+        task_dir = self.tasks_dir / "demo"
+        task_dir.mkdir()
+        _write_json(
+            task_dir / "task.json",
+            {
+                "id": "demo",
+                "name": "Equivalence fixture",
+                "prompt": "prompt.md",
+                "rubrics": "rubrics.json",
+                "timeout_seconds": 60,
+                "allow_web_search": False,
+            },
+        )
+        (task_dir / "prompt.md").write_text("Create outputs/result.txt.\n", encoding="utf-8")
+        _write_json(
+            task_dir / "rubrics.json",
+            {
+                "rubrics": [
+                    {
+                        "id": "R001",
+                        "question": "Does outputs/result.txt exist?",
+                        "expected": True,
+                        "fail_fast": True,
+                    }
+                ]
+            },
+        )
         self.runtimes_dir = self.tmp / "runtimes"
         self.runtimes_dir.mkdir()
         _write_json(
@@ -134,7 +161,7 @@ class ReferenceShapeEquivalenceTest(unittest.TestCase):
         payload = {
             "name": "equiv",
             "tasks_dir": str(self.tasks_dir),
-            "tasks": [],
+            "tasks": ["demo"],
             "shared": shared,
             "contenders": [contender],
         }

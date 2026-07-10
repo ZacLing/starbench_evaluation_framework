@@ -35,7 +35,16 @@ from typing import Any, Dict, List, Sequence
 
 from ..adapters import ExecutorContext, JudgeContext, resolve
 from ..contracts import ARTIFACT_SCHEMA_VERSION
-from ..domain import compact_safe_id, parse_safe_id, safe_child
+from ..domain import (
+    ACTIVE_RUN_STATES,
+    RUN_CLAIM_FILENAME,
+    RUN_ID_ENV,
+    RUN_LAUNCH_TOKEN_ENV,
+    RUN_STATE_FILENAME,
+    compact_safe_id,
+    parse_safe_id,
+    safe_child,
+)
 from .env_scope import scoped_base_envs
 from .evaluation import inconclusive_executor_aggregate, inconclusive_judge_aggregate, write_aggregate
 from .executor import json_dump, materialize_task, run_executor
@@ -92,6 +101,57 @@ def write_profile_snapshot(run_root: Path, snapshot: Dict[str, Any]) -> Path:
     return target
 
 
+def claim_run_root(runs_dir: Path, run_id: str) -> Path:
+    """Create a standalone run root or adopt a console reservation exactly once."""
+
+    run_root = safe_child(runs_dir, run_id, kind="run id")
+    try:
+        run_root.mkdir(parents=True, exist_ok=False)
+        return run_root
+    except FileExistsError:
+        token = os.environ.get(RUN_LAUNCH_TOKEN_ENV)
+        state_path = run_root / RUN_STATE_FILENAME
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            state = None
+        if (
+            token
+            and isinstance(state, dict)
+            and state.get("run_id") == run_id
+            and state.get("reservation_token") == token
+            and state.get("state") in ACTIVE_RUN_STATES
+        ):
+            claim_path = run_root / RUN_CLAIM_FILENAME
+            try:
+                descriptor = os.open(
+                    claim_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+            except FileExistsError as error:
+                raise SystemExit(
+                    f"Run reservation has already been claimed: {run_root}"
+                ) from error
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {"pid": os.getpid(), "claimed_at": datetime.now(timezone.utc).isoformat()},
+                        handle,
+                    )
+                    handle.write("\n")
+            except BaseException:
+                try:
+                    claim_path.unlink()
+                except OSError:
+                    pass
+                raise
+            return run_root
+        raise SystemExit(
+            f"Run directory already exists: {run_root}. Choose a new --run-id or remove the old run."
+        )
+
+
 def executor_timing_from_status(status: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "started_at": status.get("started_at"),
@@ -145,13 +205,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         args.run_id or datetime.now(timezone.utc).strftime("run_%Y%m%dT%H%M%SZ"),
         kind="run id",
     )
-    run_root = safe_child(args.runs_dir, run_id, kind="run id")
-    try:
-        run_root.mkdir(parents=True, exist_ok=False)
-    except FileExistsError:
-        raise SystemExit(
-            f"Run directory already exists: {run_root}. Choose a new --run-id or remove the old run."
-        )
+    run_root = claim_run_root(args.runs_dir, run_id)
     # Contract-validated at parse time; a run launched from a profile carries
     # its measurement contract from the first moment the directory exists.
     if getattr(args, "profile_snapshot_data", None) is not None:
@@ -191,6 +245,14 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "opencode_provider": args.opencode_provider,
         "opencode_base_url": args.opencode_base_url,
         "opencode_api_key_env": args.opencode_api_key_env,
+        "executor_opencode_provider": args.executor_opencode_provider,
+        "executor_opencode_base_url": args.executor_opencode_base_url,
+        "executor_opencode_api_key_env": args.executor_opencode_api_key_env,
+        "evaluator_opencode_provider": args.evaluator_opencode_provider,
+        "evaluator_opencode_base_url": args.evaluator_opencode_base_url,
+        "evaluator_opencode_api_key_env": args.evaluator_opencode_api_key_env,
+        "executor_bin": args.executor_bin,
+        "evaluator_bin": args.evaluator_bin,
         "executor_model": args.executor_model,
         "evaluator_model": args.evaluator_model,
         "executor_backend": args.executor_backend,
@@ -237,14 +299,21 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "gemini": args.gemini_bin,
         "opencode": args.opencode_bin,
     }
+    executor_bins = dict(runtime_bins)
+    judge_bins = dict(runtime_bins)
+    if args.executor_bin and args.executor_agent in executor_bins:
+        executor_bins[args.executor_agent] = args.executor_bin
+    if args.evaluator_bin and args.evaluator_agent in judge_bins:
+        judge_bins[args.evaluator_agent] = args.evaluator_bin
     # Split the ambient environment into an executor base and a judge base so a
     # contender's injected endpoint/credentials cannot reach the judge (see
     # runner.env_scope). With no STARBENCH_*_ENV_* prefixes present — standalone
     # CLI use — both equal the ambient environment, so behaviour is unchanged.
     executor_base_env, judge_base_env = scoped_base_envs(os.environ)
+    executor_base_env[RUN_ID_ENV] = run_id
     executor_ctx = ExecutorContext(
         base_env=executor_base_env,
-        bins=runtime_bins,
+        bins=executor_bins,
         docker_bin=args.docker_bin,
         docker_image=args.docker_image,
         executor_backend=args.executor_backend,
@@ -252,27 +321,27 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         model=args.executor_model,
         thinking_effort=args.thinking_effort,
         claude_max_turns=args.claude_max_turns,
-        opencode_provider=args.opencode_provider,
-        opencode_base_url=args.opencode_base_url,
-        opencode_api_key_env=args.opencode_api_key_env,
+        opencode_provider=args.executor_opencode_provider,
+        opencode_base_url=args.executor_opencode_base_url,
+        opencode_api_key_env=args.executor_opencode_api_key_env,
         web_search_mode=args.web_search,
     )
     judge_ctx = JudgeContext(
         base_env=judge_base_env,
-        bins=runtime_bins,
+        bins=judge_bins,
         auth_mode=args.evaluator_auth_mode,
         model=args.evaluator_model,
         thinking_effort=args.thinking_effort,
-        opencode_provider=args.opencode_provider,
-        opencode_base_url=args.opencode_base_url,
-        opencode_api_key_env=args.opencode_api_key_env,
+        opencode_provider=args.evaluator_opencode_provider,
+        opencode_base_url=args.evaluator_opencode_base_url,
+        opencode_api_key_env=args.evaluator_opencode_api_key_env,
     )
     runtime_provenance = capture_run_provenance(
         executor_agent=args.executor_agent,
         executor_adapter=executor_adapter,
         executor_model=args.executor_model,
         executor_backend=args.executor_backend,
-        executor_bins=runtime_bins,
+        executor_bins=executor_bins,
         executor_base_env=executor_base_env,
         executor_docker_bin=args.docker_bin,
         executor_docker_image=args.docker_image if args.executor_backend == "docker" else None,
@@ -280,7 +349,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         evaluator_agent=args.evaluator_agent,
         evaluator_adapter=evaluator_adapter,
         evaluator_model=args.evaluator_model,
-        evaluator_bins=runtime_bins,
+        evaluator_bins=judge_bins,
         evaluator_base_env=judge_base_env,
         evaluator_custom_spec=args.evaluator_runtime_spec,
         cwd=Path.cwd(),

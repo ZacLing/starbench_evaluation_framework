@@ -32,6 +32,17 @@ The seed controls Starbench scheduling randomness. It does not claim to make mod
 
 These are independent. Starbench does not normalize model names. When the executor and evaluator use different runtimes, pair each model flag with the matching agent runtime flag from [Agent Runtimes](#agent-runtimes).
 
+The executable is role-scoped as well:
+
+- `--executor-bin COMMAND`: override only the executor runtime command.
+- `--evaluator-bin COMMAND`: override only the evaluator runtime command.
+
+The historical runtime flags (`--codex-bin`, `--claude-bin`, `--opencode-bin`,
+and peers) remain shared defaults for backward compatibility. Prefer the
+role-specific flags when executor and evaluator use the same runtime through
+different wrappers or endpoints. A command may include fixed arguments, for
+example `--executor-bin "codex -c model_provider=openrouter"`.
+
 Example:
 
 ```bash
@@ -159,7 +170,32 @@ starbench-run \
   --executor-backend local
 ```
 
-If `--executor-model` or `--evaluator-model` does not include a slash and `--opencode-provider` is set, Starbench passes it to OpenCode as `provider/model`. OpenCode evaluator runs do not currently have a CLI schema-enforcement flag equivalent to Codex `--output-schema`; Starbench appends the JSON schema to the evaluator prompt, parses the final assistant text from the OpenCode JSON event stream, and falls back to `opencode export` when needed.
+`--opencode-provider`, `--opencode-base-url`, and
+`--opencode-api-key-env` are backward-compatible defaults for both roles. A
+mixed-provider run should use the role-scoped forms so one side cannot reroute
+the other:
+
+```bash
+starbench-run \
+  --executor-agent opencode \
+  --executor-opencode-provider openrouter \
+  --executor-opencode-base-url https://openrouter.ai/api/v1 \
+  --executor-opencode-api-key-env OPENROUTER_API_KEY \
+  --executor-model openai/gpt-5.3-codex \
+  --evaluator-agent opencode \
+  --evaluator-opencode-provider internal-judge \
+  --evaluator-opencode-base-url https://judge.example/v1 \
+  --evaluator-opencode-api-key-env JUDGE_API_KEY \
+  --evaluator-model judge/gpt-5.5
+```
+
+If `--executor-model` or `--evaluator-model` does not include a slash and the
+corresponding role's OpenCode provider is set, Starbench passes it to OpenCode
+as `provider/model`. OpenCode evaluator runs do not currently have a CLI
+schema-enforcement flag equivalent to Codex `--output-schema`; Starbench
+appends the JSON schema to the evaluator prompt, parses the final assistant
+text from the OpenCode JSON event stream, and falls back to `opencode export`
+when needed.
 
 When a run mixes runtimes, split auth modes if needed. For example, an OpenCode executor can read a gateway token from the environment while a Codex evaluator reads the local Codex login:
 

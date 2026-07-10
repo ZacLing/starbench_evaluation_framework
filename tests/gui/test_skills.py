@@ -138,7 +138,31 @@ class LauncherSkillPassthroughTest(unittest.TestCase):
         self.runs_dir = self.tmp / "runs"
         self.runs_dir.mkdir()
         self.tasks_dir = self.tmp / "tasks"
-        self.tasks_dir.mkdir()
+        task_dir = self.tasks_dir / "demo_task"
+        task_dir.mkdir(parents=True)
+        write_json(
+            task_dir / "task.json",
+            {
+                "id": "demo_task",
+                "name": "Skill planning fixture",
+                "prompt": "prompt.md",
+                "rubrics": "rubrics.json",
+            },
+        )
+        (task_dir / "prompt.md").write_text("Create an output.\n", encoding="utf-8")
+        write_json(
+            task_dir / "rubrics.json",
+            {
+                "rubrics": [
+                    {
+                        "id": "R001",
+                        "question": "Does an output exist?",
+                        "expected": True,
+                        "fail_fast": False,
+                    }
+                ]
+            },
+        )
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -192,7 +216,31 @@ class ExperimentSkillTest(unittest.TestCase):
         self.runs_dir = self.tmp / "runs"
         self.runs_dir.mkdir()
         self.tasks_dir = self.tmp / "tasks"
-        self.tasks_dir.mkdir()
+        task_dir = self.tasks_dir / "demo_task"
+        task_dir.mkdir(parents=True)
+        write_json(
+            task_dir / "task.json",
+            {
+                "id": "demo_task",
+                "name": "Skill planning fixture",
+                "prompt": "prompt.md",
+                "rubrics": "rubrics.json",
+            },
+        )
+        (task_dir / "prompt.md").write_text("Create an output.\n", encoding="utf-8")
+        write_json(
+            task_dir / "rubrics.json",
+            {
+                "rubrics": [
+                    {
+                        "id": "R001",
+                        "question": "Does an output exist?",
+                        "expected": True,
+                        "fail_fast": False,
+                    }
+                ]
+            },
+        )
         self.skills_dir = self.tmp / "executor_skills"
         self.skills_dir.mkdir()
         make_skill_library(

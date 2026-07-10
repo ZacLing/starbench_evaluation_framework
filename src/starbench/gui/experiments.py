@@ -46,8 +46,8 @@ _BUILTIN_INFO = {adapter.info.id: adapter.info for adapter in list_builtin()}
 DOCKER_CAPABLE_AGENTS = {info.id for info in _BUILTIN_INFO.values() if info.docker_capable}
 
 # Environment variables each built-in judge reads for routing/credentials.
-# The environment is process-wide per run: a contender that injects one of
-# these would silently reroute the judge in the same subprocess.
+# Planner warnings use this metadata when both roles name the same variable;
+# execution remains safe because the two role scopes are materialized separately.
 JUDGE_ENV_SENSITIVE = {info.id: info.judge_sensitive_env for info in _BUILTIN_INFO.values()}
 
 # Effort levels each built-in runtime's CLI actually accepts; custom runtimes
@@ -278,6 +278,32 @@ def _judge_sensitive_vars(evaluator_agent: str, runtimes_dir: Path) -> set:
     return set(JUDGE_ENV_SENSITIVE.get(evaluator_agent, ()))
 
 
+def _credential_source_names(
+    env_spec: Dict[str, Any],
+    *,
+    api_key_env: Any = None,
+    provider: Optional[Dict[str, Any]] = None,
+    auth_mode: str = "env",
+) -> List[str]:
+    """Return source env names needed to materialize one role's credentials."""
+
+    if auth_mode != "env":
+        return []
+    names = {
+        str(entry.get("from_env") or "").strip()
+        for entry in env_spec.values()
+        if isinstance(entry, dict) and entry.get("from_env")
+    }
+    explicit = str(api_key_env or "").strip()
+    if explicit:
+        names.add(explicit)
+    if provider is not None:
+        source = str(provider.get("api_key_env") or "").strip()
+        if source:
+            names.add(source)
+    return sorted(name for name in names if name)
+
+
 def _resolve_judge_reference(
     shared: Dict[str, Any],
     evaluator_agent: str,
@@ -311,6 +337,7 @@ def _resolve_judge_reference(
     settings = injection.settings_for(provider, info=info, custom_meta=custom_meta)
     updated = dict(shared)
     updated["evaluator_auth_mode"] = settings["auth_mode"]
+    updated["evaluator_bin"] = settings.get("codex_bin")
     gateway = settings.get("gateway") or {}
     updated["evaluator_gateway"] = gateway or None
     updated["judge_env"] = settings.get("env")
@@ -995,37 +1022,13 @@ def plan_experiment(
         )
         effective_backend = backend if docker_capable else "local"
 
-        # The codex binary config is process-global: rerouting a Codex
-        # contender through a gateway would silently reroute a Codex judge in
-        # the same run.
-        if contender.get("codex_bin") and evaluator_agent == "codex":
-            raise ExperimentError(
-                f"Contender {label}: routing Codex through a gateway also reroutes the "
-                "Codex judge (the CLI shares one codex configuration per run). Pick a "
-                "non-Codex judge or use the official OpenAI provider for this contender."
-            )
-
-        # OpenCode gateway flags are process-global in the CLI: a contender and
-        # an OpenCode judge must agree on them, and an OpenCode judge supplies
-        # them when the contender does not use OpenCode at all.
+        # Executor and Judge own independent OpenCode gateway configurations.
         gateway = {
             "opencode_provider": contender.get("opencode_provider"),
             "opencode_base_url": contender.get("opencode_base_url"),
             "opencode_api_key_env": contender.get("opencode_api_key_env"),
         }
-        if evaluator_agent == "opencode" and evaluator_gateway:
-            if agent == "opencode":
-                for key in gateway:
-                    contender_value = str(gateway.get(key) or "")
-                    judge_value = str(evaluator_gateway.get(key) or "")
-                    if contender_value and judge_value and contender_value != judge_value:
-                        raise ExperimentError(
-                            f"Contender {label}: its OpenCode gateway conflicts with the "
-                            "judge's gateway; the CLI supports only one OpenCode gateway "
-                            "per run."
-                        )
-            else:
-                gateway = dict(evaluator_gateway)
+        evaluator_gateway = evaluator_gateway or {}
 
         launch_payload = {
             "run_id": run_id,
@@ -1053,10 +1056,14 @@ def plan_experiment(
             "seed": shared.get("seed"),
             "batch_size": shared.get("batch_size"),
             "repeat": shared.get("repeat"),
-            "codex_bin": contender.get("codex_bin"),
-            "opencode_provider": gateway.get("opencode_provider"),
-            "opencode_base_url": gateway.get("opencode_base_url"),
-            "opencode_api_key_env": gateway.get("opencode_api_key_env"),
+            "executor_bin": contender.get("codex_bin"),
+            "evaluator_bin": shared.get("evaluator_bin"),
+            "executor_opencode_provider": gateway.get("opencode_provider"),
+            "executor_opencode_base_url": gateway.get("opencode_base_url"),
+            "executor_opencode_api_key_env": gateway.get("opencode_api_key_env"),
+            "evaluator_opencode_provider": evaluator_gateway.get("opencode_provider"),
+            "evaluator_opencode_base_url": evaluator_gateway.get("opencode_base_url"),
+            "evaluator_opencode_api_key_env": evaluator_gateway.get("opencode_api_key_env"),
             "extra_args": str(shared.get("extra_args") or ""),
             # Shared instruction ablation: same mode/steps for every contender.
             "instruction_mode": instruction_mode,
@@ -1117,6 +1124,22 @@ def plan_experiment(
             argv += ["--profile-snapshot", snapshot_path]
 
         executor_env_spec = contender.get("env") if isinstance(contender.get("env"), dict) else {}
+        executor_provider = provider_by_id.get(
+            str(requested_contender.get("provider_id") or "")
+        )
+        judge_provider = provider_by_id.get(str(shared.get("evaluator_provider_id") or ""))
+        executor_credential_env_keys = _credential_source_names(
+            executor_env_spec,
+            api_key_env=launch_payload.get("executor_opencode_api_key_env"),
+            provider=executor_provider,
+            auth_mode=launch_payload["auth_mode"],
+        )
+        evaluator_credential_env_keys = _credential_source_names(
+            judge_env,
+            api_key_env=launch_payload.get("evaluator_opencode_api_key_env"),
+            provider=judge_provider,
+            auth_mode=str(launch_payload.get("evaluator_auth_mode") or "env"),
+        )
 
         # The runner now scopes executor and judge env separately (the console
         # ships each side's variables under STARBENCH_EXECUTOR_ENV_* /
@@ -1142,20 +1165,11 @@ def plan_experiment(
                     f"also read by the {evaluator_agent} judge. Executor and judge run "
                     "under isolated env scopes, so the judge keeps its own routing."
                 )
-        # `merged_env` (and the legacy env_spec/env_keys fields) is kept only for
-        # display/back-compat; the two scopes are shipped separately below. A
-        # judge that sets a variable the contender also sets to a *different*
-        # value is still surfaced as an error since the merged view cannot show
-        # both.
+        # `merged_env` is display/back-compat only. Conflicting values remain in
+        # their role-scoped maps; the merged view keeps the executor value.
         merged_env = dict(executor_env_spec)
         for key, entry in judge_env.items():
-            if key in merged_env and merged_env[key] != entry:
-                raise ExperimentError(
-                    f"Contender {label}: it sets {key} differently from the judge; "
-                    "the environment is process-wide per run, so the two cannot "
-                    "disagree. Align the providers or pick another judge."
-                )
-            merged_env[key] = entry
+            merged_env.setdefault(key, entry)
 
         docker_image = ""
         if effective_backend == "docker":
@@ -1177,6 +1191,20 @@ def plan_experiment(
                 # Auth mode the launch will use; the review-step preflight
                 # passes it through so credential checks match reality.
                 "executor_auth_mode": launch_payload["auth_mode"],
+                "evaluator_agent": launch_payload["evaluator_agent"],
+                "evaluator_auth_mode": str(
+                    launch_payload.get("evaluator_auth_mode") or "env"
+                ),
+                "executor_bin": str(launch_payload.get("executor_bin") or ""),
+                "evaluator_bin": str(launch_payload.get("evaluator_bin") or ""),
+                "executor_opencode_api_key_env": str(
+                    launch_payload.get("executor_opencode_api_key_env") or ""
+                ),
+                "evaluator_opencode_api_key_env": str(
+                    launch_payload.get("evaluator_opencode_api_key_env") or ""
+                ),
+                "executor_credential_env_keys": executor_credential_env_keys,
+                "evaluator_credential_env_keys": evaluator_credential_env_keys,
                 # Legacy merged view (kept for display/back-compat).
                 "env_spec": merged_env,
                 "env_keys": sorted(merged_env.keys()),
@@ -1216,6 +1244,8 @@ def record_experiment(
     name: str,
     payload: Dict[str, Any],
     plans: List[Dict[str, Any]],
+    launch_status: str = "recorded",
+    launch_error: Optional[str] = None,
 ) -> Dict[str, Any]:
     record = {
         "id": name,
@@ -1236,7 +1266,10 @@ def record_experiment(
             for plan in plans
         ],
         "run_ids": [plan["run_id"] for plan in plans],
+        "launch_status": launch_status,
     }
+    if launch_error:
+        record["launch_error"] = launch_error
     directory = experiments_dir(runs_dir)
     directory.mkdir(parents=True, exist_ok=True)
     _experiment_path(runs_dir, name).write_text(

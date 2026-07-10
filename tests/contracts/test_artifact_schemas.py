@@ -41,6 +41,7 @@ EXPECTED_SCHEMAS = {
     "rigors.schema.json",
     "rubrics.schema.json",
     "run_summary.schema.json",
+    "run_state.schema.json",
     "runtime_provenance.schema.json",
     "task.schema.json",
     "task_manifest.schema.json",

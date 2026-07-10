@@ -22,6 +22,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Iterable, List
 
+from ..domain import RUN_ID_ENV, SAFE_ID_PATTERN
 from ..runner.models import ProcessResult
 from .process import split_command
 
@@ -43,6 +44,16 @@ def build_docker_agent_command(
     command.append("run")
     if container_name:
         command.extend(["--name", container_name])
+    run_id = auth_env.get(RUN_ID_ENV)
+    if isinstance(run_id, str) and SAFE_ID_PATTERN.fullmatch(run_id):
+        command.extend(
+            [
+                "--label",
+                "starbench.managed=true",
+                "--label",
+                f"starbench.run_id={run_id}",
+            ]
+        )
     command.extend(
         [
             "--rm",

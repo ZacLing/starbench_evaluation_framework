@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from starbench.gui import library
 from starbench.gui.library import LibraryError
@@ -338,6 +340,35 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual(by_id["executor_cli"]["status"], "fail")
         self.assertIn("definitely-missing-cli", by_id["executor_cli"]["label"])
         self.assertIn("STARBENCH_ABSENT_KEY", by_id["executor_auth"]["hint"])
+
+    def test_preflight_checks_role_specific_opencode_keys(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"EXECUTOR_GATEWAY_KEY": "set"},
+            clear=True,
+        ):
+            checks = library.preflight(
+                executor_agent="opencode",
+                evaluator_agent="opencode",
+                executor_backend="local",
+                docker_image="",
+                executor_auth_mode="env",
+                evaluator_auth_mode="env",
+                executor_opencode_api_key_env="EXECUTOR_GATEWAY_KEY",
+                evaluator_opencode_api_key_env="JUDGE_GATEWAY_KEY",
+            )
+        by_id = {check["id"]: check for check in checks}
+        self.assertEqual(by_id["executor_auth"]["status"], "ok")
+        self.assertIn("EXECUTOR_GATEWAY_KEY", by_id["executor_auth"]["hint"])
+        self.assertIn("JUDGE_GATEWAY_KEY", by_id["evaluator_auth"]["hint"])
+
+    def test_preflight_probes_the_executable_in_a_command_prefix(self) -> None:
+        with mock.patch("starbench.gui.library.shutil.which", return_value="/bin/codex") as which:
+            check = library._cli_check(
+                "executor", "codex", "codex -c model_provider=gateway"
+            )
+        self.assertEqual(check["status"], "ok")
+        which.assert_called_once_with("codex")
 
 
 if __name__ == "__main__":

@@ -84,6 +84,22 @@ class LauncherTest(unittest.TestCase):
         self.assertIn("--max-evaluator-parallel 8", joined)
         self.assertIn("--claude-max-turns 30", joined)
 
+    def test_role_specific_runtime_and_gateway_flags_pass_through(self) -> None:
+        argv = build_run_argv(
+            self.payload(
+                executor_bin="executor-cli --profile gateway",
+                evaluator_bin="judge-cli",
+                executor_opencode_provider="executor-provider",
+                evaluator_opencode_provider="judge-provider",
+            ),
+            runs_dir=self.runs_dir,
+        )
+        joined = " ".join(argv)
+        self.assertIn("--executor-bin executor-cli --profile gateway", joined)
+        self.assertIn("--evaluator-bin judge-cli", joined)
+        self.assertIn("--executor-opencode-provider executor-provider", joined)
+        self.assertIn("--evaluator-opencode-provider judge-provider", joined)
+
     def test_blank_claude_max_turns_is_omitted(self) -> None:
         argv = build_run_argv(self.payload(claude_max_turns=""), runs_dir=self.runs_dir)
         self.assertNotIn("--claude-max-turns", argv)

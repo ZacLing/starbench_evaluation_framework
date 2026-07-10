@@ -13,7 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from ..domain import SAFE_ID_PATTERN, TaskRunOutcome, aggregate_outcome
+from ..domain import (
+    ACTIVE_RUN_STATES,
+    RUN_STATE_FILENAME,
+    SAFE_ID_PATTERN,
+    TaskRunOutcome,
+    aggregate_outcome,
+)
 
 SAFE_ID = SAFE_ID_PATTERN
 
@@ -161,6 +167,13 @@ def run_status(run_root: Path, active_run_ids: Optional[set] = None) -> str:
         return "running"
     if (run_root / "summary.json").exists():
         return "complete"
+    run_state = _read_json(run_root / RUN_STATE_FILENAME)
+    if isinstance(run_state, dict):
+        if run_state.get("state") == "completed":
+            return "complete"
+        if run_state.get("state") in ACTIVE_RUN_STATES:
+            return "running"
+        return "interrupted"
     progress_path = run_root / "progress_events.jsonl"
     if progress_path.exists():
         try:
@@ -379,6 +392,7 @@ def list_runs(runs_dir: Path, active_run_ids: Optional[set] = None) -> List[Dict
             (entry / "run_config.json").exists()
             or (entry / "summary.json").exists()
             or (entry / "progress_events.jsonl").exists()
+            or (entry / RUN_STATE_FILENAME).exists()
         )
     ]
     roots.sort(key=lambda entry: entry.stat().st_mtime, reverse=True)

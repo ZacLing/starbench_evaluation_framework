@@ -857,3 +857,37 @@ codex/frontend-decomposition
 
 这样可以最快修复 HSW 最核心的风险：**测量系统不能把 Agent 的真实失败误报为任务被
 突破，也不能把测量故障包装成 Humans Still Win 的证据。**
+
+---
+
+## 14. 实施进度（2026-07-10）
+
+原始诊断基线和章节编号保持不变；本节记录后续实施结果。当前实施分支为
+`codex/hardening-contracts-paths`。
+
+### 14.1 已完成的正确性闭环
+
+- `4f1f74a`：关闭 D-001，Judge 只提交 answer/evidence，权威 rubric 字段由 task
+  定义回填；非法 Judge 输出进入 inconclusive，不再参与 HSW pass/fail。
+- `44ea3d4`：关闭 D-002、D-003、D-004、D-006、D-007、D-010 的主要风险；统一
+  Safe ID/relative path/symlink 策略，Schema 随 wheel 安装，重复引用 fail closed，
+  executor 故障与能力 verdict 分离。
+- 当前工作提交：关闭 D-005、D-008、D-009 和 D-011 的运行正确性风险；新增
+  `run_state.json`、process-group TERM/KILL、Docker label + stop/kill、prepare/commit/
+  rollback、重启 reconcile，以及 executor/evaluator 独立 bin、OpenCode gateway、
+  credential env 和 custom runtime 元数据来源。
+
+配套回归覆盖真实父子进程树、GUI 重启后恢复控制、第 N 个启动失败回滚、Docker
+清理顺序、显式 stop 终态优先、角色级 Provider/key/bin 预检，以及 wheel 空环境
+Schema smoke。
+
+### 14.2 本轮停止边界
+
+本轮以 D-001 至 D-011 的严重正确性与安全问题闭环为停止边界。Phase 2 中完整
+`Typed RunPlan` 对象化、plan fingerprint 和 application-service 分层仍是后续结构化
+迁移；当前先用角色级 typed fields 消除了真实路由串扰和错误 preflight，不宣称已完成
+整个目标架构搬迁。
+
+D-012（RunCatalog/查询性能）和 D-013（前端大模块拆分）没有被当作 bug 修复混入本
+分支，继续保留在 Phase 4/5 路线中。它们影响扩展性和维护成本，但不阻塞本轮可信度
+修复的完成判定。

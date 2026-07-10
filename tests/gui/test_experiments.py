@@ -96,6 +96,66 @@ class ExperimentTest(unittest.TestCase):
             self.assertIn("--max-evaluator-parallel 8", joined)
             self.assertIn("--claude-max-turns 30", joined)
 
+    def test_executor_and_judge_opencode_gateways_are_independent(self) -> None:
+        payload = self.experiment_payload(
+            contenders=[
+                {
+                    "label": "OpenCode contender",
+                    "agent": "opencode",
+                    "model": "executor/model",
+                    "auth_mode": "env",
+                    "opencode_provider": "executor-provider",
+                    "opencode_base_url": "https://executor.example/v1",
+                    "opencode_api_key_env": "EXECUTOR_KEY",
+                }
+            ]
+        )
+        payload["shared"].update(
+            {
+                "evaluator_agent": "opencode",
+                "evaluator_model": "judge/model",
+                "evaluator_auth_mode": "env",
+                "evaluator_gateway": {
+                    "opencode_provider": "judge-provider",
+                    "opencode_base_url": "https://judge.example/v1",
+                    "opencode_api_key_env": "JUDGE_KEY",
+                },
+            }
+        )
+
+        item = experiments.plan_experiment(payload, runs_dir=self.runs_dir)["plans"][0]
+        argv = item["argv"]
+        joined = " ".join(argv)
+        self.assertIn("--executor-opencode-provider executor-provider", joined)
+        self.assertIn("--executor-opencode-base-url https://executor.example/v1", joined)
+        self.assertIn("--evaluator-opencode-provider judge-provider", joined)
+        self.assertIn("--evaluator-opencode-base-url https://judge.example/v1", joined)
+        self.assertEqual(item["executor_opencode_api_key_env"], "EXECUTOR_KEY")
+        self.assertEqual(item["evaluator_opencode_api_key_env"], "JUDGE_KEY")
+        self.assertEqual(item["executor_credential_env_keys"], ["EXECUTOR_KEY"])
+        self.assertEqual(item["evaluator_credential_env_keys"], ["JUDGE_KEY"])
+
+    def test_codex_executor_bin_does_not_reroute_codex_judge(self) -> None:
+        payload = self.experiment_payload(
+            contenders=[
+                {
+                    "label": "Codex gateway",
+                    "agent": "codex",
+                    "model": "gpt-5.5",
+                    "auth_mode": "env",
+                    "codex_bin": "codex -c model_provider=gateway",
+                }
+            ]
+        )
+        payload["shared"]["evaluator_agent"] = "codex"
+
+        argv = experiments.plan_experiment(payload, runs_dir=self.runs_dir)["plans"][0][
+            "argv"
+        ]
+        joined = " ".join(argv)
+        self.assertIn("--executor-bin codex -c model_provider=gateway", joined)
+        self.assertNotIn("--evaluator-bin", argv)
+
     def test_claude_max_turns_omitted_when_unset(self) -> None:
         plan = experiments.plan_experiment(self.experiment_payload(), runs_dir=self.runs_dir)
         for item in plan["plans"]:
@@ -477,7 +537,7 @@ class ExperimentCustomRuntimeTest(unittest.TestCase):
             item["warnings"],
         )
 
-    def test_custom_judge_env_merges_and_conflicts_detected(self) -> None:
+    def test_custom_judge_env_is_role_scoped_even_when_values_differ(self) -> None:
         payload = self.payload()
         payload["shared"]["evaluator_agent"] = "custom:kimi-code"
         payload["shared"]["judge_env"] = {"KIMI_HOME": {"value": "/tmp/kimi"}}
@@ -488,17 +548,24 @@ class ExperimentCustomRuntimeTest(unittest.TestCase):
             self.assertIn("KIMI_HOME", item["env_keys"])
             self.assertIn("--evaluator-agent custom:kimi-code", " ".join(item["argv"]))
 
-        # A custom judge that reads the same variables the contender injects
-        # (different value) must be rejected.
+        # The same variable may have different role-scoped values.
         payload = self.payload(name="exp_custom2")
         payload["shared"]["evaluator_agent"] = "custom:qwen-code"
         payload["shared"]["judge_env"] = {
             "OPENAI_BASE_URL": {"value": "https://api.openai.com/v1"}
         }
-        with self.assertRaisesRegex(ExperimentError, "process-wide"):
-            experiments.plan_experiment(
-                payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
-            )
+        plan = experiments.plan_experiment(
+            payload, runs_dir=self.runs_dir, runtimes_dir=self.runtimes_dir
+        )
+        qwen = {item["agent"]: item for item in plan["plans"]}["custom:qwen-code"]
+        self.assertEqual(
+            qwen["executor_env_spec"]["OPENAI_BASE_URL"],
+            {"value": "https://openrouter.ai/api/v1"},
+        )
+        self.assertEqual(
+            qwen["judge_env_spec"]["OPENAI_BASE_URL"],
+            {"value": "https://api.openai.com/v1"},
+        )
 
     def test_unknown_custom_judge_rejected(self) -> None:
         payload = self.payload()

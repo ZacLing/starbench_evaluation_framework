@@ -33,7 +33,15 @@ from ..runner.prompts import (
     append_thinking_instruction,
     build_executor_prompt,
 )
-from .base import ExecutorContext, JudgeContext, RuntimeAdapter, RuntimeInfo, finalize_success
+from .base import (
+    ExecutorContext,
+    InjectionChannel,
+    JudgeContext,
+    RuntimeAdapter,
+    RuntimeInfo,
+    finalize_success,
+    provider_filter_for_protocol,
+)
 
 
 def build_custom_command(
@@ -135,15 +143,28 @@ def _custom_runtime_info(spec: CustomRuntimeSpec) -> RuntimeInfo:
         bin_name = spec.command
     return RuntimeInfo(
         id=f"custom:{spec.id}",
-        label=spec.id,
-        description="",
-        protocol="none",
+        label=spec.label,
+        description=spec.description,
+        protocol=spec.protocol,
         bin=bin_name,
         docker_image=spec.docker_image,
         docker_env_whitelist=tuple(spec.docker_env_passthrough),
-        credential_env_keys=(),
-        judge_sensitive_env=tuple(spec.env.keys()),
+        credential_env_keys=(spec.api_key_env,) if spec.api_key_env else (),
+        judge_sensitive_env=tuple(
+            dict.fromkeys(
+                value
+                for value in [*spec.env.keys(), spec.base_url_env, spec.api_key_env]
+                if value
+            )
+        ),
         default_executor_backend="local",
+        provider_filter=provider_filter_for_protocol(spec.protocol),
+        injection=InjectionChannel(
+            kind="spec_env" if spec.protocol != "none" else "none",
+            base_url_var=spec.base_url_env,
+            api_key_var=spec.api_key_env,
+            default_api_key_env=spec.api_key_env,
+        ),
     )
 
 

@@ -94,6 +94,21 @@ class GuiDataTest(unittest.TestCase):
         runs = data.list_runs(self.runs_dir)
         self.assertEqual(runs[0]["status"], "interrupted")
 
+    def test_persisted_run_state_replaces_mtime_guessing(self) -> None:
+        run_root = self.runs_dir / "run_stateful"
+        run_root.mkdir()
+        write_json(
+            run_root / "run_state.json",
+            {"run_id": "run_stateful", "state": "running"},
+        )
+        self.assertEqual(data.run_status(run_root), "running")
+
+        write_json(
+            run_root / "run_state.json",
+            {"run_id": "run_stateful", "state": "orphaned"},
+        )
+        self.assertEqual(data.run_status(run_root), "interrupted")
+
     def test_active_registry_marks_running(self) -> None:
         make_run(self.runs_dir, "run_live", complete=False)
         runs = data.list_runs(self.runs_dir, active_run_ids={"run_live"})

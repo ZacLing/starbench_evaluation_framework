@@ -12,6 +12,7 @@ from starbench.gui import experiments, providers
 from starbench.gui.experiments import ExperimentError
 from starbench.gui.launcher import resolve_env_spec
 from starbench.gui.providers import ProviderError
+from helpers import write_json
 
 
 class ProviderTest(unittest.TestCase):
@@ -19,6 +20,32 @@ class ProviderTest(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_prov_"))
         self.runs_dir = self.tmp / "runs"
         self.runs_dir.mkdir()
+        self.tasks_dir = self.tmp / "tasks"
+        task_dir = self.tasks_dir / "demo"
+        task_dir.mkdir(parents=True)
+        write_json(
+            task_dir / "task.json",
+            {
+                "id": "demo",
+                "name": "Provider planning fixture",
+                "prompt": "prompt.md",
+                "rubrics": "rubrics.json",
+            },
+        )
+        (task_dir / "prompt.md").write_text("Create an output.\n", encoding="utf-8")
+        write_json(
+            task_dir / "rubrics.json",
+            {
+                "rubrics": [
+                    {
+                        "id": "R001",
+                        "question": "Does an output exist?",
+                        "expected": True,
+                        "fail_fast": False,
+                    }
+                ]
+            },
+        )
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -422,13 +449,11 @@ class ProviderTest(unittest.TestCase):
         self.assertEqual(status, "api_key")
         self.assertIn("not a local CLI login", message)
 
-    def test_judge_gateway_conflict_detected(self) -> None:
-        tasks_dir = self.tmp / "tasks"
-        tasks_dir.mkdir(exist_ok=True)
+    def test_executor_and_judge_gateways_are_role_scoped(self) -> None:
         payload = {
             "name": "exp_gwconflict",
-            "tasks_dir": str(tasks_dir),
-            "tasks": [],
+            "tasks_dir": str(self.tasks_dir),
+            "tasks": ["demo"],
             "shared": {
                 "evaluator_agent": "opencode",
                 "evaluator_gateway": {
@@ -450,16 +475,16 @@ class ProviderTest(unittest.TestCase):
                 }
             ],
         }
-        with self.assertRaises(ExperimentError):
-            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        joined = " ".join(plan["plans"][0]["argv"])
+        self.assertIn("--executor-opencode-base-url https://b.example/v1", joined)
+        self.assertIn("--evaluator-opencode-base-url https://a.example/v1", joined)
 
-    def test_codex_gateway_conflicts_with_codex_judge(self) -> None:
-        tasks_dir = self.tmp / "tasks"
-        tasks_dir.mkdir(exist_ok=True)
+    def test_codex_executor_wrapper_does_not_reroute_codex_judge(self) -> None:
         payload = {
             "name": "exp_codexgw",
-            "tasks_dir": str(tasks_dir),
-            "tasks": [],
+            "tasks_dir": str(self.tasks_dir),
+            "tasks": ["demo"],
             "shared": {"evaluator_agent": "codex", "judge_mode": "single"},
             "contenders": [
                 {
@@ -471,20 +496,16 @@ class ProviderTest(unittest.TestCase):
                 }
             ],
         }
-        with self.assertRaises(ExperimentError):
-            experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        payload["shared"]["evaluator_agent"] = "claude"
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         joined = plan["plans"][0]["argv"]
         self.assertIn("codex -c model_provider=openrouter", joined)
+        self.assertNotIn("--evaluator-bin", joined)
 
     def test_judge_gateway_used_when_contender_not_opencode(self) -> None:
-        tasks_dir = self.tmp / "tasks"
-        tasks_dir.mkdir(exist_ok=True)
         payload = {
             "name": "exp_gwjudge",
-            "tasks_dir": str(tasks_dir),
-            "tasks": [],
+            "tasks_dir": str(self.tasks_dir),
+            "tasks": ["demo"],
             "shared": {
                 "evaluator_agent": "opencode",
                 "evaluator_model": "doubao-judge",
@@ -501,8 +522,8 @@ class ProviderTest(unittest.TestCase):
         }
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         joined = " ".join(plan["plans"][0]["argv"])
-        self.assertIn("--opencode-base-url https://a.example/v1", joined)
-        self.assertIn("--opencode-provider gw-a", joined)
+        self.assertIn("--evaluator-opencode-base-url https://a.example/v1", joined)
+        self.assertIn("--evaluator-opencode-provider gw-a", joined)
 
     def test_resolve_env_spec(self) -> None:
         import os
@@ -523,13 +544,11 @@ class ProviderTest(unittest.TestCase):
         self.assertNotIn("MISSING", resolved)
 
     def test_experiment_plan_carries_env_spec(self) -> None:
-        tasks_dir = self.tmp / "tasks"
-        tasks_dir.mkdir()
         plan = experiments.plan_experiment(
             {
                 "name": "exp_env",
-                "tasks_dir": str(tasks_dir),
-                "tasks": [],
+                "tasks_dir": str(self.tasks_dir),
+                "tasks": ["demo"],
                 "shared": {"evaluator_agent": "codex", "judge_mode": "single"},
                 "contenders": [
                     {

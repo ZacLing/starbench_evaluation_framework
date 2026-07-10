@@ -3535,7 +3535,6 @@ function StepReview({
 
       <PreflightPanel
         plans={plan.plans}
-        shared={shared}
         runtimeLabel={runtimeLabel}
         onBlockedChange={onPreflightBlocked}
       />
@@ -3753,12 +3752,10 @@ function TaskFactsStrip({ tasks }: { tasks: TaskPackage[] }) {
    A hard failure disables Launch; the button lighting up is a promise. */
 function PreflightPanel({
   plans,
-  shared,
   runtimeLabel,
   onBlockedChange,
 }: {
   plans: ExperimentPlanItem[] | null
-  shared: Partial<SharedConfig>
   runtimeLabel: (runtime: string) => string
   onBlockedChange: (blocked: boolean) => void
 }) {
@@ -3766,22 +3763,32 @@ function PreflightPanel({
     if (!plans) return [] as { key: string; agent: string; params: Record<string, string> }[]
     const map = new Map<string, { agent: string; params: Record<string, string> }>()
     for (const item of plans) {
-      const key = [item.agent, item.backend, item.docker_image ?? "", item.executor_auth_mode ?? "env"].join("|")
+      const params = {
+        executor_agent: item.agent,
+        evaluator_agent: item.evaluator_agent ?? "codex",
+        executor_backend: item.backend,
+        docker_image: item.docker_image ?? "",
+        executor_auth_mode: item.executor_auth_mode ?? "env",
+        evaluator_auth_mode: item.evaluator_auth_mode ?? "env",
+        executor_bin: item.executor_bin ?? "",
+        evaluator_bin: item.evaluator_bin ?? "",
+        executor_opencode_api_key_env: item.executor_opencode_api_key_env ?? "",
+        evaluator_opencode_api_key_env: item.evaluator_opencode_api_key_env ?? "",
+        executor_env_keys: (item.executor_credential_env_keys ?? []).join(","),
+        evaluator_env_keys: (item.evaluator_credential_env_keys ?? []).join(","),
+      }
+      const key = Object.entries(params)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, value]) => `${name}=${value}`)
+        .join("|")
       if (map.has(key)) continue
       map.set(key, {
         agent: item.agent,
-        params: {
-          executor_agent: item.agent,
-          evaluator_agent: String(shared.evaluator_agent ?? "codex"),
-          executor_backend: item.backend,
-          docker_image: item.docker_image ?? "",
-          executor_auth_mode: item.executor_auth_mode ?? "env",
-          evaluator_auth_mode: String(shared.evaluator_auth_mode ?? "env"),
-        },
+        params,
       })
     }
     return [...map.entries()].map(([key, value]) => ({ key, ...value }))
-  }, [plans, shared])
+  }, [plans])
 
   const checksQuery = useQuery({
     queryKey: ["preflight", paramSets.map((set) => set.key).join(";")],
@@ -3789,6 +3796,7 @@ function PreflightPanel({
     queryFn: async () =>
       Promise.all(
         paramSets.map(async (set) => ({
+          key: set.key,
           agent: set.agent,
           checks: (await api.preflight(set.params)).checks,
         })),
@@ -3824,19 +3832,19 @@ function PreflightPanel({
           </p>
         )}
         {groups.map((group) => (
-          <div key={group.agent} className="grid gap-1">
+          <div key={group.key} className="grid gap-1">
             <span className="text-xs font-medium">{runtimeLabel(group.agent)}</span>
             {group.checks
               .filter((check) => !check.id.startsWith("evaluator"))
               .map((check) => (
-                <PreflightRow key={`${group.agent}-${check.id}-${check.label}`} check={check} />
+                <PreflightRow key={`${group.key}-${check.id}-${check.label}`} check={check} />
               ))}
           </div>
         ))}
         {judgeChecks.length > 0 && (
           <div className="grid gap-1">
             <span className="text-xs font-medium">
-              Judge · {runtimeLabel(String(shared.evaluator_agent ?? "codex"))}
+              Judge · {runtimeLabel(plans[0]?.evaluator_agent ?? "codex")}
             </span>
             {judgeChecks.map((check) => (
               <PreflightRow key={`judge-${check.id}-${check.label}`} check={check} />

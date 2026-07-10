@@ -687,6 +687,14 @@ class ExperimentPlanItem(_ExperimentPlanItemBase, total=False):
     # Auth mode the launch will use; the review-step preflight passes it
     # through so credential checks match reality.
     executor_auth_mode: str
+    evaluator_agent: str
+    evaluator_auth_mode: str
+    executor_bin: str
+    evaluator_bin: str
+    executor_opencode_api_key_env: str
+    evaluator_opencode_api_key_env: str
+    executor_credential_env_keys: List[str]
+    evaluator_credential_env_keys: List[str]
 
 
 class _ContenderBase(TypedDict):
