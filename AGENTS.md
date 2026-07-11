@@ -2,7 +2,7 @@
 
 ## Project Shape
 
-StarBench is a benchmark runner for isolated coding-agent task execution and rubric judging. Keep runtime integrations first-class and explicit in `src/starbench/runner/codex_process.py` and `src/starbench/runner/run_benchmark.py`; do not hide runtime-specific behavior in ad hoc shell wrappers unless the wrapper is part of a documented test fixture.
+StarBench is a benchmark runner for isolated coding-agent task execution and rubric judging. Structure, layer boundaries, ownership, and the console/core contract surface are governed by `docs/ARCHITECTURE.md` — read it before making cross-layer changes. Keep runtime integrations first-class and explicit in the adapter registry (`src/starbench/adapters/`); do not hide runtime-specific behavior in ad hoc shell wrappers unless the wrapper is part of a documented test fixture.
 
 ## Working Rules
 

@@ -1,4 +1,4 @@
-.PHONY: install test gen-types docker-build docker-images gui-build gui-dev
+.PHONY: install test gen-types sync-schemas docker-build docker-images gui-build gui-dev
 
 install:
 	python3 -m pip install --upgrade pip setuptools wheel
@@ -11,6 +11,11 @@ test:
 # The output is committed; run this whenever a core API shape changes.
 gen-types:
 	python3 scripts/gen_api_types.py
+
+# schemas/starbench/ is the authoring source; the packaged mirror under
+# src/starbench/contracts/schemas/ is derived. Run after editing any schema.
+sync-schemas:
+	python3 scripts/sync_schemas.py
 
 docker-build:
 	docker build -t starbench-codex:latest -f docker/codex-bench.Dockerfile .

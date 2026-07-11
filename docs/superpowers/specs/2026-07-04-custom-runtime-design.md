@@ -1,6 +1,6 @@
 # Custom Agent Runtime + Generalized Docker Backend — Design
 
-Status: awaiting review (Lucas)
+Status: awaiting maintainer review
 Date: 2026-07-04
 Depends on: bug-fix commits `f057ae0` / `a4325df` / `16f726e`
 
@@ -27,7 +27,7 @@ Non-goals (YAGNI, explicitly out of scope for v1):
 - Per-runtime auth-mode variants for custom runtimes (v1 inherits host env +
   static `env` from config).
 
-## Decisions taken by default (Lucas away; flagged for review)
+## Decisions taken by default (flagged for maintainer review)
 
 | Decision | Choice | Rationale |
 |---|---|---|

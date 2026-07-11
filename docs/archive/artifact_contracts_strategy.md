@@ -1,3 +1,5 @@
+> **[已归档 2026-07-13]** 契约策略已落地，现行参考见 ../artifact_contracts.md。结构与边界的现行权威见 `docs/ARCHITECTURE.md`。本文只读，不再更新。
+
 # 制品契约策略：从评测脚本到 Coding-Agent Evaluation Infrastructure
 
 > 2026-07-06 讨论稿。本文沉淀当前对 StarBench 产品定位与

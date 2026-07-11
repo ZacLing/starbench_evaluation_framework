@@ -198,7 +198,7 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Quickstart](docs/quickstart.md)
 - [Business Requirements Document](docs/BRD.md)
 - [Recipes: common changes, one file each](docs/recipes.md)
-- [Architecture Plan & Execution Status](docs/architecture_plan.md)
+- [Architecture: structure, boundaries, ownership](docs/ARCHITECTURE.md)
 - [GUI Console](docs/gui.md)
 - [Task Package Structure](docs/task_package.md)
 - [Artifact Contracts](docs/artifact_contracts.md)
