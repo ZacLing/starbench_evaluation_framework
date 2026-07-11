@@ -23,7 +23,7 @@ export function timestampName(prefix: string): string {
   )}${pad(now.getMinutes())}${pad(now.getSeconds())}`
 }
 
-export function slugId(text: string): string {
+function slugId(text: string): string {
   const slug = text
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")

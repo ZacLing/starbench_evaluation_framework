@@ -1,6 +1,7 @@
 """Contract checks for public StarBench task and run artifacts."""
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -185,6 +186,12 @@ class ArtifactSchemaTests(unittest.TestCase):
                         (packaged_root / public_path.name).read_bytes(),
                     )
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("pip") is not None
+        and importlib.util.find_spec("setuptools") is not None,
+        "needs pip + setuptools in the venv (uv-managed venvs ship neither: "
+        "`uv pip install pip setuptools`); CI must run this test",
+    )
     def test_built_wheel_loads_packaged_schemas_without_repository(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

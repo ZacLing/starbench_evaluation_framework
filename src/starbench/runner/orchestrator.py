@@ -46,7 +46,12 @@ from ..domain import (
     safe_child,
 )
 from .env_scope import scoped_base_envs
-from .evaluation import inconclusive_executor_aggregate, inconclusive_judge_aggregate, write_aggregate
+from .evaluation import (
+    inconclusive_executor_aggregate,
+    inconclusive_judge_aggregate,
+    judge_identity_fields,
+    write_aggregate,
+)
 from .executor import json_dump, materialize_task, run_executor
 from .judge import rubric_launch_order, run_parallel_judges, run_single_judge
 from ..skills.registry import expand_skill_groups, load_registry_skills
@@ -80,8 +85,10 @@ def write_profile_snapshot(run_root: Path, snapshot: Dict[str, Any]) -> Path:
     The snapshot was already validated against the public contract at
     argument-parse time (fail closed, before the run directory existed); this
     write is temp-file + ``os.replace`` so a crash mid-write can never leave a
-    truncated ``profile_snapshot.json`` behind. The runner stays the only
-    writer inside the run directory.
+    truncated ``profile_snapshot.json`` behind. File ownership inside a run
+    directory is disjoint: the console supervisor owns only ``run_state.json``
+    (plus the reservation handshake in ``.runner_claim``); every other file is
+    written by the runner alone.
     """
     target = run_root / "profile_snapshot.json"
     body = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
@@ -336,6 +343,11 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         opencode_base_url=args.evaluator_opencode_base_url,
         opencode_api_key_env=args.evaluator_opencode_api_key_env,
     )
+    # Stamped into every aggregate a judge invocation produced, so a verdict
+    # stays attributable to its instrument without the run_config in hand.
+    judge_identity = judge_identity_fields(
+        judge_agent=args.evaluator_agent, judge_model=args.evaluator_model
+    )
     runtime_provenance = capture_run_provenance(
         executor_agent=args.executor_agent,
         executor_adapter=executor_adapter,
@@ -508,6 +520,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                             timeout_seconds=args.evaluator_timeout_seconds,
                             executor_timing=executor_timing,
                             semaphore=evaluator_semaphore,
+                            judge_identity=judge_identity,
                         )
                     except Exception as exc:
                         modes["single"] = {
@@ -517,6 +530,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                                 mode="single",
                                 error=f"{type(exc).__name__}: {exc}",
                                 executor_timing=executor_timing,
+                                judge_identity=judge_identity,
                             ),
                         }
                     progress.evaluator_finished(
@@ -541,6 +555,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                             launch_order=rubric_order,
                             progress=progress,
                             run_task_id=record["run_task_id"],
+                            judge_identity=judge_identity,
                         )
                     except Exception as exc:
                         modes["parallel"] = {
@@ -549,6 +564,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
                                 mode="parallel",
                                 error=f"{type(exc).__name__}: {exc}",
                                 executor_timing=executor_timing,
+                                judge_identity=judge_identity,
                             ),
                         }
                 result = {

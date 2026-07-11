@@ -983,14 +983,27 @@ class TaskLibrariesPayload(TypedDict):
     libraries: List[TaskLibrary]
 
 
+class DockerCleanup(TypedDict):
+    matched: List[str]
+    stopped: List[str]
+    killed: List[str]
+    errors: List[str]
+
+
 class Launch(TypedDict):
     run_id: str
+    state: Optional[str]
     argv: List[str]
-    pid: int
-    started_at: str
+    # Null until the process is actually spawned: prepared reservations and
+    # failed launches surface through the same shape.
+    pid: Optional[int]
+    pgid: Optional[int]
+    started_at: Optional[str]
     log_path: str
     running: bool
     exit_code: Optional[int]
+    docker_cleanup: Optional[DockerCleanup]
+    error: Optional[str]
 
 
 class RunsPayload(TypedDict):
@@ -1437,6 +1450,7 @@ GENERATED_TYPES = [
     "TaskPackage",
     "TaskLibrary",
     "TaskLibrariesPayload",
+    "DockerCleanup",
     "Launch",
     "RunsPayload",
     "LaunchesPayload",

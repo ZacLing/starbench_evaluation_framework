@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from ..data import SAFE_ID, _read_json
+from ..fsio import atomic_write_json
+from ..read_models.base import SAFE_ID, _read_json
 from .errors import ExperimentError
 
 PER_CONTENDER_FIELD_CHOICES = ["model", "credentials", "gateway", "thinking_effort"]
@@ -153,8 +153,6 @@ def save_profiles(runs_dir: Path, payload: Dict[str, Any]) -> Dict[str, Any]:
 
     stored = {"default_profile_id": default_id, "profiles": revised}
     runs_dir.mkdir(parents=True, exist_ok=True)
-    profiles_path(runs_dir).write_text(
-        json.dumps(stored, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    atomic_write_json(profiles_path(runs_dir), stored, indent=2, sort_keys=True)
     stored["persisted"] = True
     return stored

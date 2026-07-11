@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from ..fsio import atomic_write_json
 
 JSONL_INDEX_SCHEMA_VERSION = 1
 
@@ -24,23 +25,9 @@ def _lock_for(path: Path) -> threading.RLock:
 
 
 def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(
-        dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
+    # Module-level indirection kept as the test seam for read-only mounts.
+    # Indexes are large and rewritten often: compact separators, no sorting.
+    atomic_write_json(path, payload, sort_keys=False, separators=(",", ":"))
 
 
 def _index_path(index_root: Path, source: Path, mode: str) -> Path:

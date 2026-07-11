@@ -105,6 +105,7 @@ async def run_single_judge(
     timeout_seconds: int,
     executor_timing: Dict[str, Any] | None = None,
     semaphore: asyncio.Semaphore | None = None,
+    judge_identity: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     judges = paths["judges"]
     final_path = judges / "single_result.json"
@@ -140,6 +141,7 @@ async def run_single_judge(
             normalize_single_result(final_path),
             mode="single",
             executor_timing=executor_timing,
+            judge_identity=judge_identity,
         )
     except Exception as exc:
         aggregate = inconclusive_judge_aggregate(
@@ -147,6 +149,7 @@ async def run_single_judge(
             mode="single",
             error=f"{type(exc).__name__}: {exc}",
             executor_timing=executor_timing,
+            judge_identity=judge_identity,
         )
     write_aggregate(judges / "single_aggregate.json", aggregate)
     json_dump(judges / "single_status.json", status)
@@ -165,6 +168,7 @@ async def run_parallel_judges(
     launch_order: Sequence[Rubric],
     progress: BenchmarkProgress | None = None,
     run_task_id: str | None = None,
+    judge_identity: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     async def run_one(rubric: Rubric) -> None:
         async with semaphore:
@@ -207,6 +211,7 @@ async def run_parallel_judges(
             normalize_parallel_results(result_paths),
             mode="parallel",
             executor_timing=executor_timing,
+            judge_identity=judge_identity,
         )
     except Exception as exc:
         aggregate = inconclusive_judge_aggregate(
@@ -214,6 +219,7 @@ async def run_parallel_judges(
             mode="parallel",
             error=f"{type(exc).__name__}: {exc}",
             executor_timing=executor_timing,
+            judge_identity=judge_identity,
         )
     write_aggregate(paths["judges"] / "parallel_aggregate.json", aggregate)
     return {"aggregate": aggregate}

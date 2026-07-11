@@ -727,14 +727,25 @@ export interface TaskLibrariesPayload {
   libraries: TaskLibrary[]
 }
 
+export interface DockerCleanup {
+  matched: string[]
+  stopped: string[]
+  killed: string[]
+  errors: string[]
+}
+
 export interface Launch {
   run_id: string
+  state: string | null
   argv: string[]
-  pid: number
-  started_at: string
+  pid: number | null
+  pgid: number | null
+  started_at: string | null
   log_path: string
   running: boolean
   exit_code: number | null
+  docker_cleanup: DockerCleanup | null
+  error: string | null
 }
 
 export interface RunsPayload {

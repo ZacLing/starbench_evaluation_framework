@@ -25,7 +25,7 @@ from typing import Any, Dict, Sequence
 
 from ..adapters import BUILTIN_AGENTS, DEFAULT_DOCKER_IMAGES, resolve
 from ..contracts import ContractValidationError, validate_payload
-from ..domain import parse_safe_id
+from ..domain import INSTRUCTION_MODES, RIGOR_MODES, parse_safe_id
 from .custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .orchestrator import run_benchmark
 
@@ -217,7 +217,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--evaluator-timeout-seconds", type=int, default=900)
     parser.add_argument(
         "--instruction-mode",
-        choices=["none", "traverse", "select", "ablation"],
+        choices=list(INSTRUCTION_MODES),
         default="none",
         help="Append human_reference instructions: none, one run per step, selected step bundle, or baseline plus one run per step.",
     )
@@ -228,7 +228,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--rigor-mode",
-        choices=["none", "select"],
+        choices=list(RIGOR_MODES),
         default="none",
         help="Append selected rigors from rigors.json to the executor prompt.",
     )

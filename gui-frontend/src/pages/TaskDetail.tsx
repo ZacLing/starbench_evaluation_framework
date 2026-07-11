@@ -840,7 +840,15 @@ function JudgePanel({
     <Card className="gap-0 overflow-hidden py-0">
       <div className="flex flex-wrap items-center gap-2 border-b bg-muted/30 px-4 py-3">
         <span className="text-sm font-semibold capitalize">{mode} judge</span>
-        {aggregate.overall_pass === null ? (
+        {/* Mirror the backend classifier (domain aggregate_outcome): legacy
+            aggregates signal a broken measurement via error/missing instead of
+            outcome/null — the header must not read those as a Fail verdict. */}
+        {aggregate.overall_pass === null ||
+        aggregate.outcome === "inconclusive_judge" ||
+        aggregate.outcome === "inconclusive_executor" ||
+        aggregate.outcome === "invalid_task" ||
+        Boolean(aggregate.error) ||
+        aggregate.missing.length > 0 ? (
           <Badge className="border-transparent bg-warn-soft text-warn-ink">
             ◌ Inconclusive · not scored
           </Badge>

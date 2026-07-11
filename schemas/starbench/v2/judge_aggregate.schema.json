@@ -45,6 +45,22 @@
         "type": "string"
       }
     },
+    "executor_timing": {
+      "type": ["object", "null"],
+      "description": "Timing echo of the executor invocation the judge assessed."
+    },
+    "judge_agent": {
+      "type": "string",
+      "description": "Agent runtime that produced this verdict. Absent on aggregates recorded without a judge invocation (executor-inconclusive) and on pre-v2 artifacts."
+    },
+    "judge_model": {
+      "type": "string",
+      "description": "Model requested for the judge invocation. Absent when the runtime default was used - an unresolved model is unknown, not guessed."
+    },
+    "judged_at": {
+      "type": "string",
+      "description": "UTC ISO-8601 timestamp of when the verdict was aggregated."
+    },
     "results": {
       "type": "array",
       "items": {

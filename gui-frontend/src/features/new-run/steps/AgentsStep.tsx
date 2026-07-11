@@ -5,8 +5,8 @@ import {
   AGENT_NOTES,
   AgentIcon,
   compatibleProviders,
-  ProviderIcon,
 } from "@/components/brand"
+import { Hint } from "@/components/hint"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -219,11 +219,8 @@ export function StepContenders({
                     loading={statusLoading}
                   />
                   {option.localOnly && (
-                    <span
-                      className="text-[11px] text-warn-ink"
-                      title="No Docker image in this runtime's spec — tasks execute directly on this machine."
-                    >
-                      local execution
+                    <span className="text-[11px] text-warn-ink">
+                      local execution — no Docker image, runs on this machine
                     </span>
                   )}
                   <span
@@ -393,15 +390,13 @@ function ContenderCard({
               </label>
             ))}
           </RadioGroup>
-          <span
-            className="text-[11px] text-muted-foreground"
-            title={
-              thinkingChannel === "native_config"
-                ? "Applied through the CLI's own reasoning switch (Claude Code --effort, Codex model_reasoning_effort, OpenCode --variant)."
-                : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."
-            }
-          >
+          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
             {thinkingChannel === "native_config" ? "native reasoning setting" : "prompt-level request"}
+            <Hint>
+              {thinkingChannel === "native_config"
+                ? "Applied through the CLI's own reasoning switch (Claude Code --effort, Codex model_reasoning_effort, OpenCode --variant)."
+                : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."}
+            </Hint>
           </span>
         </div>
       </CardContent>
@@ -409,51 +404,3 @@ function ContenderCard({
   )
 }
 
-/* ---------- step 3: shared config (profile) ---------- */
-
-export function JudgeCredentialStatus({
-  provider,
-  authMode,
-}: {
-  provider?: AiProvider
-  authMode?: string
-}) {
-  if (!provider) {
-    return (
-      <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">Explicit credentials</span>
-        <span className="font-mono">{authMode || "env"}</span>
-        <span className="min-w-0 break-words">
-          No provider reference is attached to this judge model.
-        </span>
-      </div>
-    )
-  }
-
-  const mode = provider.auth === "cli_login" ? "global" : "env"
-  const keyLabel = provider.api_key_env || "API key env"
-
-  return (
-    <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 text-xs">
-      <ProviderIcon provider={provider} size={14} />
-      <span className="font-medium text-foreground">{provider.name}</span>
-      <span className="font-mono text-muted-foreground">{mode}</span>
-      {provider.auth === "api_key" ? (
-        <span
-          className={cn(
-            "rounded px-1.5 py-0.5 font-mono text-[11px]",
-            provider.key_present
-              ? "bg-pass-soft text-pass-ink"
-              : "bg-warn-soft text-warn-ink",
-          )}
-        >
-          {keyLabel} {provider.key_present ? "set" : "missing"}
-        </span>
-      ) : (
-        <span className="rounded bg-live-soft px-1.5 py-0.5 text-[11px] text-live-ink">
-          CLI login
-        </span>
-      )}
-    </div>
-  )
-}

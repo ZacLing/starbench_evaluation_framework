@@ -36,6 +36,12 @@ def aggregate_outcome(aggregate: Mapping[str, Any]) -> TaskRunOutcome | None:
         return TaskRunOutcome.INCONCLUSIVE_JUDGE
     if aggregate.get("error"):
         return TaskRunOutcome.INCONCLUSIVE_JUDGE
+    # Legacy writers coerced unanswered rubrics to passed=false and recorded
+    # them under "missing" without setting "error". Those aggregates are
+    # incomplete measurements, not agent failures — a false AGENT_FAIL here
+    # would count as a "defended" HSW sample the judge never actually produced.
+    if aggregate.get("missing"):
+        return TaskRunOutcome.INCONCLUSIVE_JUDGE
     overall_pass = aggregate.get("overall_pass")
     if type(overall_pass) is bool:
         return TaskRunOutcome.AGENT_PASS if overall_pass else TaskRunOutcome.AGENT_FAIL

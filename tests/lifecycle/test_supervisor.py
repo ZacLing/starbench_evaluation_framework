@@ -172,6 +172,124 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(first["state"], "rolled_back")
         self.assertEqual(second["state"], "rolled_back")
 
+    def test_rollback_discards_the_unclaimed_run_directory(self) -> None:
+        # A rolled-back reservation the runner never claimed must not linger
+        # as a phantom "interrupted" run, and its run id must stay usable.
+        registry = LaunchRegistry(self.runs_dir, stop_timeout_seconds=1)
+        launches = [
+            {
+                "run_id": "phantom_run",
+                "argv": [str(self.tmp / "missing-executable")],
+                "cwd": self.tmp,
+                "log_path": self.runs_dir / "phantom_run.launch.log",
+            },
+        ]
+        with self.assertRaises(LaunchError):
+            launch_transaction(registry, launches)
+
+        self.assertEqual(registry.get("phantom_run")["state"], "rolled_back")
+        self.assertFalse((self.runs_dir / "phantom_run").exists())
+        # The id is free again: a fresh reservation succeeds.
+        registry.prepare(
+            "phantom_run",
+            [sys.executable, "-c", "pass"],
+            cwd=self.tmp,
+            log_path=self.runs_dir / "phantom_run.launch.log",
+        )
+        self.assertEqual(registry.get("phantom_run")["state"], "prepared")
+
+    def test_rollback_keeps_a_claimed_run_directory(self) -> None:
+        registry = LaunchRegistry(self.runs_dir, stop_timeout_seconds=1)
+        registry.prepare(
+            "claimed_run",
+            [sys.executable, "-c", "pass"],
+            cwd=self.tmp,
+            log_path=self.runs_dir / "claimed_run.launch.log",
+        )
+        # Anything beyond run_state.json marks the directory as evidence.
+        (self.runs_dir / "claimed_run" / ".runner_claim").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        registry.rollback(["claimed_run"])
+        self.assertTrue((self.runs_dir / "claimed_run" / ".runner_claim").exists())
+
+    def test_terminal_records_never_reenter_the_active_set(self) -> None:
+        # Terminal records keep their pgid forever while the OS recycles pids;
+        # a live unrelated group with the same pgid must not resurrect them.
+        registry = LaunchRegistry(self.runs_dir)
+        bystander = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        try:
+            registry._launches["ghost_run"] = {
+                "run_id": "ghost_run",
+                "state": "exited",
+                "argv": [sys.executable, str(self.worker)],
+                "pid": bystander.pid,
+                "pgid": bystander.pid,
+                "log_path": str(self.runs_dir / "ghost_run.launch.log"),
+                "state_path": self.runs_dir / "ghost_run" / RUN_STATE_FILENAME,
+                "run_root": self.runs_dir / "ghost_run",
+                "process": None,
+            }
+            self.assertNotIn("ghost_run", registry.active_run_ids())
+            self.assertFalse(registry.get("ghost_run")["running"])
+        finally:
+            bystander.kill()
+            bystander.wait(timeout=5)
+
+    def test_stop_never_signals_a_recycled_process_group(self) -> None:
+        # An adopted record whose pgid now belongs to an unrelated process
+        # must not be killed: identity is re-verified before any signal.
+        registry = LaunchRegistry(self.runs_dir, stop_timeout_seconds=1)
+        bystander = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            start_new_session=True,
+        )
+        try:
+            run_root = self.runs_dir / "recycled_run"
+            run_root.mkdir()
+            registry._launches["recycled_run"] = {
+                "run_id": "recycled_run",
+                "state": "running",
+                "argv": [str(self.tmp / "some-other-binary"), "--flag"],
+                "pid": bystander.pid,
+                "pgid": bystander.pid,
+                "log_path": str(self.runs_dir / "recycled_run.launch.log"),
+                "state_path": run_root / RUN_STATE_FILENAME,
+                "run_root": run_root,
+                "process": None,
+            }
+            stopped = registry.stop("recycled_run")
+            self.assertEqual(stopped["state"], "stopped")
+            self.assertIsNone(bystander.poll(), "innocent process group was killed")
+        finally:
+            bystander.kill()
+            bystander.wait(timeout=5)
+
+    def test_process_match_survives_arguments_with_spaces(self) -> None:
+        # ps space-joins argv without quoting; reconcile must still recognise
+        # a live run whose arguments contain spaces instead of orphaning it.
+        spaced_dir = self.tmp / "spaced dir"
+        spaced_dir.mkdir()
+        child_pid_path = spaced_dir / "child.pid"
+        original = LaunchRegistry(self.runs_dir, stop_timeout_seconds=1)
+        original._start_process_monitor = lambda *_args: None
+        original.launch(
+            "spaced_run",
+            self._worker_argv(child_pid_path),
+            cwd=self.tmp,
+            log_path=self.runs_dir / "spaced_run.launch.log",
+        )
+        self._wait_for_file(child_pid_path)
+        try:
+            recovered = LaunchRegistry(self.runs_dir, stop_timeout_seconds=1)
+            self.assertIn("spaced_run", recovered.active_run_ids())
+            self.assertEqual(recovered.get("spaced_run")["state"], "running")
+        finally:
+            original.stop("spaced_run")
+
     def test_runner_only_adopts_the_matching_reservation(self) -> None:
         registry = LaunchRegistry(self.runs_dir)
         registry.prepare(

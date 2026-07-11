@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react"
 import { Navigate, Route, Routes } from "react-router-dom"
 import { Shell } from "@/components/shell"
+import { Skeleton } from "@/components/ui/skeleton"
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"))
 const Coverage = lazy(() => import("@/pages/Coverage"))
@@ -18,7 +19,7 @@ const NewRun = lazy(() => import("@/pages/NewRun"))
 export default function App() {
   return (
     <Shell>
-      <Suspense fallback={<div className="h-96 animate-pulse rounded-md bg-muted" />}>
+      <Suspense fallback={<Skeleton className="h-96" />}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/coverage" element={<Coverage />} />

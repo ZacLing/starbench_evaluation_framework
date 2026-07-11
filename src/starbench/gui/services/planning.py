@@ -6,14 +6,14 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ...adapters import DEFAULT_DOCKER_IMAGES
 from ...contracts import ContractValidationError, validate_payload
 from ...runner.task_loader import discover_tasks
 from .. import providers as providers_module, skills as skills_module
 from ..agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
-from ..data import SAFE_ID
+from ..read_models.base import SAFE_ID
 from ..launcher import LaunchError, build_run_argv
 from ..skills import DEFAULT_SKILLS_DIR, SkillError
 from .errors import ExperimentError

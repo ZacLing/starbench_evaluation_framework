@@ -7,6 +7,7 @@ StarBench is a benchmark runner for isolated coding-agent task execution and rub
 ## Working Rules
 
 - Preserve task isolation: executor work belongs under each run's `workspace/`, with deliverables under `workspace/outputs/`.
+- Run-directory file ownership is disjoint: the runner writes all run artifacts; the console supervisor owns exactly two files — `run_state.json` (process supervision) and the `.runner_claim` reservation handshake. Neither side writes the other's files.
 - Keep evaluator workspaces slim and evidence-oriented; evaluators should inspect executor outputs, logs, trace summaries, manifests, and prompts rather than re-solving tasks.
 - Prefer deterministic fake CLI tests for runtime compatibility, then use real CLIs only for manual smoke runs.
 - Do not put live API tokens in prompts, committed docs, task packages, rubrics, or test fixtures.

@@ -88,7 +88,10 @@ class ConsoleApplication:
         return data.read_artifact(self.runs_dir, run_id, task_id, path)
 
     def coverage(self, profile_id: Optional[str]) -> Dict[str, Any]:
-        return data.coverage(self.runs_dir, self.tasks_dirs, profile_id)
+        # The service layer owns composition: the authoritative profile list
+        # (builtin merge, validation) is injected into the pure read model.
+        profiles = experiments.load_profiles(self.runs_dir).get("profiles")
+        return data.coverage(self.runs_dir, self.tasks_dirs, profile_id, profiles=profiles)
 
     def libraries(self) -> List[Dict[str, Any]]:
         return [

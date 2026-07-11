@@ -278,7 +278,6 @@ export function useRunDraft({
     launchProfileId: mode === "profile" && profileId ? profileId : undefined,
     setTasksDir,
     setTasks,
-    setContenders,
     setProfileId,
     setShared,
     setPerFields,

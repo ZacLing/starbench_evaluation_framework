@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -44,12 +45,31 @@ def normalize_parallel_results(paths: Iterable[Path]) -> List[JudgeAnswer]:
     return results
 
 
+def judge_identity_fields(
+    *, judge_agent: str | None, judge_model: str | None
+) -> Dict[str, Any]:
+    """Provenance for the judge invocation that produced a verdict.
+
+    ``judge_model`` stays absent when the runtime default was used — an
+    unresolved model is honestly unknown, not guessed. ``judged_at`` is
+    stamped by :func:`aggregate_results` at aggregation time, not here.
+    """
+
+    fields: Dict[str, Any] = {}
+    if judge_agent:
+        fields["judge_agent"] = judge_agent
+    if judge_model:
+        fields["judge_model"] = judge_model
+    return fields
+
+
 def aggregate_results(
     rubrics: List[Rubric],
     answers: List[JudgeAnswer],
     *,
     mode: str,
     executor_timing: Dict[str, Any] | None = None,
+    judge_identity: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     rubric_by_id = {rubric.id: rubric for rubric in rubrics}
     answer_by_id: Dict[str, JudgeAnswer] = {}
@@ -99,6 +119,9 @@ def aggregate_results(
         "executor_timing": executor_timing,
         "results": rows,
     }
+    if judge_identity is not None:
+        aggregate.update(judge_identity)
+        aggregate["judged_at"] = datetime.now(timezone.utc).isoformat()
     if missing:
         aggregate["error"] = f"Missing evaluator results: {', '.join(missing)}"
     return aggregate
@@ -110,12 +133,14 @@ def inconclusive_judge_aggregate(
     mode: str,
     error: str,
     executor_timing: Dict[str, Any] | None = None,
+    judge_identity: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     aggregate = aggregate_results(
         rubrics,
         [],
         mode=mode,
         executor_timing=executor_timing,
+        judge_identity=judge_identity,
     )
     aggregate["outcome"] = TaskRunOutcome.INCONCLUSIVE_JUDGE.value
     aggregate["overall_pass"] = None

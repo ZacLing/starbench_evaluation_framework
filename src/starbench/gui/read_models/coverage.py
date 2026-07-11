@@ -7,14 +7,17 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ...domain import TaskRunOutcome
-from .base import _parse_iso
+from .base import _parse_iso, _read_json
 from .runs import _catalog_records
 from .tasks import list_task_packages
 
 COVERAGE_RECENT_REFS_LIMIT = 5
 
 def coverage(
-    runs_dir: Path, tasks_dirs: Sequence[Path], profile_id: Optional[str] = None
+    runs_dir: Path,
+    tasks_dirs: Sequence[Path],
+    profile_id: Optional[str] = None,
+    profiles: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Task × executor-config coverage matrix over everything on disk.
 
@@ -146,15 +149,16 @@ def coverage(
     # ------------------------------------------------------------------
     # Roster overlay. The roster defines the denominator: rostered columns lead
     # (declaration order), observed-only columns follow (sorted). A rostered
-    # contender never observed still becomes a zero-cell column. ``load_profiles``
-    # is imported lazily here because ``experiments`` imports this module at
-    # module load — a top-level import would be circular.
+    # contender never observed still becomes a zero-cell column. Profiles are
+    # injected by the service layer; a read model reaching up into services
+    # would invert the layering. Without injection, the stored profiles.json
+    # is read raw — equivalent for the overlay, since built-in profiles carry
+    # no roster.
     # ------------------------------------------------------------------
-    from ..experiments import load_profiles
-
-    profiles_payload = load_profiles(runs_dir)
-    profile_list = profiles_payload.get("profiles")
-    profile_list = profile_list if isinstance(profile_list, list) else []
+    if profiles is None:
+        stored = _read_json(runs_dir / "profiles.json")
+        profiles = stored.get("profiles") if isinstance(stored, dict) else None
+    profile_list = profiles if isinstance(profiles, list) else []
 
     def _has_roster(profile: Any) -> bool:
         return (

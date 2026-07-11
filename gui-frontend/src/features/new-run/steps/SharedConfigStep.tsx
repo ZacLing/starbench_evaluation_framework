@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, ChevronDown, Save, Scale, SlidersHorizontal, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { CredentialStatus } from "@/components/credential-status"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -36,8 +37,28 @@ import {
 import { cn } from "@/lib/utils"
 import { BUILTIN_RUNTIMES, JUDGE_MODES, PER_FIELD_OPTIONS } from "../constants"
 import { ExecutorSkillsBlock } from "./ExecutorSkillsBlock"
-import { JudgeCredentialStatus } from "./AgentsStep"
 import { PromptAssistanceBlock } from "./PromptAssistanceBlock"
+
+function JudgeCredentialStatus({
+  provider,
+  authMode,
+}: {
+  provider?: AiProvider
+  authMode?: string
+}) {
+  if (!provider) {
+    return (
+      <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Explicit credentials</span>
+        <span className="font-mono">{authMode || "env"}</span>
+        <span className="min-w-0 break-words">
+          No provider reference is attached to this judge model.
+        </span>
+      </div>
+    )
+  }
+  return <CredentialStatus provider={provider} />
+}
 
 export function StepShared({
   profiles,

@@ -99,7 +99,11 @@ class GuiDataTest(unittest.TestCase):
         run_root.mkdir()
         write_json(
             run_root / "run_state.json",
-            {"run_id": "run_stateful", "state": "running"},
+            {
+                "run_id": "run_stateful",
+                "state": "running",
+                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            },
         )
         self.assertEqual(data.run_status(run_root), "running")
 
@@ -109,10 +113,53 @@ class GuiDataTest(unittest.TestCase):
         )
         self.assertEqual(data.run_status(run_root), "interrupted")
 
+    def test_active_run_state_with_stale_heartbeat_is_interrupted(self) -> None:
+        # The supervisor heartbeats every ~1s. An active state whose heartbeat
+        # went silent means nothing is watching the process anymore — the
+        # file can never advance on its own, so "running" must not be trusted.
+        run_root = self.runs_dir / "run_stale_heartbeat"
+        run_root.mkdir()
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        write_json(
+            run_root / "run_state.json",
+            {"run_id": "run_stale_heartbeat", "state": "running", "heartbeat_at": stale},
+        )
+        self.assertEqual(data.run_status(run_root), "interrupted")
+
+    def test_active_run_state_without_any_heartbeat_is_interrupted(self) -> None:
+        run_root = self.runs_dir / "run_no_heartbeat"
+        run_root.mkdir()
+        write_json(
+            run_root / "run_state.json",
+            {"run_id": "run_no_heartbeat", "state": "running"},
+        )
+        self.assertEqual(data.run_status(run_root), "interrupted")
+
     def test_active_registry_marks_running(self) -> None:
         make_run(self.runs_dir, "run_live", complete=False)
         runs = data.list_runs(self.runs_dir, active_run_ids={"run_live"})
         self.assertEqual(runs[0]["status"], "running")
+
+    def test_cached_listing_never_freezes_a_running_status(self) -> None:
+        # Status is time-dependent (mtime window) but the catalog signature is
+        # not: with no file changes at all, a dead run must still decay from
+        # running to interrupted on the next listing.
+        import time as time_module
+        from unittest import mock
+
+        make_run(self.runs_dir, "run_decay", complete=False)
+        self.assertEqual(data.list_runs(self.runs_dir)[0]["status"], "running")
+        later = time_module.time() + 3600
+        with mock.patch("starbench.gui.read_models.runs.time") as fake_time:
+            fake_time.time.return_value = later
+            self.assertEqual(data.list_runs(self.runs_dir)[0]["status"], "interrupted")
+
+    def test_summary_outranks_a_stale_active_registry_entry(self) -> None:
+        # Artifact truth beats the launch registry: a finished run stays
+        # complete even if a recycled pgid keeps its id in the active set.
+        make_run(self.runs_dir, "run_done")
+        runs = data.list_runs(self.runs_dir, active_run_ids={"run_done"})
+        self.assertEqual(runs[0]["status"], "complete")
 
     def test_run_detail_rows(self) -> None:
         make_run(self.runs_dir, "run_pass")

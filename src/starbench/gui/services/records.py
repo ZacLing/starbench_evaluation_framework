@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..data import SAFE_ID, _read_json, run_overview
+from ..fsio import atomic_write_json
+from ..read_models.base import SAFE_ID, _read_json
+from ..read_models.runs import run_overview
 from .errors import ExperimentError
 
 def experiments_dir(runs_dir: Path) -> Path:
@@ -54,9 +55,7 @@ def record_experiment(
         record["launch_error"] = launch_error
     directory = experiments_dir(runs_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    _experiment_path(runs_dir, name).write_text(
-        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    atomic_write_json(_experiment_path(runs_dir, name), record, indent=2, sort_keys=True)
     return record
 
 

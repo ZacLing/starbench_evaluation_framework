@@ -1,4 +1,5 @@
 import { Check, PencilLine } from "lucide-react"
+import { Hint } from "@/components/hint"
 import { fmtDuration } from "@/lib/format"
 import type { TaskPackage } from "@/lib/api"
 import { cn } from "@/lib/utils"
@@ -84,14 +85,13 @@ export function ContractStatusBar({
           {checking ? "checking contract changes…" : "contract changes verified on Review"}
         </span>
       ) : modified ? (
-        <span
-          className="inline-flex items-center gap-1.5 rounded-md bg-warn-soft px-2 py-0.5 font-medium text-warn-ink"
-          title={`Deviates from the profile at: ${fields.map(deviationLabel).join(", ")}`}
-        >
+        <span className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-warn-soft px-2 py-0.5 font-medium text-warn-ink">
           <PencilLine className="size-3.5 shrink-0" aria-hidden />
           modified
-          <span className="font-normal text-warn-ink/80">
-            · {fields.length} change{fields.length === 1 ? "" : "s"}
+          {/* WHICH fields deviate is decision-critical at Review: visible
+              text, never a hover-only reveal. */}
+          <span className="min-w-0 truncate font-normal text-warn-ink/80">
+            · {fields.map(deviationLabel).join(", ")}
           </span>
         </span>
       ) : (
@@ -121,10 +121,7 @@ export function TaskFactsStrip({ tasks }: { tasks: TaskPackage[] }) {
         : `web search on ${webOn}/${tasks.length}`
 
   return (
-    <div
-      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
-      title="Facts set by the selected task packages, not by this run's configuration"
-    >
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
       <span className="font-medium text-foreground">
         {tasks.length} task{tasks.length === 1 ? "" : "s"}
       </span>
@@ -140,7 +137,13 @@ export function TaskFactsStrip({ tasks }: { tasks: TaskPackage[] }) {
           {rigors} rigor requirement{rigors === 1 ? "" : "s"}
         </span>
       )}
-      <span className="ml-auto hidden text-[11px] sm:inline">set by the task packages</span>
+      <span className="ml-auto hidden items-center gap-1 text-[11px] sm:inline-flex">
+        set by the task packages
+        <Hint>
+          Facts declared by the selected task packages themselves — this run's
+          configuration cannot change them.
+        </Hint>
+      </span>
     </div>
   )
 }

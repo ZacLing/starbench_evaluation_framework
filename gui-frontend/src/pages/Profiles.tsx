@@ -40,9 +40,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   AgentIcon,
   compatibleProviders,
-  ProviderIcon,
   runtimeFilters,
 } from "@/components/brand"
+import { CredentialStatus } from "@/components/credential-status"
 import { Hint } from "@/components/hint"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/components/error-note"
@@ -134,7 +134,6 @@ const BACKEND_GLOSS: Record<string, string> = {
   docker: "each task isolated in its own container",
 }
 
-const RUNTIME_DEFAULT = "__runtime_default__"
 const THINKING_DEFAULT = "none"
 
 function GlossSelectItem({ value, gloss }: { value: string; gloss?: string }) {
@@ -210,33 +209,7 @@ function ProviderCredentialSummary({ provider }: { provider?: AiProvider }) {
       </div>
     )
   }
-
-  const mode = provider.auth === "cli_login" ? "global" : "env"
-  const keyLabel = provider.api_key_env || "API key env"
-
-  return (
-    <div className="flex min-h-9 flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 text-sm">
-      <ProviderIcon provider={provider} size={14} />
-      <span className="font-medium">{provider.name}</span>
-      <span className="font-mono text-xs text-muted-foreground">{mode}</span>
-      {provider.auth === "api_key" ? (
-        <span
-          className={cn(
-            "rounded px-1.5 py-0.5 font-mono text-[11px]",
-            provider.key_present
-              ? "bg-pass-soft text-pass-ink"
-              : "bg-warn-soft text-warn-ink",
-          )}
-        >
-          {keyLabel} {provider.key_present ? "set" : "missing"}
-        </span>
-      ) : (
-        <span className="rounded bg-live-soft px-1.5 py-0.5 text-[11px] text-live-ink">
-          CLI login
-        </span>
-      )}
-    </div>
-  )
+  return <CredentialStatus provider={provider} />
 }
 
 /* Resolve a profile's tasks_dir (often a repo-relative string like
@@ -762,11 +735,11 @@ function ProfileEditor({
     ? providers.find((provider) => provider.id === evaluatorProviderId)
     : undefined
 
-  const providersFor = (agent: string): AiProvider[] => {
-    const filter = filters[agent]
-    const compatible = compatibleProviders(filter, providers, agent)
-    return compatible.length > 0 ? compatible : providers
-  }
+  // Compatible providers only — an agent with no compatible provider gets an
+  // empty picker, never the full catalog: pinning an incompatible provider
+  // into the contract would only fail later at launch preflight.
+  const providersFor = (agent: string): AiProvider[] =>
+    compatibleProviders(filters[agent], providers, agent)
   const defaultThinkingEffort = (agent: string) => {
     const efforts = thinkingEffortsOf(refs, agent)
     return efforts.includes(THINKING_DEFAULT) ? THINKING_DEFAULT : efforts[0] ?? THINKING_DEFAULT
@@ -889,18 +862,15 @@ function ProfileEditor({
               </p>
             ) : (
               <div className="overflow-hidden rounded-lg border">
-                <div className="hidden grid-cols-[2.25rem_minmax(9rem,0.8fr)_minmax(12rem,1fr)_minmax(13rem,1fr)_minmax(8rem,0.55fr)_2.5rem] gap-2 border-b bg-muted/50 px-3 py-2 text-[11px] font-medium text-muted-foreground lg:grid">
+                <div className="hidden grid-cols-[2.25rem_minmax(9rem,0.8fr)_minmax(24rem,2fr)_minmax(8rem,0.55fr)_2.5rem] gap-2 border-b bg-muted/50 px-3 py-2 text-[11px] font-medium text-muted-foreground lg:grid">
                   <span>#</span>
                   <span>Agent</span>
-                  <span>Provider</span>
-                  <span>Model</span>
+                  <span>Provider · model</span>
                   <span>Reasoning</span>
                   <span className="sr-only">Actions</span>
                 </div>
                 <div className="divide-y">
                   {(value.roster ?? []).map((entry, index) => {
-                    const rosterProviders = providersFor(entry.agent)
-                    const provider = rosterProviders.find((item) => item.id === entry.provider_id)
                     const thinkingEfforts = thinkingEffortsOf(refs, entry.agent)
                     const thinkingValue = normalizeThinkingEffort(
                       entry.agent,
@@ -909,7 +879,7 @@ function ProfileEditor({
                     return (
                       <div
                         key={index}
-                        className="grid gap-3 px-3 py-3 lg:grid-cols-[2.25rem_minmax(9rem,0.8fr)_minmax(12rem,1fr)_minmax(13rem,1fr)_minmax(8rem,0.55fr)_2.5rem] lg:items-center lg:gap-2"
+                        className="grid gap-3 px-3 py-3 lg:grid-cols-[2.25rem_minmax(9rem,0.8fr)_minmax(24rem,2fr)_minmax(8rem,0.55fr)_2.5rem] lg:items-center lg:gap-2"
                       >
                         <div className="flex items-center justify-between lg:block">
                           <span className="font-mono text-xs text-muted-foreground">
@@ -957,71 +927,19 @@ function ProfileEditor({
                           </Select>
                         </Field>
 
-                        <Field label="Provider" className="gap-1 lg:[&>div:first-child]:sr-only">
-                          <Select
-                            value={entry.provider_id}
-                            disabled={rosterProviders.length === 0}
-                            onValueChange={(providerId) => {
-                              const nextProvider = rosterProviders.find((item) => item.id === providerId)
-                              if (nextProvider) {
-                                updateRoster(index, {
-                                  provider_id: nextProvider.id,
-                                  model: nextProvider.models[0] ?? "",
-                                })
-                              }
-                            }}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Provider…" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {rosterProviders.map((item) => (
-                                <SelectItem key={item.id} value={item.id}>
-                                  <span className="flex items-center gap-2">
-                                    <ProviderIcon provider={item} size={14} />
-                                    <span className="min-w-0 truncate">{item.name}</span>
-                                    {item.auth === "api_key" && !item.key_present && (
-                                      <span className="text-xs text-warn-ink">· key missing</span>
-                                    )}
-                                  </span>
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </Field>
-
-                        <Field label="Model" className="gap-1 lg:[&>div:first-child]:sr-only">
-                          <Select
-                            value={entry.model || RUNTIME_DEFAULT}
-                            disabled={!provider && !entry.model}
-                            onValueChange={(model) => {
-                              updateRoster(index, {
-                                model: model === RUNTIME_DEFAULT ? "" : model,
-                              })
-                            }}
-                          >
-                            <SelectTrigger className="w-full font-mono text-xs">
-                              <SelectValue placeholder="Model…" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {(provider?.models ?? []).map((model) => (
-                                <SelectItem key={model} value={model} className="font-mono text-xs">
-                                  {model}
-                                </SelectItem>
-                              ))}
-                              {entry.model && (!provider || !provider.models.includes(entry.model)) && (
-                                <SelectItem value={entry.model} className="font-mono text-xs">
-                                  {entry.model}{" "}
-                                  <span className="font-sans text-muted-foreground">
-                                    {provider ? "· not in catalog" : "· stored value"}
-                                  </span>
-                                </SelectItem>
-                              )}
-                              <SelectItem value={RUNTIME_DEFAULT} className="text-xs text-muted-foreground">
-                                (runtime default)
-                              </SelectItem>
-                            </SelectContent>
-                          </Select>
+                        <Field
+                          label="Provider · model"
+                          className="gap-1 lg:[&>div:first-child]:sr-only"
+                        >
+                          <ProviderModelPicker
+                            providerId={entry.provider_id}
+                            model={entry.model ?? ""}
+                            providerFilter={filters[entry.agent]}
+                            runtimeId={entry.agent}
+                            onChange={({ provider, model }) =>
+                              updateRoster(index, { provider_id: provider.id, model })
+                            }
+                          />
                         </Field>
 
                         <Field label="Reasoning" className="gap-1 lg:[&>div:first-child]:sr-only">

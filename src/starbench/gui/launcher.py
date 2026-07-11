@@ -8,7 +8,6 @@ import shlex
 import signal
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import uuid
@@ -24,6 +23,8 @@ from ..contracts import (
 )
 from ..domain import (
     ACTIVE_RUN_STATES,
+    INSTRUCTION_MODES,
+    RIGOR_MODES,
     RUN_ID_ENV,
     RUN_LAUNCH_TOKEN_ENV,
     RUN_STATE_FILENAME,
@@ -31,7 +32,8 @@ from ..domain import (
 )
 from ..execution.process import split_command
 from ..runner.env_scope import EXECUTOR_ENV_PREFIX, JUDGE_ENV_PREFIX
-from .data import SAFE_ID
+from .fsio import atomic_write_json
+from .read_models.base import SAFE_ID
 
 # Built-in runtime ids come from the adapter registry (single source of truth).
 AGENT_CHOICES = tuple(adapter.info.id for adapter in list_builtin())
@@ -40,8 +42,6 @@ AUTH_MODES = ("env", "global", "copy-auth")
 BACKENDS = ("local", "docker")
 THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 WEB_SEARCH_MODES = ("task", "allow", "deny")
-INSTRUCTION_MODES = ("none", "traverse", "select", "ablation")
-RIGOR_MODES = ("none", "select")
 
 
 class LaunchError(ValueError):
@@ -309,20 +309,38 @@ class LaunchRegistry:
 
     @staticmethod
     def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_name = tempfile.mkstemp(
-            dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp"
-        )
+        atomic_write_json(path, payload, indent=2, sort_keys=True)
+
+    @staticmethod
+    def _snapshot_temp_path(argv: Any) -> Optional[Path]:
+        """The console-created profile-snapshot temp file named on argv, if any.
+
+        Only files carrying the console's own mkstemp prefix are ever cleaned
+        up; an operator-provided --profile-snapshot path is not ours to touch.
+        """
+        if not isinstance(argv, list):
+            return None
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-            os.replace(tmp_name, path)
-        except BaseException:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+            index = argv.index("--profile-snapshot")
+        except ValueError:
+            return None
+        if index + 1 >= len(argv):
+            return None
+        candidate = Path(str(argv[index + 1]))
+        if candidate.name.startswith("starbench-profile-snapshot-"):
+            return candidate
+        return None
+
+    def _cleanup_snapshot(self, record: Dict[str, Any]) -> None:
+        """Best-effort removal of the launch's snapshot temp file at terminal
+        state — the runner has long since copied it into the run root."""
+        path = self._snapshot_temp_path(record.get("argv"))
+        if path is None:
+            return
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     @staticmethod
     def _group_alive(pgid: Any) -> bool:
@@ -369,11 +387,24 @@ class LaunchRegistry:
                 text=True,
                 timeout=2,
             )
-            actual = shlex.split(result.stdout.strip())
+            actual = result.stdout.strip()
         except (OSError, ValueError, subprocess.TimeoutExpired):
             return False
-        expected = [str(item) for item in expected]
-        return result.returncode == 0 and actual[: len(expected)] == expected
+        if result.returncode != 0 or not actual:
+            return False
+        # Two realities of ps output shape this comparison:
+        # - ps space-joins the argument vector without quoting, so an argv item
+        #   containing a space (a tasks dir like "My Tasks") must be compared
+        #   as a joined string; token-splitting the output would split that
+        #   item in two and orphan a live run at reconcile.
+        # - interpreters may rewrite argv[0] (macOS framework Python re-execs
+        #   the venv stub as .../Python.app/Contents/MacOS/Python), so the
+        #   first element cannot be compared literally.
+        items = [str(item) for item in expected]
+        tail = " ".join(items[1:])
+        if tail:
+            return actual == " ".join(items) or actual.endswith(" " + tail)
+        return actual == items[0] or actual.rsplit("/", 1)[-1] == items[0].rsplit("/", 1)[-1]
 
     def _state_payload(self, record: Dict[str, Any]) -> Dict[str, Any]:
         keys = (
@@ -401,6 +432,15 @@ class LaunchRegistry:
     def _persist(self, record: Dict[str, Any]) -> None:
         record["updated_at"] = self._utc_now()
         self._atomic_write_json(record["state_path"], self._state_payload(record))
+
+    def _persist_best_effort(self, record: Dict[str, Any]) -> None:
+        """Persist from a monitor thread: a transient disk error must not kill
+        the thread, or the on-disk state freezes at "running" with a heartbeat
+        nobody will ever refresh."""
+        try:
+            self._persist(record)
+        except OSError:
+            pass
 
     def _reconcile(self) -> None:
         if not self.runs_dir.is_dir():
@@ -434,6 +474,7 @@ class LaunchRegistry:
             ):
                 record["state"] = "completed"
                 self._persist(record)
+                self._cleanup_snapshot(record)
             elif record.get("state") in ACTIVE_RUN_STATES:
                 if self._group_alive(record.get("pgid")) and self._process_matches(record):
                     record["state"] = "running"
@@ -447,6 +488,7 @@ class LaunchRegistry:
                         "Recorded process group no longer exists or its process identity changed."
                     )
                     self._persist(record)
+                    self._cleanup_snapshot(record)
 
     def prepare(
         self,
@@ -577,7 +619,7 @@ class LaunchRegistry:
                     if record is None or record.get("process") is not process:
                         return
                     record["heartbeat_at"] = self._utc_now()
-                    self._persist(record)
+                    self._persist_best_effort(record)
                 continue
             with self._lock:
                 record = self._launches.get(run_id)
@@ -589,7 +631,8 @@ class LaunchRegistry:
                     )
                 record["exit_code"] = exit_code
                 record["ended_at"] = record.get("ended_at") or self._utc_now()
-                self._persist(record)
+                self._persist_best_effort(record)
+                self._cleanup_snapshot(record)
             return
 
     def _start_reconciled_monitor(self, run_id: str) -> None:
@@ -608,18 +651,34 @@ class LaunchRegistry:
                 record = self._launches.get(run_id)
                 if record is None or record.get("state") not in ACTIVE_RUN_STATES:
                     return
-                if not self._group_alive(record.get("pgid")):
+                # Identity, not just existence: once the adopted process dies,
+                # its pgid can be recycled within one poll interval and would
+                # otherwise be heartbeaten as ours forever.
+                if not (
+                    self._group_alive(record.get("pgid")) and self._process_matches(record)
+                ):
                     record["state"] = (
                         "completed" if (record["run_root"] / "summary.json").is_file() else "exited"
                     )
                     record["ended_at"] = self._utc_now()
-                    self._persist(record)
+                    self._persist_best_effort(record)
+                    self._cleanup_snapshot(record)
                     return
                 record["heartbeat_at"] = self._utc_now()
-                self._persist(record)
+                self._persist_best_effort(record)
 
     def _is_running(self, record: Dict[str, Any]) -> bool:
-        return self._group_alive(record.get("pgid"))
+        # Terminal records keep their recorded pgid forever; the OS recycles
+        # pids. Bare group existence must therefore never resurrect a run:
+        # only active-state records count, and adopted records (no Popen
+        # handle after a console restart) must also still match the launch
+        # argv before their group is believed.
+        if record.get("state") not in ACTIVE_RUN_STATES:
+            return False
+        process = record.get("process")
+        if process is not None:
+            return process.poll() is None
+        return self._group_alive(record.get("pgid")) and self._process_matches(record)
 
     def _public(self, record: Dict[str, Any]) -> Dict[str, Any]:
         process = record.get("process")
@@ -759,12 +818,20 @@ class LaunchRegistry:
             if record is None:
                 raise LaunchError(f"No console-launched run named {run_id}.")
             pgid = record.get("pgid")
-            record["state"] = "stopping" if pgid else final_state
+            # Signals may only be aimed at a group we can prove is still ours.
+            # A record without a live Popen handle (adopted after a console
+            # restart, or long terminal) could name a pgid the OS has recycled
+            # to an innocent process group — re-verify identity before TERM.
+            process = record.get("process")
+            owns_group = (
+                process is not None and process.poll() is None
+            ) or (self._group_alive(pgid) and self._process_matches(record))
+            record["state"] = "stopping" if (pgid and owns_group) else final_state
             record["stop_requested_at"] = self._utc_now()
             self._persist(record)
 
         signal_errors: List[str] = []
-        if self._group_alive(pgid):
+        if owns_group and self._group_alive(pgid):
             try:
                 os.killpg(pgid, signal.SIGTERM)
             except ProcessLookupError:
@@ -799,7 +866,9 @@ class LaunchRegistry:
                     record["exit_code"] = process.wait(timeout=0.2)
                 except subprocess.TimeoutExpired:
                     record["exit_code"] = process.poll()
-            still_running = self._group_alive(pgid)
+            # A recycled pgid that failed the ownership check is not "still
+            # running" — the run's own processes are provably gone.
+            still_running = owns_group and self._group_alive(pgid)
             record["state"] = "orphaned" if still_running else final_state
             record["ended_at"] = self._utc_now()
             record["docker_cleanup"] = docker_cleanup
@@ -808,6 +877,8 @@ class LaunchRegistry:
             if signal_errors:
                 record["error"] = " ".join(signal_errors)
             self._persist(record)
+            if not still_running:
+                self._cleanup_snapshot(record)
             return self._public(record)
 
     def rollback(self, run_ids: List[str]) -> None:
@@ -816,6 +887,36 @@ class LaunchRegistry:
                 self.stop(run_id, final_state="rolled_back")
             except LaunchError:
                 continue
+            self._discard_unclaimed(run_id)
+
+    def _discard_unclaimed(self, run_id: str) -> None:
+        """Remove a rolled-back reservation directory the runner never claimed.
+
+        A failed transaction would otherwise leave a run directory holding
+        nothing but ``run_state.json`` — rendered forever as a phantom
+        interrupted run and permanently burning the run id. Once the runner
+        has claimed the directory (``.runner_claim``) or written anything
+        else, the directory is evidence and stays. The in-memory launch
+        record survives either way so /api/launches still explains why the
+        transaction failed; the launch log lives outside the run directory."""
+        with self._lock:
+            record = self._launches.get(run_id)
+            if record is None or record.get("state") != "rolled_back":
+                return
+            run_root = record.get("run_root")
+            if not isinstance(run_root, Path):
+                return
+            try:
+                leftovers = [path.name for path in run_root.iterdir()]
+            except OSError:
+                return
+            if set(leftovers) - {RUN_STATE_FILENAME}:
+                return
+            try:
+                (run_root / RUN_STATE_FILENAME).unlink(missing_ok=True)
+                run_root.rmdir()
+            except OSError:
+                return
 
     def stop_all(self) -> List[Dict[str, Any]]:
         stopped: List[Dict[str, Any]] = []

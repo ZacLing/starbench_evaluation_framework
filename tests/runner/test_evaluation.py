@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import unittest
 
-from starbench.runner.evaluation import aggregate_results
+from starbench.contracts import validate_payload
+from starbench.runner.evaluation import (
+    aggregate_results,
+    inconclusive_executor_aggregate,
+    judge_identity_fields,
+)
 from starbench.runner.models import JudgeAnswer, Rubric
 
 
@@ -93,6 +98,48 @@ class AggregationTests(unittest.TestCase):
 
         self.assertEqual(aggregate["outcome"], "agent_pass")
         self.assertIs(aggregate["overall_pass"], True)
+
+
+class JudgeIdentityTests(unittest.TestCase):
+    RUBRICS = [Rubric(id="R001", fail_fast=True, expected=True, question="Required?")]
+    ANSWERS = [JudgeAnswer(rubric_id="R001", answer=True, evidence="Present.")]
+
+    def test_identity_is_stamped_into_the_aggregate(self) -> None:
+        aggregate = aggregate_results(
+            self.RUBRICS,
+            self.ANSWERS,
+            mode="single",
+            judge_identity=judge_identity_fields(
+                judge_agent="codex", judge_model="gpt-5.5"
+            ),
+        )
+        self.assertEqual(aggregate["judge_agent"], "codex")
+        self.assertEqual(aggregate["judge_model"], "gpt-5.5")
+        self.assertIn("judged_at", aggregate)
+        validate_payload("judge_aggregate.schema.json", aggregate, version=2)
+
+    def test_runtime_default_model_stays_honestly_absent(self) -> None:
+        aggregate = aggregate_results(
+            self.RUBRICS,
+            self.ANSWERS,
+            mode="single",
+            judge_identity=judge_identity_fields(judge_agent="codex", judge_model=None),
+        )
+        self.assertEqual(aggregate["judge_agent"], "codex")
+        self.assertNotIn("judge_model", aggregate)
+        self.assertIn("judged_at", aggregate)
+
+    def test_no_identity_means_no_identity_fields(self) -> None:
+        aggregate = aggregate_results(self.RUBRICS, self.ANSWERS, mode="single")
+        for key in ("judge_agent", "judge_model", "judged_at"):
+            self.assertNotIn(key, aggregate)
+
+    def test_executor_inconclusive_never_claims_a_judge_ran(self) -> None:
+        aggregate = inconclusive_executor_aggregate(
+            self.RUBRICS, mode="single", error="Executor failed before judging."
+        )
+        for key in ("judge_agent", "judge_model", "judged_at"):
+            self.assertNotIn(key, aggregate)
 
 
 if __name__ == "__main__":

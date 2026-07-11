@@ -26,6 +26,28 @@ class VerdictCompatibilityTests(unittest.TestCase):
             TaskRunOutcome.INCONCLUSIVE_JUDGE,
         )
 
+    def test_legacy_missing_answers_are_inconclusive_not_agent_failure(self) -> None:
+        # The legacy writer coerced unanswered rubrics to passed=false and
+        # listed them under "missing" without any "error" key. That is an
+        # incomplete measurement, never a defended HSW sample.
+        self.assertEqual(
+            aggregate_outcome(
+                {
+                    "overall_pass": False,
+                    "passed_count": 3,
+                    "total_count": 5,
+                    "missing": ["R4", "R5"],
+                }
+            ),
+            TaskRunOutcome.INCONCLUSIVE_JUDGE,
+        )
+
+    def test_legacy_empty_missing_list_is_still_a_valid_sample(self) -> None:
+        self.assertEqual(
+            aggregate_outcome({"overall_pass": False, "missing": []}),
+            TaskRunOutcome.AGENT_FAIL,
+        )
+
     def test_unknown_current_outcome_fails_closed(self) -> None:
         self.assertEqual(
             aggregate_outcome({"outcome": "probably_passed", "overall_pass": True}),

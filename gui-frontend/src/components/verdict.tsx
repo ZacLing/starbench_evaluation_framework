@@ -42,15 +42,28 @@ export function ExecBadge({
 }
 
 export function VerdictBadge({ cell }: { cell: JudgeCell | null | undefined }) {
-  if (!cell || cell.total_count === null || cell.total_count === undefined) {
+  if (!cell) {
     return <span className="text-muted-foreground">–</span>
   }
+  // Inconclusive outranks missing counts: a legacy crashed-judge aggregate
+  // carries an outcome but no counts, and it is a measurement problem to
+  // show, not an honest absence.
   if (
-    cell.overall_pass === null ||
     cell.outcome === "inconclusive_judge" ||
     cell.outcome === "inconclusive_executor" ||
-    cell.outcome === "invalid_task"
+    cell.outcome === "invalid_task" ||
+    (cell.overall_pass === null && cell.outcome !== null && cell.outcome !== undefined)
   ) {
+    return (
+      <Badge className="border-transparent bg-warn-soft text-warn-ink">
+        ◌ Inconclusive
+      </Badge>
+    )
+  }
+  if (cell.total_count === null || cell.total_count === undefined) {
+    return <span className="text-muted-foreground">–</span>
+  }
+  if (cell.overall_pass === null) {
     return (
       <Badge className="border-transparent bg-warn-soft text-warn-ink">
         ◌ Inconclusive
@@ -106,8 +119,10 @@ export function HswVerdict({
   )
 }
 
-export function RubricBadge({ passed }: { passed: boolean | null }) {
-  if (passed === null) {
+export function RubricBadge({ passed }: { passed: boolean | null | undefined }) {
+  // Absent and null are the same honest state: no verdict was produced.
+  // Coercing a malformed row to "Fail" would invent a verdict.
+  if (passed === null || passed === undefined) {
     return <Badge variant="secondary">Not judged</Badge>
   }
   return passed ? (

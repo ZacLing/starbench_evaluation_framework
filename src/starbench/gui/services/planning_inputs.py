@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...adapters import list_builtin
+from ...domain import INSTRUCTION_MODES, RIGOR_MODES
 from .. import injection
 from ..agents import get_custom_agent
-from ..data import _read_json, read_human_reference_steps, read_rigors
+from ..read_models.base import _read_json
+from ..read_models.tasks import read_human_reference_steps, read_rigors
 from .errors import ExperimentError
 
 _BUILTIN_INFO = {adapter.info.id: adapter.info for adapter in list_builtin()}
@@ -17,8 +19,6 @@ DOCKER_CAPABLE_AGENTS = {info.id for info in _BUILTIN_INFO.values() if info.dock
 JUDGE_ENV_SENSITIVE = {info.id: info.judge_sensitive_env for info in _BUILTIN_INFO.values()}
 THINKING_EFFORTS_BY_AGENT = {info.id: info.thinking_efforts for info in _BUILTIN_INFO.values()}
 PROMPT_THINKING_EFFORTS = ("none", "low", "medium", "high")
-INSTRUCTION_MODES = ("none", "traverse", "select", "ablation")
-RIGOR_MODES = ("none", "select")
 
 def _validated_thinking_effort(agent: str, contender: Dict[str, Any], label: str) -> str:
     effort = str(contender.get("thinking_effort") or "none")

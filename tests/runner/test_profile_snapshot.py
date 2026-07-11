@@ -2,7 +2,8 @@
 
 Two disciplines under test:
 - A valid snapshot lands as ``<run-root>/profile_snapshot.json`` byte-equal in
-  content to what was passed (the runner is the run directory's only writer).
+  content to what was passed (the runner alone writes run artifacts; the
+  console supervisor owns only ``run_state.json`` and ``.runner_claim``).
 - Anything invalid (unreadable file, broken JSON, contract violation) aborts
   the start before a run directory exists — never a silent drop, never half a
   run on disk.

@@ -14,6 +14,11 @@ from .catalog import RunCatalog
 from .task_facts import _task_identity, _task_run_tested_at
 
 RUNNING_MTIME_WINDOW_SECONDS = 120
+# The supervisor refreshes heartbeat_at every ~1s while it monitors a run.
+# A run_state stuck in an active state with a heartbeat this old means the
+# supervisor itself is gone (crashed monitor thread, killed console): the
+# claim of "running" is no longer backed by anything watching the process.
+STALE_HEARTBEAT_SECONDS = 60
 TASK_HISTORY_CONFIG_LIMIT = 4
 _CATALOG_CONFIG_FIELDS = (
     "tasks_dir", "executor_agent", "executor_model", "evaluator_agent",
@@ -52,15 +57,30 @@ def _progress_bounds(run_root: Path) -> Tuple[Optional[str], Optional[str], bool
 
 def run_status(run_root: Path, active_run_ids: Optional[set] = None) -> str:
     """complete | running | interrupted."""
-    if active_run_ids and run_root.name in active_run_ids:
-        return "running"
+    # Artifact truth outranks the launch registry: once summary.json exists the
+    # run is complete even if a registry entry (or a recycled pgid) claims the
+    # process group is still alive.
     if (run_root / "summary.json").exists():
         return "complete"
+    if active_run_ids and run_root.name in active_run_ids:
+        return "running"
     run_state = _read_json(run_root / RUN_STATE_FILENAME)
     if isinstance(run_state, dict):
         if run_state.get("state") == "completed":
             return "complete"
         if run_state.get("state") in ACTIVE_RUN_STATES:
+            # Trust an active claim only while its supervisor is demonstrably
+            # alive: the heartbeat is written every ~1s, so a stale one means
+            # nobody is watching the process anymore and the state file can
+            # never advance on its own.
+            heartbeat = _parse_iso(
+                run_state.get("heartbeat_at") or run_state.get("updated_at")
+            )
+            if heartbeat is None:
+                return "interrupted"
+            age = datetime.now(timezone.utc) - heartbeat
+            if age.total_seconds() > STALE_HEARTBEAT_SECONDS:
+                return "interrupted"
             return "running"
         return "interrupted"
     progress_path = run_root / "progress_events.jsonl"
@@ -318,8 +338,12 @@ def list_runs(runs_dir: Path, active_run_ids: Optional[set] = None) -> List[Dict
         if not isinstance(overview, dict):
             continue
         rendered = dict(overview)
-        if active_run_ids and record["run_id"] in active_run_ids:
-            rendered["status"] = "running"
+        # Status is time-dependent (the mtime window decays, run_state can go
+        # stale) but the catalog signature only tracks file stats, so a cached
+        # "running" would freeze forever on a dead run. Always rederive status
+        # against the live tree; everything else in the record is artifact-
+        # stable and safe to serve from cache.
+        rendered["status"] = run_status(runs_dir / record["run_id"], active_run_ids)
         rows.append(rendered)
     return rows
 
