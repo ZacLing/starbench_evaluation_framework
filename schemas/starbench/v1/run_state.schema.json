@@ -29,6 +29,10 @@
         "orphaned"
       ]
     },
+    "batch": {
+      "type": "string",
+      "description": "Launch batch this run belongs to; runs launched together share it. Descriptive only - comparisons are computed statelessly from artifacts."
+    },
     "argv": {
       "type": "array",
       "items": {

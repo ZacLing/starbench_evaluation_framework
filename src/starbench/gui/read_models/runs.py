@@ -208,6 +208,16 @@ def progress_snapshot(run_root: Path) -> Optional[Dict[str, Any]]:
     }
 
 
+def _batch_marker(run_root: Path) -> Optional[str]:
+    """The launch batch recorded in run_state.json; None for bare/CLI runs."""
+    run_state = _read_json(run_root / RUN_STATE_FILENAME)
+    if isinstance(run_state, dict):
+        batch = run_state.get("batch")
+        if isinstance(batch, str) and batch:
+            return batch
+    return None
+
+
 def _profile_marker(run_root: Path) -> Optional[Dict[str, Any]]:
     """Lightweight profile marker for a run row: ``{id, rev, modified}`` read
     from the run's ``profile_snapshot.json``. ``modified`` is True only when
@@ -287,6 +297,8 @@ def run_overview(run_root: Path, active_run_ids: Optional[set] = None) -> Dict[s
         # modified); null for bare runs and unreadable snapshots. The detail
         # view carries the full snapshot separately.
         "profile": _profile_marker(run_root),
+        # Launch batch (runs launched together share it); null for bare runs.
+        "batch": _batch_marker(run_root),
     }
 
 

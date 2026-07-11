@@ -26,6 +26,7 @@ from .read_models.live import (
 from .read_models.tasks import (
     list_task_packages, read_human_reference_steps, read_rigors, rigor_count,
 )
+from .read_models.compare import COMPARE_MAX_RUNS, compare_runs
 from .read_models.coverage import COVERAGE_RECENT_REFS_LIMIT, coverage
 
 __all__ = [name for name in globals() if not name.startswith("__")]

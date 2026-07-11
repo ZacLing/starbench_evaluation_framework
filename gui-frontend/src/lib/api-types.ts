@@ -512,6 +512,7 @@ export interface RunOverview {
   ended_at: string | null
   has_ablation: boolean
   profile?: RunProfileRef | null
+  batch?: string | null
 }
 
 export interface TaskRow {
@@ -582,6 +583,7 @@ export interface RunDetail {
   ended_at: string | null
   has_ablation: boolean
   profile?: RunProfileRef | null
+  batch?: string | null
   config: Record<string, unknown> | null
   tasks: TaskRow[]
   progress: ProgressSnapshot | null
@@ -978,46 +980,6 @@ export interface DeletedAgentPayload {
   deleted: string
 }
 
-export interface ExperimentContenderRecord {
-  label: string
-  agent: string
-  agent_label: string
-  model: string
-  run_id: string
-  backend: string
-  backend_downgraded: boolean
-}
-
-export interface ExperimentRecord {
-  id: string
-  created_at: string
-  tasks_dir: string
-  tasks: string[]
-  shared: SharedConfig
-  contenders: ExperimentContenderRecord[]
-  run_ids: string[]
-  launch_status: string
-  launch_error?: string
-}
-
-export interface MissingRun {
-  run_id: string
-  status: "missing"
-}
-
-export interface ExperimentSummary {
-  id: string
-  created_at: string
-  tasks_dir: string
-  tasks: string[]
-  shared: SharedConfig
-  contenders: ExperimentContenderRecord[]
-  run_ids: string[]
-  launch_status: string
-  launch_error?: string
-  runs: (RunOverview | MissingRun)[]
-}
-
 export interface MatrixCell {
   passed: number
   total: number
@@ -1034,32 +996,14 @@ export interface MatrixTask {
   rubrics: MatrixRubric[]
 }
 
-export interface ExperimentDetailContender {
-  label: string
-  agent: string
-  agent_label: string
-  model: string
+export interface CompareRunRow {
   run_id: string
-  backend: string
-  backend_downgraded: boolean
   run: RunOverview | null
 }
 
-export interface ExperimentDetail {
-  id: string
-  created_at: string
-  tasks_dir: string
-  tasks: string[]
-  shared: SharedConfig
-  contenders: ExperimentDetailContender[]
-  run_ids: string[]
-  launch_status: string
+export interface ComparePayload {
+  runs: CompareRunRow[]
   matrix: MatrixTask[]
-  launch_error?: string
-}
-
-export interface ExperimentsPayload {
-  experiments: ExperimentSummary[]
 }
 
 export interface CreateExperimentPayload {
@@ -1081,15 +1025,8 @@ export interface ExperimentPlanResponse {
   dry_run: true
 }
 
-export interface ExperimentLaunchResponse {
+export interface LaunchBatchResponse {
   id: string
-  created_at: string
-  tasks_dir: string
-  tasks: string[]
-  shared: SharedConfig
-  contenders: ExperimentContenderRecord[]
   run_ids: string[]
-  launch_status: string
-  launch_error?: string
   launches: Launch[]
 }

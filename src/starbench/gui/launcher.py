@@ -410,6 +410,7 @@ class LaunchRegistry:
         keys = (
             "run_id",
             "state",
+            "batch",
             "argv",
             "pid",
             "pgid",
@@ -498,6 +499,7 @@ class LaunchRegistry:
         cwd: Path,
         log_path: Path,
         env_extra: Optional[Dict[str, str]] = None,
+        batch: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._lock:
             existing = self._launches.get(run_id)
@@ -512,6 +514,9 @@ class LaunchRegistry:
             record = {
                 "run_id": run_id,
                 "state": "prepared",
+                # The launch batch this run belongs to (runs launched together
+                # share it). Purely descriptive: comparisons are stateless.
+                "batch": batch,
                 "argv": list(argv),
                 "pid": None,
                 "pgid": None,
@@ -592,8 +597,11 @@ class LaunchRegistry:
         cwd: Path,
         log_path: Path,
         env_extra: Optional[Dict[str, str]] = None,
+        batch: Optional[str] = None,
     ) -> Dict[str, Any]:
-        self.prepare(run_id, argv, cwd=cwd, log_path=log_path, env_extra=env_extra)
+        self.prepare(
+            run_id, argv, cwd=cwd, log_path=log_path, env_extra=env_extra, batch=batch
+        )
         try:
             return self.commit(run_id)
         except Exception:

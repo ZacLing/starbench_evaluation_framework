@@ -269,7 +269,7 @@ export default function NewRun() {
       setStep(1)
       throw new Error("Select at least one runnable task before continuing.")
     }
-    const record = await api.createExperiment({
+    const record = await api.launchBatch({
       name: expName.trim(),
       tasks_dir: effectiveTasksDir(),
       tasks,
@@ -277,10 +277,14 @@ export default function NewRun() {
       contenders: apiContenders(),
       profile_id: profileIdForLaunch,
     })
-    toast.success(`Experiment ${record.id ?? expName} started: ${contenders.length} runs.`)
-    queryClient.invalidateQueries({ queryKey: ["experiments"] })
+    toast.success(`${record.id ?? expName} started: ${record.run_ids.length} runs.`)
     queryClient.invalidateQueries({ queryKey: ["runs"] })
-    navigate(`/experiments/${encodeURIComponent(expName.trim())}`)
+    // One run reads best on its own page; several read best side by side.
+    navigate(
+      record.run_ids.length === 1
+        ? `/runs/${encodeURIComponent(record.run_ids[0])}`
+        : `/compare?runs=${encodeURIComponent(record.run_ids.join(","))}`,
+    )
   }
 
   const primaryLaunch = async () => {

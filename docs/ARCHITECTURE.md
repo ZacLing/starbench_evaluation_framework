@@ -72,7 +72,8 @@ console 与 core 之间只允许通过以下契约对话，全部落盘、全部
 ## 4. 路线图（fork 内部，按序）
 
 1. ~~fork 章程 + 文档收编~~（本文）
-2. 概念清算：移除 experiment 残留（并入 Coverage/RunDetail）；schema 双树改脚本同步
+2. ~~概念清算~~：experiment 实体已移除（对比 = 无状态 `/api/compare`，
+   批次名记录在 `run_state.json`）；schema 双树由 `make sync-schemas` 派生
 3. `gui/launcher.py` 拆分：argv 构建器 / 进程监督器
 4. `run_plan.schema.json` + `starbench-run --plan`；监督器迁 `lifecycle/`（core 侧）
 5. 前端大页 features/ 化（RunDetail 起）

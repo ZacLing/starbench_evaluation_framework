@@ -28,7 +28,6 @@ from .profile_snapshots import (
     _snapshot_contender_spec, _task_set_deviates,
 )
 from .profiles import load_profiles
-from .records import _experiment_path
 
 def plan_experiment(
     payload: Dict[str, Any],
@@ -43,8 +42,6 @@ def plan_experiment(
         raise ExperimentError(
             "Experiment name is required (letters, digits, dot, dash, underscore)."
         )
-    if _experiment_path(runs_dir, name).exists():
-        raise ExperimentError(f"An experiment named {name} already exists.")
 
     shared = payload.get("shared")
     if not isinstance(shared, dict):
@@ -283,6 +280,13 @@ def plan_experiment(
             run_id = f"{name}__{slug}-{suffix}"
             suffix += 1
         used_run_ids.add(run_id)
+        # Fail at plan time, not after some runs already launched: run
+        # directories are the collision namespace now that launches are not
+        # separately recorded.
+        if (runs_dir / run_id).exists():
+            raise ExperimentError(
+                f"A run named {run_id} already exists; pick a new launch name."
+            )
 
         docker_capable = (
             agent in DOCKER_CAPABLE_AGENTS

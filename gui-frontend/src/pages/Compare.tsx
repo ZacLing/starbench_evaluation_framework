@@ -1,4 +1,4 @@
-import { Link, useParams } from "react-router-dom"
+import { Link, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -14,49 +14,65 @@ import {
 import { AGENT_LABELS, AgentIcon } from "@/components/brand"
 import { StatusBadge, PassSummaryBadge } from "@/components/verdict"
 import { ErrorNote } from "@/components/error-note"
-import { api, type ExperimentDetail as ExperimentDetailData, type MatrixCell } from "@/lib/api"
-import { fmtTime, spanBetween } from "@/lib/format"
+import { api, type CompareRunRow, type MatrixCell } from "@/lib/api"
+import { spanBetween } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
-export default function ExperimentDetail() {
-  const { experimentId = "" } = useParams()
-  const detailQuery = useQuery({
-    queryKey: ["experiment", experimentId],
-    queryFn: () => api.experiment(experimentId),
+/* Stateless comparison over any set of runs, named entirely by the URL
+   (?runs=a,b,c). Nothing is created or persisted: the matrix is computed
+   from run artifacts at request time. */
+export default function Compare() {
+  const [searchParams] = useSearchParams()
+  const runIds = (searchParams.get("runs") ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  const compareQuery = useQuery({
+    queryKey: ["compare", runIds.join(",")],
+    queryFn: () => api.compare(runIds),
+    enabled: runIds.length > 0,
     refetchInterval: (query) =>
-      query.state.data?.contenders.some((contender) => contender.run?.status === "running")
-        ? 3000
-        : false,
+      query.state.data?.runs.some((row) => row.run?.status === "running") ? 3000 : false,
   })
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
   const customs = agentsQuery.data?.custom ?? []
-  const agentLabel = (contender: { agent: string; agent_label?: string }) =>
-    AGENT_LABELS[contender.agent] ??
-    customs.find((item) => item.id === contender.agent)?.label ??
-    contender.agent_label ??
-    contender.agent
+  const agentLabel = (agent: string) =>
+    AGENT_LABELS[agent] ?? customs.find((item) => item.id === agent)?.label ?? agent
   const agentIconHint = (agent: string) => customs.find((item) => item.id === agent)?.icon
 
-  if (detailQuery.isPending) return <Skeleton className="h-96" />
-  if (detailQuery.isError) return <ErrorNote message={(detailQuery.error as Error).message} />
-  const detail = detailQuery.data
-  const anyRunning = detail.contenders.some((contender) => contender.run?.status === "running")
+  if (runIds.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-center text-sm text-muted-foreground">
+          Nothing to compare — open this page from a run's batch chip on the
+          Runs page, or pass run ids as ?runs=a,b,c.
+        </CardContent>
+      </Card>
+    )
+  }
+  if (compareQuery.isPending) return <Skeleton className="h-96" />
+  if (compareQuery.isError) return <ErrorNote message={(compareQuery.error as Error).message} />
+  const payload = compareQuery.data
+  const anyRunning = payload.runs.some((row) => row.run?.status === "running")
+  const batches = Array.from(
+    new Set(payload.runs.map((row) => row.run?.batch).filter(Boolean)),
+  ) as string[]
 
   return (
     <div className="grid gap-6">
       <div className="flex flex-wrap items-center gap-3">
         <div className="min-w-0">
-          <h1 className="break-all font-mono text-xl font-semibold tracking-tight">
-            {detail.id}
+          <h1 className="text-xl font-semibold tracking-tight">
+            Compare {payload.runs.length} runs
           </h1>
           <p className="text-sm text-muted-foreground">
-            {fmtTime(detail.created_at)} · {detail.tasks.length || "all"} tasks ×{" "}
-            {detail.contenders.length} agents · judge{" "}
-            <span className="font-mono">
-              {String(detail.shared?.evaluator_model ?? "runtime default")}
-            </span>{" "}
-            ({String(detail.shared?.judge_mode ?? "single")}) · seed{" "}
-            {String(detail.shared?.seed ?? "–")}
+            {batches.length === 1 ? (
+              <>
+                launched together as <span className="font-mono">{batches[0]}</span> ·{" "}
+              </>
+            ) : null}
+            same rubric, side by side; computed from run artifacts.
           </p>
         </div>
         {anyRunning && (
@@ -67,12 +83,12 @@ export default function ExperimentDetail() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {detail.contenders.map((contender) => (
-          <ContenderCard
-            key={contender.run_id}
-            contender={contender}
-            label={agentLabel(contender)}
-            iconHint={agentIconHint(contender.agent)}
+        {payload.runs.map((row) => (
+          <RunCard
+            key={row.run_id}
+            row={row}
+            label={row.run ? agentLabel(row.run.executor_agent ?? "") : row.run_id}
+            iconHint={row.run ? agentIconHint(row.run.executor_agent ?? "") : undefined}
           />
         ))}
       </div>
@@ -81,11 +97,11 @@ export default function ExperimentDetail() {
         <div>
           <h2 className="text-base font-semibold">Rubric comparison</h2>
           <p className="text-sm text-muted-foreground">
-            Same tasks, same judge; each column is one contender.
+            Each column is one run; single-judge results.
           </p>
         </div>
-        {detail.matrix.length ? (
-          detail.matrix.map((taskGroup) => (
+        {payload.matrix.length ? (
+          payload.matrix.map((taskGroup) => (
             <Card key={taskGroup.task_id} className="gap-0 overflow-hidden py-0">
               <div className="border-b bg-muted/30 px-4 py-2.5 font-mono text-sm font-semibold">
                 {taskGroup.task_id}
@@ -95,23 +111,25 @@ export default function ExperimentDetail() {
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="min-w-56">Rubric</TableHead>
-                      {detail.contenders.map((contender) => (
-                        <TableHead key={contender.run_id} className="text-center">
+                      {payload.runs.map((row) => (
+                        <TableHead key={row.run_id} className="text-center">
                           <span
                             className="inline-flex items-center gap-1.5"
-                            title={`${contender.label} (${contender.run_id})`}
+                            title={row.run_id}
                           >
-                            <AgentIcon
-                              agent={contender.agent}
-                              icon={agentIconHint(contender.agent)}
-                              size={15}
-                            />
+                            {row.run && (
+                              <AgentIcon
+                                agent={row.run.executor_agent ?? ""}
+                                icon={agentIconHint(row.run.executor_agent ?? "")}
+                                size={15}
+                              />
+                            )}
                             <span className="grid justify-items-start normal-case">
                               <span className="text-xs font-semibold">
-                                {agentLabel(contender)}
+                                {row.run ? agentLabel(row.run.executor_agent ?? "") : row.run_id}
                               </span>
                               <span className="max-w-32 truncate font-mono text-[10px] font-normal text-muted-foreground">
-                                {contender.model || "runtime default"}
+                                {row.run?.executor_model || "runtime default"}
                               </span>
                             </span>
                           </span>
@@ -128,11 +146,8 @@ export default function ExperimentDetail() {
                             {rubric.question}
                           </span>
                         </TableCell>
-                        {detail.contenders.map((contender) => (
-                          <MatrixCellView
-                            key={contender.run_id}
-                            cell={rubric.cells[contender.run_id]}
-                          />
+                        {payload.runs.map((row) => (
+                          <MatrixCellView key={row.run_id} cell={rubric.cells[row.run_id]} />
                         ))}
                       </TableRow>
                     ))}
@@ -154,37 +169,39 @@ export default function ExperimentDetail() {
   )
 }
 
-function ContenderCard({
-  contender,
+function RunCard({
+  row,
   label,
   iconHint,
 }: {
-  contender: ExperimentDetailData["contenders"][number]
+  row: CompareRunRow
   label: string
   iconHint?: string
 }) {
-  const run = contender.run
+  const run = row.run
   return (
     <Card className="py-4">
       <CardContent className="grid gap-2 px-4">
         <div className="flex items-center gap-2">
-          <AgentIcon agent={contender.agent} icon={iconHint} size={20} />
+          {run && <AgentIcon agent={run.executor_agent ?? ""} icon={iconHint} size={20} />}
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-semibold">
-              {label}
-            </span>
+            <span className="block truncate text-sm font-semibold">{label}</span>
             <span className="block truncate font-mono text-xs text-muted-foreground">
-              {contender.model || "runtime default"}
+              {run ? run.executor_model || "runtime default" : row.run_id}
             </span>
           </span>
           {run ? <StatusBadge status={run.status} /> : <Badge variant="secondary">missing</Badge>}
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="outline" className="text-[10px] text-muted-foreground">
-            {contender.backend}
-          </Badge>
-          {run && <span>{spanBetween(run.started_at, run.ended_at, run.status === "running")}</span>}
-        </div>
+        {run && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {run.executor_backend && (
+              <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                {run.executor_backend}
+              </Badge>
+            )}
+            <span>{spanBetween(run.started_at, run.ended_at, run.status === "running")}</span>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           {run ? (
             <PassSummaryBadge passed={run.judge_passes.single} total={run.judge_totals.single} />
@@ -193,7 +210,7 @@ function ContenderCard({
           )}
           {run && (
             <Link
-              to={`/runs/${encodeURIComponent(contender.run_id)}`}
+              to={`/runs/${encodeURIComponent(row.run_id)}`}
               className="text-xs text-primary hover:underline"
             >
               View run →

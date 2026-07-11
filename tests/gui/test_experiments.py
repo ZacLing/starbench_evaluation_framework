@@ -1,4 +1,4 @@
-"""Experiment planning, recording and custom-runtime contenders in gui.experiments."""
+"""Experiment planning, stateless comparison and custom-runtime contenders."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from starbench.contracts import validate_payload
-from starbench.gui import experiments
+from starbench.gui import data, experiments
 from starbench.gui.experiments import ExperimentError
 from helpers import make_run, write_json
 
@@ -179,34 +179,38 @@ class ExperimentTest(unittest.TestCase):
             self.assertEqual(by_agent[agent]["docker_image"], image)
             self.assertIn(f"--docker-image {image}", " ".join(by_agent[agent]["argv"]))
 
-    def test_record_list_and_detail(self) -> None:
-        payload = self.experiment_payload()
-        plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        experiments.record_experiment(
-            self.runs_dir, name=plan["name"], payload=payload, plans=plan["plans"]
-        )
+    def test_compare_is_stateless_over_any_run_set(self) -> None:
+        # No launch record required: any mix of existing and vanished runs
+        # compares from artifacts alone.
         make_run(self.runs_dir, "exp_demo__gpt-gpt-5-5")
-        listed = experiments.list_experiments(self.runs_dir)
-        self.assertEqual(len(listed), 1)
-        self.assertEqual(listed[0]["id"], "exp_demo")
-        self.assertEqual(len(listed[0]["runs"]), 2)
-        self.assertEqual(listed[0]["runs"][1]["status"], "missing")
-
-        detail = experiments.experiment_detail(self.runs_dir, "exp_demo")
-        self.assertEqual(len(detail["contenders"]), 2)
-        matrix = detail["matrix"]
+        payload = data.compare_runs(
+            self.runs_dir, ["exp_demo__gpt-gpt-5-5", "exp_demo__claude-opus"]
+        )
+        self.assertEqual(payload["runs"][0]["run_id"], "exp_demo__gpt-gpt-5-5")
+        self.assertEqual(payload["runs"][0]["run"]["status"], "complete")
+        # The vanished run is an honest hole, not an error.
+        self.assertIsNone(payload["runs"][1]["run"])
+        matrix = payload["matrix"]
         self.assertEqual(matrix[0]["task_id"], "demo_task")
         rubric = matrix[0]["rubrics"][0]
         self.assertIn("exp_demo__gpt-gpt-5-5", rubric["cells"])
         self.assertEqual(rubric["cells"]["exp_demo__gpt-gpt-5-5"]["passed"], 1)
 
-    def test_duplicate_experiment_name_rejected(self) -> None:
+    def test_compare_rejects_invalid_and_oversized_input(self) -> None:
+        with self.assertRaises(data.NotFound):
+            data.compare_runs(self.runs_dir, ["../escape"])
+        with self.assertRaises(data.NotFound):
+            data.compare_runs(self.runs_dir, [])
+        with self.assertRaises(data.NotFound):
+            data.compare_runs(self.runs_dir, [f"run-{i}" for i in range(13)])
+
+    def test_duplicate_run_id_rejected_at_plan_time(self) -> None:
         payload = self.experiment_payload()
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        experiments.record_experiment(
-            self.runs_dir, name=plan["name"], payload=payload, plans=plan["plans"]
-        )
-        with self.assertRaises(ExperimentError):
+        # Any planned run id already on disk fails the whole plan before a
+        # single launch happens — run directories are the collision namespace.
+        (self.runs_dir / plan["plans"][0]["run_id"]).mkdir()
+        with self.assertRaisesRegex(ExperimentError, "already exists"):
             experiments.plan_experiment(payload, runs_dir=self.runs_dir)
 
     def test_contender_error_names_the_contender(self) -> None:

@@ -53,19 +53,18 @@ export default function Runs() {
       query.state.data?.runs.some((run) => run.status === "running") ? 4000 : false,
   })
   const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta, staleTime: Infinity })
-  const experimentsQuery = useQuery({
-    queryKey: ["experiments"],
-    queryFn: api.experiments,
-    staleTime: 30_000,
-  })
 
-  /* run_id -> owning experiment id, so a member row can link to its comparison. */
-  const experimentOf = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const experiment of experimentsQuery.data?.experiments ?? [])
-      for (const runId of experiment.run_ids) map.set(runId, experiment.id)
+  /* batch -> member run_ids, computed from the rows themselves (each run's
+     run_state records its launch batch), so a member row can link to a
+     stateless comparison of its batch. */
+  const batchMembers = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const run of runsQuery.data?.runs ?? []) {
+      if (!run.batch) continue
+      map.set(run.batch, [...(map.get(run.batch) ?? []), run.run_id])
+    }
     return map
-  }, [experimentsQuery.data])
+  }, [runsQuery.data])
 
   /* Status filter, then time-descending: the ledger reads newest-first by
      default; column sorts (Tasks, Tasks passed) override this ordering. */
@@ -81,7 +80,12 @@ export default function Runs() {
         id: "run",
         header: () => <span className="pl-1">Run</span>,
         cell: ({ row }) => (
-          <RunIdCell run={row.original} experimentId={experimentOf.get(row.original.run_id)} />
+          <RunIdCell
+            run={row.original}
+            batchRunIds={
+              row.original.batch ? batchMembers.get(row.original.batch) : undefined
+            }
+          />
         ),
       },
       {
@@ -141,7 +145,7 @@ export default function Runs() {
         ),
       },
     ],
-    [experimentOf],
+    [batchMembers],
   )
 
   const table = useReactTable({
@@ -277,8 +281,8 @@ function startedMs(run: RunOverview): number {
 }
 
 /* Identity cell: the run id is the ledger's key (mono, prominent); the
-   timestamp and experiment attribution sit under it as quiet context. */
-function RunIdCell({ run, experimentId }: { run: RunOverview; experimentId?: string }) {
+   timestamp and batch attribution sit under it as quiet context. */
+function RunIdCell({ run, batchRunIds }: { run: RunOverview; batchRunIds?: string[] }) {
   return (
     <div className="min-w-0 max-w-[24rem] pl-1">
       <div
@@ -292,7 +296,9 @@ function RunIdCell({ run, experimentId }: { run: RunOverview; experimentId?: str
           {fmtTime(run.started_at)}
         </time>
         {run.profile?.modified && <AdHocTag profile={run.profile} />}
-        {experimentId && <ExperimentTag id={experimentId} />}
+        {run.batch && (
+          <BatchTag batch={run.batch} runIds={batchRunIds ?? [run.run_id]} />
+        )}
       </div>
     </div>
   )
@@ -313,14 +319,15 @@ function AdHocTag({ profile }: { profile: RunProfileRef }) {
   )
 }
 
-/* Quiet attribution: a run that is part of an experiment links to its
-   comparison. stopPropagation keeps the row's own click/Enter from firing. */
-function ExperimentTag({ id }: { id: string }) {
+/* Quiet attribution: a run launched as part of a batch links to a stateless
+   comparison of its batch mates (computed from artifacts, nothing stored).
+   stopPropagation keeps the row's own click/Enter from firing. */
+function BatchTag({ batch, runIds }: { batch: string; runIds: string[] }) {
   return (
     <Link
-      to={`/experiments/${encodeURIComponent(id)}`}
-      aria-label={`Experiment ${id}`}
-      title={`Part of experiment ${id}`}
+      to={`/compare?runs=${encodeURIComponent(runIds.join(","))}`}
+      aria-label={`Compare batch ${batch}`}
+      title={`Launched together as ${batch} — compare ${runIds.length} runs`}
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") event.stopPropagation()
@@ -328,7 +335,7 @@ function ExperimentTag({ id }: { id: string }) {
       className="inline-flex min-w-0 items-center gap-1 rounded-full border border-border bg-background px-1.5 py-px font-mono text-[0.6875rem] leading-4 text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <FlaskConical className="size-3 shrink-0" aria-hidden />
-      <span className="truncate">{id}</span>
+      <span className="truncate">{batch}</span>
     </Link>
   )
 }

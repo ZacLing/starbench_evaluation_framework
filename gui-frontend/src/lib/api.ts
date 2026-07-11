@@ -6,19 +6,18 @@ import type {
   AgentTemplatesPayload,
   AgentsPayload,
   ArtifactPayload,
+  ComparePayload,
   CoveragePayload,
   CreateExperimentPayload,
   CustomRuntime,
   CustomRuntimePayload,
   DeletedAgentPayload,
   DirListing,
-  ExperimentDetail,
-  ExperimentLaunchResponse,
   ExperimentPlanResponse,
-  ExperimentsPayload,
   ImportFile,
   ImportReport,
   Launch,
+  LaunchBatchResponse,
   LaunchPayload,
   LaunchPlanResponse,
   LaunchesPayload,
@@ -154,14 +153,15 @@ export const api = {
   profiles: () => request<ProfilesPayload>("/api/profiles"),
   saveProfiles: (payload: ProfilesPayload) =>
     request<ProfilesPayload>("/api/profiles", jsonBody(payload)),
-  experiments: () => request<ExperimentsPayload>("/api/experiments"),
-  experiment: (id: string) =>
-    request<ExperimentDetail>(`/api/experiments/${encodeURIComponent(id)}`),
+  compare: (runIds: string[]) =>
+    request<ComparePayload>(
+      `/api/compare?runs=${encodeURIComponent(runIds.join(","))}`,
+    ),
   planExperiment: (payload: CreateExperimentPayload) =>
     request<ExperimentPlanResponse>(
-      "/api/experiments",
+      "/api/launches",
       jsonBody({ ...payload, dry_run: true }),
     ),
-  createExperiment: (payload: CreateExperimentPayload) =>
-    request<ExperimentLaunchResponse>("/api/experiments", jsonBody(payload)),
+  launchBatch: (payload: CreateExperimentPayload) =>
+    request<LaunchBatchResponse>("/api/launches", jsonBody(payload)),
 }

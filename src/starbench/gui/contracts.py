@@ -775,6 +775,9 @@ class _RunOverviewBase(TypedDict):
 
 class RunOverview(_RunOverviewBase, total=False):
     profile: Optional[RunProfileRef]
+    # Launch batch this run was started with (runs launched together share
+    # it); null for bare/CLI runs.
+    batch: Optional[str]
 
 
 class TaskRow(TypedDict):
@@ -1257,40 +1260,6 @@ class DeletedAgentPayload(TypedDict):
     deleted: str
 
 
-class ExperimentContenderRecord(TypedDict):
-    label: str
-    agent: str
-    agent_label: str
-    model: str
-    run_id: str
-    backend: str
-    backend_downgraded: bool
-
-
-class _ExperimentRecordBase(TypedDict):
-    id: str
-    created_at: str
-    tasks_dir: str
-    tasks: List[str]
-    shared: SharedConfig
-    contenders: List[ExperimentContenderRecord]
-    run_ids: List[str]
-    launch_status: str
-
-
-class ExperimentRecord(_ExperimentRecordBase, total=False):
-    launch_error: str
-
-
-class MissingRun(TypedDict):
-    run_id: str
-    status: Literal["missing"]
-
-
-class ExperimentSummary(ExperimentRecord):
-    runs: List[Union[RunOverview, MissingRun]]
-
-
 class MatrixCell(TypedDict):
     passed: int
     total: int
@@ -1299,6 +1268,7 @@ class MatrixCell(TypedDict):
 class MatrixRubric(TypedDict):
     id: str
     question: str
+    # Keyed by run_id.
     cells: Dict[str, MatrixCell]
 
 
@@ -1307,28 +1277,16 @@ class MatrixTask(TypedDict):
     rubrics: List[MatrixRubric]
 
 
-class ExperimentDetailContender(ExperimentContenderRecord):
+class CompareRunRow(TypedDict):
+    run_id: str
+    # Null when the run directory no longer exists: comparison URLs are
+    # long-lived and a vanished run renders as an honest hole.
     run: Optional[RunOverview]
 
 
-class _ExperimentDetailBase(TypedDict):
-    id: str
-    created_at: str
-    tasks_dir: str
-    tasks: List[str]
-    shared: SharedConfig
-    contenders: List[ExperimentDetailContender]
-    run_ids: List[str]
-    launch_status: str
+class ComparePayload(TypedDict):
+    runs: List[CompareRunRow]
     matrix: List[MatrixTask]
-
-
-class ExperimentDetail(_ExperimentDetailBase, total=False):
-    launch_error: str
-
-
-class ExperimentsPayload(TypedDict):
-    experiments: List[ExperimentSummary]
 
 
 class _CreateExperimentPayloadBase(TypedDict):
@@ -1353,7 +1311,9 @@ class ExperimentPlanResponse(TypedDict):
     dry_run: Literal[True]
 
 
-class ExperimentLaunchResponse(ExperimentRecord):
+class LaunchBatchResponse(TypedDict):
+    id: str
+    run_ids: List[str]
     launches: List[Launch]
 
 
@@ -1479,17 +1439,12 @@ GENERATED_TYPES = [
     "ProviderWrite",
     "SaveProvidersPayload",
     "DeletedAgentPayload",
-    "ExperimentContenderRecord",
-    "ExperimentRecord",
-    "MissingRun",
-    "ExperimentSummary",
     "MatrixCell",
     "MatrixRubric",
     "MatrixTask",
-    "ExperimentDetailContender",
-    "ExperimentDetail",
-    "ExperimentsPayload",
+    "CompareRunRow",
+    "ComparePayload",
     "CreateExperimentPayload",
     "ExperimentPlanResponse",
-    "ExperimentLaunchResponse",
+    "LaunchBatchResponse",
 ]

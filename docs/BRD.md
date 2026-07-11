@@ -457,17 +457,18 @@ StarBench 是本地/CLI 优先的评测框架，不是多租户 SaaS。
 
 ### 6.6 EXP：Experiment、Profile 与 Profile Snapshot
 
-#### EXP-001 Experiment fan-out
+#### EXP-001 Launch fan-out
 
 - 优先级：P0
 - 功能描述：
-  - GUI 的 experiment 是固定任务集 + 共享 judge/参数 + 多个 contenders。
-  - 每个 contender 启动一个独立 `starbench-run`。
-  - experiment record 写入 `<runs-dir>/experiments/<id>.json`。
+  - 一次批量发射 = 固定任务集 + 共享 judge/参数 + 多个 contenders。
+  - 每个 contender 启动一个独立 `starbench-run`；批次名记录在各 run 的
+    `run_state.json`（无独立发射记录实体）。
 - 验收标准：
   - dry run 返回每个 contender 的 argv。
   - launch 后每个 contender 有独立 run id 和 launch log。
-  - experiment detail 能聚合各 run 的 pass/fail 和 rubric matrix。
+  - `/api/compare?runs=…` 能对任意 run 组合聚合 pass/fail 和 rubric matrix
+    （无状态，从 artifacts 现算）。
 - 模块映射：
   - `src/starbench/gui/experiments.py`
   - `src/starbench/gui/server.py`

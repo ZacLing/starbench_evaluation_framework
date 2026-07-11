@@ -50,7 +50,8 @@ class ContractsTest(unittest.TestCase):
             "TaskLibrariesPayload",
             "ProfilesPayload",
             "ExperimentPlanResponse",
-            "ExperimentLaunchResponse",
+            "LaunchBatchResponse",
+            "ComparePayload",
         ):
             self.assertIn(name, contracts.GENERATED_TYPES)
 

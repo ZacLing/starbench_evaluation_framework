@@ -189,16 +189,9 @@ class ConsoleApplication:
     def provider_cli_statuses(self) -> Dict[str, Any]:
         return providers.load_provider_cli_statuses(self.runs_dir)
 
-    def list_experiments(self) -> Dict[str, Any]:
-        return {
-            "experiments": experiments.list_experiments(
-                self.runs_dir, self.registry.active_run_ids()
-            )
-        }
-
-    def experiment_detail(self, name: str) -> Dict[str, Any]:
-        return experiments.experiment_detail(
-            self.runs_dir, name, self.registry.active_run_ids()
+    def compare(self, run_ids: List[str]) -> Dict[str, Any]:
+        return data.compare_runs(
+            self.runs_dir, run_ids, self.registry.active_run_ids()
         )
 
     def launch(self, payload: Dict[str, Any]) -> ServiceResult:
@@ -225,7 +218,12 @@ class ConsoleApplication:
         )
         return ServiceResult(report, created=not dry_run and bool(report["valid"]))
 
-    def create_experiment(self, payload: Dict[str, Any]) -> ServiceResult:
+    def launch_batch(self, payload: Dict[str, Any]) -> ServiceResult:
+        """Plan and launch one run per contender as a single transaction.
+
+        There is no separate launch record: each run's run_state.json carries
+        the batch name, and comparisons are computed statelessly from run
+        artifacts (see read_models.compare)."""
         plan = experiments.plan_experiment(
             payload,
             runs_dir=self.runs_dir,
@@ -243,38 +241,24 @@ class ConsoleApplication:
                 "env_extra": scoped_launch_env(
                     item.get("executor_env_spec"), item.get("judge_env_spec")
                 ),
+                "batch": plan["name"],
             }
             for item in plan["plans"]
         ]
         try:
             launched = launch_transaction(self.registry, launch_specs)
         except LaunchError as error:
-            experiments.record_experiment(
-                self.runs_dir,
-                name=plan["name"],
-                payload=payload,
-                plans=plan["plans"],
-                launch_status="failed",
-                launch_error=str(error),
-            )
             raise experiments.ExperimentError(
-                f"Experiment launch rolled back: {error}"
+                f"Launch rolled back: {error}"
             ) from error
-        try:
-            record = experiments.record_experiment(
-                self.runs_dir,
-                name=plan["name"],
-                payload=payload,
-                plans=plan["plans"],
-                launch_status="started",
-            )
-        except Exception as error:
-            self.registry.rollback([item["run_id"] for item in plan["plans"]])
-            raise experiments.ExperimentError(
-                "Experiment record could not be persisted; launched runs were rolled back: "
-                f"{error}"
-            ) from error
-        return ServiceResult({**record, "launches": launched}, created=True)
+        return ServiceResult(
+            {
+                "id": plan["name"],
+                "run_ids": [item["run_id"] for item in plan["plans"]],
+                "launches": launched,
+            },
+            created=True,
+        )
 
     def save_profiles(self, payload: Dict[str, Any]) -> Any:
         return experiments.save_profiles(self.runs_dir, payload)

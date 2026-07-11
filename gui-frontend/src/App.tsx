@@ -13,7 +13,7 @@ const Profiles = lazy(() => import("@/pages/Profiles"))
 const Runs = lazy(() => import("@/pages/Runs"))
 const RunDetail = lazy(() => import("@/pages/RunDetail"))
 const TaskDetail = lazy(() => import("@/pages/TaskDetail"))
-const ExperimentDetail = lazy(() => import("@/pages/ExperimentDetail"))
+const Compare = lazy(() => import("@/pages/Compare"))
 const NewRun = lazy(() => import("@/pages/NewRun"))
 
 export default function App() {
@@ -31,7 +31,7 @@ export default function App() {
           <Route path="/runs" element={<Runs />} />
           <Route path="/runs/:runId" element={<RunDetail />} />
           <Route path="/runs/:runId/tasks/:taskRunId" element={<TaskDetail />} />
-          <Route path="/experiments/:experimentId" element={<ExperimentDetail />} />
+          <Route path="/compare" element={<Compare />} />
           <Route path="/new" element={<NewRun />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

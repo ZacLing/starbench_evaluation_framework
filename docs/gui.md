@@ -16,9 +16,10 @@ variable). The agents are coding-agent CLIs — the five built-in runtimes
 (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode) plus any **custom
 runtime** registered as a `runtimes/<id>.json` spec — each configured with a
 model drawn from an AI provider; the model is configuration, the runtime is the
-subject being measured. Launching an experiment orchestrates one plain
-`starbench-run` per contender with identical tasks, judge, and seed, and records
-the grouping in `<runs-dir>/experiments/<id>.json`. **Profiles**
+subject being measured. Launching a batch orchestrates one plain
+`starbench-run` per contender with identical tasks, judge, and seed; each run's
+`run_state.json` carries the batch name, and cross-run comparison is computed
+statelessly from artifacts (`/api/compare?runs=…`). **Profiles**
 (`<runs-dir>/profiles.json`) store the shared configuration plus a declaration
 of which fields each contender fills in individually (model id, credentials,
 gateway); the default profile pre-fills the wizard so repeated evaluations keep

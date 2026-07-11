@@ -155,8 +155,8 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 self._handle_task_import()
             elif segments == ["api", "tasklib", "dirs"]:
                 self._handle_register_tasks_dir()
-            elif segments == ["api", "experiments"]:
-                self._handle_create_experiment()
+            elif segments == ["api", "launches"]:
+                self._handle_launch_batch()
             elif segments == ["api", "profiles"]:
                 self._handle_save_profiles()
             elif segments == ["api", "providers"]:
@@ -276,10 +276,15 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             self._send_json(app.load_providers())
         elif segments == ["providers", "cli-status"]:
             self._send_json(app.provider_cli_statuses())
-        elif segments == ["experiments"]:
-            self._send_json(app.list_experiments())
-        elif len(segments) == 2 and segments[0] == "experiments":
-            self._send_json(app.experiment_detail(segments[1]))
+        elif segments == ["compare"]:
+            raw = query.get("runs", [])
+            run_ids = [
+                run_id.strip()
+                for item in raw
+                for run_id in str(item).split(",")
+                if run_id.strip()
+            ]
+            self._send_json(app.compare(run_ids))
         else:
             self._send_error_json("Not found.", HTTPStatus.NOT_FOUND)
 
@@ -312,11 +317,11 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         status = HTTPStatus.CREATED if result.created else HTTPStatus.OK
         self._send_json(result.payload, status)
 
-    def _handle_create_experiment(self) -> None:
+    def _handle_launch_batch(self) -> None:
         payload = self._read_body()
         if payload is None:
             raise ExperimentError("Request body must be a JSON object.")
-        result = self.state.application.create_experiment(payload)
+        result = self.state.application.launch_batch(payload)
         status = HTTPStatus.CREATED if result.created else HTTPStatus.OK
         self._send_json(result.payload, status)
 
