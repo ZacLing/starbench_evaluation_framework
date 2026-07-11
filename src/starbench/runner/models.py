@@ -263,6 +263,17 @@ class ProcessResult:
         }
 
 
+def _require_json_bool(value: Any, field: str) -> bool:
+    """Judge output must use JSON booleans. Python's bool() would turn the
+    string "false" into True, silently flipping a rubric verdict, so any
+    non-boolean value is a parse error rather than a coercion."""
+    if type(value) is not bool:
+        raise ValueError(
+            f"Judge result field {field!r} must be a JSON boolean, got {value!r}"
+        )
+    return value
+
+
 @dataclass(frozen=True)
 class RubricResult:
     rubric_id: str
@@ -274,15 +285,18 @@ class RubricResult:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RubricResult":
-        answer = bool(data["answer"])
-        expected = bool(data["expected"])
-        passed = bool(data.get("passed", answer == expected))
+        answer = _require_json_bool(data["answer"], "answer")
+        expected = _require_json_bool(data["expected"], "expected")
+        if "passed" in data:
+            passed = _require_json_bool(data["passed"], "passed")
+        else:
+            passed = answer == expected
         return cls(
             rubric_id=str(data.get("rubric_id") or data.get("id")),
             answer=answer,
             expected=expected,
             passed=passed,
-            fail_fast=bool(data["fail_fast"]),
+            fail_fast=_require_json_bool(data["fail_fast"], "fail_fast"),
             evidence=str(data.get("evidence", "")),
         )
 

@@ -120,6 +120,60 @@ class ExecutorBackendResolutionTests(unittest.TestCase):
             parse_args(["--executor-agent", "claude", "--executor-backend", "docker"])
 
 
+class RubricResultParsingTests(unittest.TestCase):
+    def test_json_booleans_parse(self) -> None:
+        result = RubricResult.from_dict(
+            {
+                "rubric_id": "R001",
+                "answer": False,
+                "expected": True,
+                "passed": False,
+                "fail_fast": True,
+                "evidence": "Missing.",
+            }
+        )
+        self.assertIs(result.answer, False)
+        self.assertIs(result.passed, False)
+
+    def test_string_boolean_is_rejected_not_coerced(self) -> None:
+        # bool("false") is True: a judge answering with the *string* "false"
+        # used to be recorded as answer=True/passed=True, silently flipping
+        # the rubric verdict. It must be a parse error instead.
+        for field in ("answer", "expected", "passed", "fail_fast"):
+            data = {
+                "rubric_id": "R001",
+                "answer": True,
+                "expected": True,
+                "fail_fast": False,
+                field: "false",
+            }
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError, field):
+                    RubricResult.from_dict(data)
+
+    def test_numeric_boolean_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "answer"):
+            RubricResult.from_dict(
+                {
+                    "rubric_id": "R001",
+                    "answer": 1,
+                    "expected": True,
+                    "fail_fast": False,
+                }
+            )
+
+    def test_missing_passed_is_still_derived(self) -> None:
+        result = RubricResult.from_dict(
+            {
+                "rubric_id": "R001",
+                "answer": True,
+                "expected": True,
+                "fail_fast": False,
+            }
+        )
+        self.assertIs(result.passed, True)
+
+
 class AggregationTests(unittest.TestCase):
     def test_fail_fast_failure_fails_overall(self) -> None:
         rubrics = [
