@@ -183,6 +183,7 @@ class ReferenceShapeEquivalenceTest(unittest.TestCase):
         self.assertEqual(len(legacy["plans"]), 1)
         r, l = ref["plans"][0], legacy["plans"][0]
         self.assertEqual(r["argv"], l["argv"], "argv differs")
+        self.assertEqual(r.get("run_plan"), l.get("run_plan"), "run_plan differs")
         self.assertEqual(r["env_spec"], l["env_spec"], "env_spec differs")
         self.assertEqual(r["env_keys"], l["env_keys"], "env_keys differs")
         self.assertEqual(r["run_id"], l["run_id"])

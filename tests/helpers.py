@@ -244,3 +244,26 @@ def make_run(
     if complete:
         write_json(run_root / "summary.json", {"run_id": run_id, "batches": []})
     return run_root
+
+
+def launch_flags(item):
+    """Flatten a plan item's effective runner flags, regardless of transport.
+
+    Argv-transport items are joined as-is; plan-transport items render their
+    run_plan document through the runner's own flag map, so assertions like
+    "--seed 7" hold for both transports without caring which one is in play.
+    """
+    from starbench.runner.cli import PLAN_LIST_FLAGS
+
+    plan = item.get("run_plan")
+    parts = list(item["argv"])
+    if plan:
+        for key, value in plan.items():
+            if key in ("schema_version", "profile_snapshot"):
+                continue
+            if key in PLAN_LIST_FLAGS:
+                for entry in value:
+                    parts += [PLAN_LIST_FLAGS[key], str(entry)]
+            else:
+                parts += ["--" + key.replace("_", "-"), str(value)]
+    return " ".join(parts)

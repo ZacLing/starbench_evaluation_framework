@@ -291,6 +291,22 @@ class SupervisorTest(unittest.TestCase):
         finally:
             original.stop("spaced_run")
 
+    def test_stop_deletes_console_created_plan_temp_file(self) -> None:
+        # The plan temp file exists only for the subprocess handoff; once the
+        # run reaches a terminal state the supervisor cleans it up. Only files
+        # carrying the console's own mkstemp prefix are ever touched.
+        plan_file = self.tmp / "starbench-plan-temp_run-abc.json"
+        plan_file.write_text("{}\n", encoding="utf-8")
+        registry = LaunchRegistry(self.runs_dir, stop_timeout_seconds=1)
+        registry.prepare(
+            "temp_run",
+            [sys.executable, "-c", "pass", "--plan", str(plan_file)],
+            cwd=self.tmp,
+            log_path=self.runs_dir / "temp_run.launch.log",
+        )
+        registry.stop("temp_run")
+        self.assertFalse(plan_file.exists())
+
     def test_runner_only_adopts_the_matching_reservation(self) -> None:
         registry = LaunchRegistry(self.runs_dir)
         registry.prepare(

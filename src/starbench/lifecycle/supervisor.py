@@ -53,36 +53,36 @@ class LaunchRegistry:
     def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
         atomic_write_json(path, payload, indent=2, sort_keys=True)
 
-    @staticmethod
-    def _snapshot_temp_path(argv: Any) -> Optional[Path]:
-        """The console-created profile-snapshot temp file named on argv, if any.
+    # Flags whose value may be a console-created temp file, and the mkstemp
+    # prefix proving it is ours to delete. Operator-provided paths never match.
+    _LAUNCH_TEMP_FLAGS = {
+        "--plan": "starbench-plan-",
+        "--profile-snapshot": "starbench-profile-snapshot-",
+    }
 
-        Only files carrying the console's own mkstemp prefix are ever cleaned
-        up; an operator-provided --profile-snapshot path is not ours to touch.
-        """
+    @classmethod
+    def _launch_temp_paths(cls, argv: Any) -> List[Path]:
+        """Console-created temp files named on argv (plan / snapshot)."""
         if not isinstance(argv, list):
-            return None
-        try:
-            index = argv.index("--profile-snapshot")
-        except ValueError:
-            return None
-        if index + 1 >= len(argv):
-            return None
-        candidate = Path(str(argv[index + 1]))
-        if candidate.name.startswith("starbench-profile-snapshot-"):
-            return candidate
-        return None
+            return []
+        paths: List[Path] = []
+        for index, token in enumerate(argv[:-1]):
+            prefix = cls._LAUNCH_TEMP_FLAGS.get(str(token))
+            if prefix is None:
+                continue
+            candidate = Path(str(argv[index + 1]))
+            if candidate.name.startswith(prefix):
+                paths.append(candidate)
+        return paths
 
     def _cleanup_snapshot(self, record: Dict[str, Any]) -> None:
-        """Best-effort removal of the launch's snapshot temp file at terminal
-        state — the runner has long since copied it into the run root."""
-        path = self._snapshot_temp_path(record.get("argv"))
-        if path is None:
-            return
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        """Best-effort removal of the launch's temp files at terminal state —
+        the runner has long since materialized them into the run root."""
+        for path in self._launch_temp_paths(record.get("argv")):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     @staticmethod
     def _group_alive(pgid: Any) -> bool:

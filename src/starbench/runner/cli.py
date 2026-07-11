@@ -20,8 +20,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from pathlib import Path
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..adapters import BUILTIN_AGENTS, DEFAULT_DOCKER_IMAGES, resolve
 from ..contracts import ContractValidationError, validate_payload
@@ -34,6 +35,85 @@ DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks"
 DEFAULT_RUNS_DIR = PROJECT_ROOT / "runs"
 DEFAULT_EXECUTOR_SKILLS_DIR = PROJECT_ROOT / "executor_skills"
 DEFAULT_RUNTIMES_DIR = PROJECT_ROOT / "runtimes"
+
+
+# Plan fields that expand to repeated flags; every other plan key maps
+# mechanically to "--" + key.replace("_", "-"). Public: the console's argv
+# renderer uses the same map, so the two transports cannot drift.
+PLAN_LIST_FLAGS = {
+    "tasks": "--task",
+    "instruction_steps": "--instruction-step",
+    "rigors": "--rigor",
+    "executor_skills": "--executor-skill",
+    "executor_skill_groups": "--executor-skill-group",
+}
+# Plan keys the expansion consumes without emitting a flag.
+_PLAN_NON_FLAG_KEYS = {"schema_version", "profile_snapshot"}
+# The only argv companions --plan tolerates: everything else must live in the
+# plan, so the two transports can never disagree about a knob's value.
+_PLAN_COMPANION_FLAGS = {"--runs-dir": True, "--no-progress": False}  # flag -> takes value
+
+
+def _expand_plan_argv(
+    argv: List[str], parser: argparse.ArgumentParser
+) -> Tuple[List[str], Optional[Dict[str, Any]]]:
+    """Expand ``--plan plan.json`` into the equivalent flag argv (fail closed).
+
+    The plan is validated against run_plan.schema.json first, then translated
+    deterministically into the same flags a manual invocation would use — both
+    transports share every downstream validation and default. ``--plan`` is
+    exclusive: only --runs-dir and --no-progress may accompany it.
+    """
+    retained: List[str] = []
+    plan_path: Optional[Path] = None
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--plan":
+            if index + 1 >= len(argv):
+                parser.error("--plan requires a path.")
+            plan_path = Path(argv[index + 1])
+            index += 2
+            continue
+        if token in _PLAN_COMPANION_FLAGS:
+            retained.append(token)
+            if _PLAN_COMPANION_FLAGS[token]:
+                if index + 1 >= len(argv):
+                    parser.error(f"{token} requires a value.")
+                retained.append(argv[index + 1])
+                index += 2
+                continue
+            index += 1
+            continue
+        parser.error(
+            f"--plan is exclusive: move {token} into the plan file "
+            "(only --runs-dir and --no-progress may accompany --plan)."
+        )
+    assert plan_path is not None
+
+    try:
+        raw = plan_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        parser.error(f"--plan: cannot read {plan_path}: {exc}")
+    try:
+        plan = json.loads(raw)
+    except ValueError as exc:
+        parser.error(f"--plan: {plan_path} is not valid JSON: {exc}")
+    try:
+        validate_payload("run_plan.schema.json", plan)
+    except ContractValidationError as exc:
+        parser.error(f"--plan: {plan_path} violates the run_plan contract: {exc}")
+
+    expanded: List[str] = []
+    for key, value in plan.items():
+        if key in _PLAN_NON_FLAG_KEYS:
+            continue
+        if key in PLAN_LIST_FLAGS:
+            for item in value:
+                expanded += [PLAN_LIST_FLAGS[key], str(item)]
+            continue
+        expanded += ["--" + key.replace("_", "-"), str(value)]
+    return expanded + retained, plan
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -270,7 +350,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--no-progress", action="store_true", help="Disable tqdm progress bars and progress stderr output.")
-    args = parser.parse_args(argv)
+    # --plan expands into the equivalent flag argv BEFORE parsing, so both
+    # transports share every validation and default below. Handled manually
+    # (not via add_argument) because it rewrites the argv itself.
+    tokens = list(argv) if argv is not None else sys.argv[1:]
+    run_plan_data: Optional[Dict[str, Any]] = None
+    if "--plan" in tokens:
+        tokens, run_plan_data = _expand_plan_argv(tokens, parser)
+    args = parser.parse_args(tokens)
+    args.run_plan_data = run_plan_data
     if args.run_id is not None:
         try:
             args.run_id = parse_safe_id(args.run_id, kind="run id")
@@ -349,6 +437,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 f"profile_snapshot contract: {exc}"
             )
         args.profile_snapshot_data = snapshot_payload
+    if args.run_plan_data is not None and args.run_plan_data.get("profile_snapshot") is not None:
+        if args.profile_snapshot_data is not None:
+            parser.error("--plan already embeds a profile snapshot; drop --profile-snapshot.")
+        embedded = args.run_plan_data["profile_snapshot"]
+        try:
+            validate_payload("profile_snapshot.schema.json", embedded)
+        except ContractValidationError as exc:
+            parser.error(f"--plan: embedded profile_snapshot violates its contract: {exc}")
+        args.profile_snapshot_data = embedded
     return args
 
 

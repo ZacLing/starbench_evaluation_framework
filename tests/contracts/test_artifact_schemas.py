@@ -41,6 +41,7 @@ EXPECTED_SCHEMAS = {
     "progress_event.schema.json",
     "rigors.schema.json",
     "rubrics.schema.json",
+    "run_plan.schema.json",
     "run_summary.schema.json",
     "run_state.schema.json",
     "runtime_provenance.schema.json",

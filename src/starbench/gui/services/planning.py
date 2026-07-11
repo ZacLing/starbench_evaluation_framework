@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,7 +15,7 @@ from ...runner.task_loader import discover_tasks
 from .. import providers as providers_module, skills as skills_module
 from ..agents import DEFAULT_RUNTIMES_DIR, get_custom_agent
 from ..read_models.base import SAFE_ID
-from ..launcher import LaunchError, build_run_argv
+from ..launcher import LaunchError, build_run_argv, build_run_plan
 from ..skills import DEFAULT_SKILLS_DIR, SkillError
 from .errors import ExperimentError
 from .planning_inputs import (
@@ -350,8 +351,16 @@ def plan_experiment(
             "executor_skill_groups": executor_skill_group_ids or [],
             "executor_skill_root": str(skills_dir) if expanded_skill_ids else "",
         }
+        # Preferred transport: one typed run_plan file (see
+        # schemas/starbench/v1/run_plan.schema.json) instead of thirty flags.
+        # Free-form extra_args cannot ride a typed contract, so launches that
+        # use them honestly fall back to the argv transport.
+        plan_doc: Optional[Dict[str, Any]] = None
         try:
-            argv = build_run_argv(launch_payload, runs_dir=runs_dir)
+            if str(launch_payload.get("extra_args") or "").strip():
+                argv = build_run_argv(launch_payload, runs_dir=runs_dir)
+            else:
+                plan_doc = build_run_plan(launch_payload, runs_dir=runs_dir)
         except LaunchError as error:
             raise ExperimentError(f"Contender {label}: {error}")
 
@@ -389,18 +398,36 @@ def plan_experiment(
                     f"Contender {label}: assembled profile snapshot violates its "
                     f"contract: {error}"
                 )
-            if payload.get("dry_run"):
+            if plan_doc is not None:
+                # The snapshot rides inside the plan document — no second file.
+                plan_doc["profile_snapshot"] = snapshot
+            elif payload.get("dry_run"):
                 # Plan previews are read-only and may run on every form edit.
                 # Show the transport in argv without leaking one temp file per
                 # preview; the non-dry launch request materializes the snapshot.
-                snapshot_path = "<generated-at-launch>"
+                argv += ["--profile-snapshot", "<generated-at-launch>"]
             else:
                 fd, snapshot_path = tempfile.mkstemp(
                     prefix=f"starbench-profile-snapshot-{run_id}-", suffix=".json"
                 )
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     handle.write(json.dumps(snapshot, indent=2, sort_keys=True) + "\n")
-            argv += ["--profile-snapshot", snapshot_path]
+                argv += ["--profile-snapshot", snapshot_path]
+
+        if plan_doc is not None:
+            # Planning stays pure: the plan document travels on the item and
+            # launch_batch materializes it to a temp file at launch time. The
+            # placeholder keeps previews honest about the transport.
+            argv = [
+                sys.executable,
+                "-m",
+                "starbench.runner.run_benchmark",
+                "--runs-dir",
+                str(runs_dir),
+                "--no-progress",
+                "--plan",
+                "<generated-at-launch>",
+            ]
 
         executor_env_spec = contender.get("env") if isinstance(contender.get("env"), dict) else {}
         executor_provider = provider_by_id.get(
@@ -495,6 +522,9 @@ def plan_experiment(
                 "executor_skills": expanded_skill_ids,
                 "warnings": warnings,
                 "argv": argv,
+                # The typed launch contract this run starts from (null when the
+                # launch rides the argv transport, e.g. extra_args in play).
+                "run_plan": plan_doc,
             }
         )
 

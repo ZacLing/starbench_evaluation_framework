@@ -11,7 +11,7 @@ from unittest import mock
 from starbench.contracts import validate_payload
 from starbench.gui import data, experiments
 from starbench.gui.experiments import ExperimentError
-from helpers import make_run, write_json
+from helpers import launch_flags, make_run, write_json
 
 
 class ExperimentTest(unittest.TestCase):
@@ -80,7 +80,7 @@ class ExperimentTest(unittest.TestCase):
         run_ids = [item["run_id"] for item in plan["plans"]]
         self.assertEqual(run_ids, ["exp_demo__gpt-gpt-5-5", "exp_demo__claude-opus"])
         for item in plan["plans"]:
-            joined = " ".join(item["argv"])
+            joined = launch_flags(item)
             self.assertIn("--evaluator-agent codex", joined)
             self.assertIn("--evaluator-model gpt-5.5", joined)
             self.assertIn("--seed 7", joined)
@@ -93,7 +93,7 @@ class ExperimentTest(unittest.TestCase):
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         self.assertEqual(len(plan["plans"]), 2)
         for item in plan["plans"]:
-            joined = " ".join(item["argv"])
+            joined = launch_flags(item)
             self.assertIn("--max-evaluator-parallel 8", joined)
             self.assertIn("--claude-max-turns 30", joined)
 
@@ -125,8 +125,7 @@ class ExperimentTest(unittest.TestCase):
         )
 
         item = experiments.plan_experiment(payload, runs_dir=self.runs_dir)["plans"][0]
-        argv = item["argv"]
-        joined = " ".join(argv)
+        joined = launch_flags(item)
         self.assertIn("--executor-opencode-provider executor-provider", joined)
         self.assertIn("--executor-opencode-base-url https://executor.example/v1", joined)
         self.assertIn("--evaluator-opencode-provider judge-provider", joined)
@@ -150,17 +149,15 @@ class ExperimentTest(unittest.TestCase):
         )
         payload["shared"]["evaluator_agent"] = "codex"
 
-        argv = experiments.plan_experiment(payload, runs_dir=self.runs_dir)["plans"][0][
-            "argv"
-        ]
-        joined = " ".join(argv)
+        item = experiments.plan_experiment(payload, runs_dir=self.runs_dir)["plans"][0]
+        joined = launch_flags(item)
         self.assertIn("--executor-bin codex -c model_provider=gateway", joined)
-        self.assertNotIn("--evaluator-bin", argv)
+        self.assertNotIn("--evaluator-bin", joined)
 
     def test_claude_max_turns_omitted_when_unset(self) -> None:
         plan = experiments.plan_experiment(self.experiment_payload(), runs_dir=self.runs_dir)
         for item in plan["plans"]:
-            self.assertNotIn("--claude-max-turns", item["argv"])
+            self.assertNotIn("--claude-max-turns", launch_flags(item))
 
     def test_docker_backend_uses_one_image_per_runtime(self) -> None:
         payload = self.experiment_payload()
@@ -177,7 +174,7 @@ class ExperimentTest(unittest.TestCase):
             self.assertEqual(by_agent[agent]["backend"], "docker")
             self.assertFalse(by_agent[agent]["backend_downgraded"])
             self.assertEqual(by_agent[agent]["docker_image"], image)
-            self.assertIn(f"--docker-image {image}", " ".join(by_agent[agent]["argv"]))
+            self.assertIn(f"--docker-image {image}", launch_flags(by_agent[agent]))
 
     def test_compare_is_stateless_over_any_run_set(self) -> None:
         # No launch record required: any mix of existing and vanished runs
@@ -465,9 +462,9 @@ class ExperimentCustomRuntimeTest(unittest.TestCase):
         )
         by_agent = {item["agent"]: item for item in plan["plans"]}
         qwen = by_agent["custom:qwen-code"]
-        self.assertIn("--executor-agent custom:qwen-code", " ".join(qwen["argv"]))
-        self.assertIn("--executor-model qwen3-coder", " ".join(qwen["argv"]))
-        self.assertIn(f"--runtimes-dir {self.runtimes_dir}", " ".join(qwen["argv"]))
+        self.assertIn("--executor-agent custom:qwen-code", launch_flags(qwen))
+        self.assertIn("--executor-model qwen3-coder", launch_flags(qwen))
+        self.assertIn(f"--runtimes-dir {self.runtimes_dir}", launch_flags(qwen))
         self.assertEqual(qwen["backend"], "docker")
         self.assertFalse(qwen["backend_downgraded"])
         self.assertEqual(qwen["agent_label"], "Qwen Code")
@@ -551,7 +548,7 @@ class ExperimentCustomRuntimeTest(unittest.TestCase):
         )
         for item in plan["plans"]:
             self.assertIn("KIMI_HOME", item["env_keys"])
-            self.assertIn("--evaluator-agent custom:kimi-code", " ".join(item["argv"]))
+            self.assertIn("--evaluator-agent custom:kimi-code", launch_flags(item))
 
         # The same variable may have different role-scoped values.
         payload = self.payload(name="exp_custom2")
@@ -655,7 +652,7 @@ class ExperimentInstructionTest(unittest.TestCase):
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         self.assertEqual(len(plan["plans"]), 2)
         for item in plan["plans"]:
-            joined = " ".join(item["argv"])
+            joined = launch_flags(item)
             self.assertIn("--instruction-mode select", joined)
             self.assertIn("--instruction-step H001", joined)
 
@@ -726,7 +723,7 @@ class ExperimentInstructionTest(unittest.TestCase):
             shared_extra={"instruction_mode": "select", "instruction_steps": ["H003"]},
         )
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        self.assertIn("--instruction-step H003", " ".join(plan["plans"][0]["argv"]))
+        self.assertIn("--instruction-step H003", launch_flags(plan["plans"][0]))
 
     def test_traverse_and_ablation_reject_stepless_tasks_at_plan_time(self) -> None:
         # Verified semantics: the runner rejects the WHOLE run when a selected
@@ -766,7 +763,7 @@ class ExperimentInstructionTest(unittest.TestCase):
         # Every contender's argv carries the override; only runtimes without an
         # enforcement hook get the honesty warning.
         for item in plan["plans"]:
-            joined = " ".join(item["argv"])
+            joined = launch_flags(item)
             self.assertIn("--web-search deny", joined)
         self.assertFalse(
             [w for w in by_agent["codex"]["warnings"] if "web-search" in w]
@@ -789,7 +786,7 @@ class ExperimentInstructionTest(unittest.TestCase):
             ],
         )
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        joined = " ".join(plan["plans"][0]["argv"])
+        joined = launch_flags(plan["plans"][0])
         self.assertIn("--thinking-effort xhigh", joined)
         self.assertNotIn("--claude-thinking-effort", joined)
 
@@ -892,7 +889,7 @@ class ExperimentRigorTest(unittest.TestCase):
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         self.assertEqual(len(plan["plans"]), 2)
         for item in plan["plans"]:
-            joined = " ".join(item["argv"])
+            joined = launch_flags(item)
             self.assertIn("--rigor-mode select", joined)
             self.assertIn("--rigor G", joined)
             self.assertIn("--rigor H", joined)
@@ -901,7 +898,7 @@ class ExperimentRigorTest(unittest.TestCase):
         plan = experiments.plan_experiment(
             self.payload(["task_a", "task_b"]), runs_dir=self.runs_dir
         )
-        joined = " ".join(plan["plans"][0]["argv"])
+        joined = launch_flags(plan["plans"][0])
         self.assertNotIn("--rigor-mode", joined)
         self.assertNotIn("--rigor ", joined)
 
@@ -937,7 +934,7 @@ class ExperimentRigorTest(unittest.TestCase):
             shared_extra={"rigor_mode": "select", "rigors": ["K"]},
         )
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        self.assertIn("--rigor K", " ".join(plan["plans"][0]["argv"]))
+        self.assertIn("--rigor K", launch_flags(plan["plans"][0]))
 
     def test_rigor_does_not_change_execution_estimate(self) -> None:
         # Verified semantics: rigor injects into whatever variant the instruction
@@ -1074,28 +1071,26 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         return base
 
     @staticmethod
-    def snapshot_path_from(argv) -> str:
-        return argv[argv.index("--profile-snapshot") + 1]
+    def snapshot_from(item) -> dict:
+        """The transported measurement contract, regardless of transport."""
+        plan_doc = item.get("run_plan")
+        if plan_doc is not None:
+            return plan_doc["profile_snapshot"]
+        argv = item["argv"]
+        path = argv[argv.index("--profile-snapshot") + 1]
+        return json.loads(Path(path).read_text(encoding="utf-8"))
 
     def plan_snapshots(self, payload) -> list:
         """Plan the payload and return every contender's transported snapshot."""
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        return [
-            json.loads(
-                Path(self.snapshot_path_from(item["argv"])).read_text(encoding="utf-8")
-            )
-            for item in plan["plans"]
-        ]
+        return [self.snapshot_from(item) for item in plan["plans"]]
 
     def test_roster_profile_attaches_one_snapshot_per_contender(self) -> None:
         self.save_profile()
         plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
         self.assertEqual(len(plan["plans"]), 2)
-        paths = set()
         for item in plan["plans"]:
-            path = self.snapshot_path_from(item["argv"])
-            paths.add(path)
-            snapshot = json.loads(Path(path).read_text(encoding="utf-8"))
+            snapshot = self.snapshot_from(item)
             # The transported file honours the public contract as written.
             validate_payload("profile_snapshot.schema.json", snapshot)
             # This run's column corresponds to the launched contender.
@@ -1123,21 +1118,18 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
             serialized = json.dumps(snapshot)
             self.assertNotIn("sk-", serialized)
             self.assertNotIn('"api_key"', serialized)
-        self.assertEqual(len(paths), 2, "each contender gets its own snapshot file")
+        contenders = {self.snapshot_from(item)["contender"]["agent"] for item in plan["plans"]}
+        self.assertEqual(contenders, {"claude", "codex"}, "one snapshot per contender")
 
     def test_contender_snapshot_inlines_its_provider(self) -> None:
         self.save_profile()
         plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
         by_agent = {item["agent"]: item for item in plan["plans"]}
-        claude = json.loads(
-            Path(self.snapshot_path_from(by_agent["claude"]["argv"])).read_text(encoding="utf-8")
-        )
+        claude = self.snapshot_from(by_agent["claude"])
         self.assertEqual(claude["contender"]["provider_id"], "anthropic")
         self.assertEqual(claude["contender"]["base_url"], "https://api.anthropic.com")
         self.assertEqual(claude["contender"]["api_key_env"], "ANTHROPIC_API_KEY")
-        codex = json.loads(
-            Path(self.snapshot_path_from(by_agent["codex"]["argv"])).read_text(encoding="utf-8")
-        )
+        codex = self.snapshot_from(by_agent["codex"])
         # Official OpenAI provider: no base_url configured, key env still named.
         self.assertEqual(codex["contender"]["provider_id"], "openai")
         self.assertNotIn("base_url", codex["contender"])
@@ -1147,9 +1139,7 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         self.save_profile()
         self.save_profile(name="HSW sweep v2")  # rev 2
         plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
-        snapshot = json.loads(
-            Path(self.snapshot_path_from(plan["plans"][0]["argv"])).read_text(encoding="utf-8")
-        )
+        snapshot = self.snapshot_from(plan["plans"][0])
         self.assertEqual(snapshot["profile"]["rev"], 2)
         self.assertEqual(snapshot["profile"]["name"], "HSW sweep v2")
 
@@ -1158,6 +1148,7 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         plan = experiments.plan_experiment(self.payload(), runs_dir=self.runs_dir)
         for item in plan["plans"]:
             self.assertNotIn("--profile-snapshot", item["argv"])
+            self.assertNotIn("profile_snapshot", item["run_plan"])
 
     def test_payload_without_profile_launches_bare(self) -> None:
         self.save_profile()
@@ -1166,6 +1157,7 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         for item in plan["plans"]:
             self.assertNotIn("--profile-snapshot", item["argv"])
+            self.assertNotIn("profile_snapshot", item["run_plan"])
 
     def test_unknown_profile_id_rejected(self) -> None:
         self.save_profile()
@@ -1224,8 +1216,9 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
 
         make_temp.assert_not_called()
         for item in plan["plans"]:
-            marker = item["argv"].index("--profile-snapshot")
+            marker = item["argv"].index("--plan")
             self.assertEqual(item["argv"][marker + 1], "<generated-at-launch>")
+            self.assertIn("profile_snapshot", item["run_plan"])
 
     def test_label_only_change_is_not_a_deviation(self) -> None:
         # A contender label is display-only: renaming does not change what is
@@ -1273,11 +1266,7 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         self.assertIs(plan["profile_modified"], True)
         self.assertEqual(plan["profile_modified_fields"], ["task_set"])
-        snapshot = json.loads(
-            Path(self.snapshot_path_from(plan["plans"][0]["argv"])).read_text(
-                encoding="utf-8"
-            )
-        )
+        snapshot = self.snapshot_from(plan["plans"][0])
         validate_payload("profile_snapshot.schema.json", snapshot)
         self.assertIs(snapshot["modified"], True)
         self.assertEqual(snapshot["modified_fields"], ["task_set"])
@@ -1305,11 +1294,7 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
             plan["profile_modified_fields"],
             ["roster", "task_set", "judge_mode", "seed"],
         )
-        snapshot = json.loads(
-            Path(self.snapshot_path_from(plan["plans"][0]["argv"])).read_text(
-                encoding="utf-8"
-            )
-        )
+        snapshot = self.snapshot_from(plan["plans"][0])
         validate_payload("profile_snapshot.schema.json", snapshot)
         self.assertEqual(
             snapshot["modified_fields"], ["roster", "task_set", "judge_mode", "seed"]

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -217,6 +220,27 @@ class ConsoleApplication:
         )
         return ServiceResult(report, created=not dry_run and bool(report["valid"]))
 
+    @staticmethod
+    def _materialized_argv(item: Dict[str, Any]) -> List[str]:
+        """Write the item's run_plan to a temp file and point argv at it.
+
+        Planning is pure (the plan document rides the item; argv carries a
+        placeholder); the file exists only for the subprocess handoff and the
+        supervisor deletes it at terminal state. Argv-transport items pass
+        through unchanged."""
+        run_plan = item.get("run_plan")
+        if run_plan is None:
+            return item["argv"]
+        descriptor, plan_path = tempfile.mkstemp(
+            prefix=f"starbench-plan-{item['run_id']}-", suffix=".json"
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(run_plan, indent=2, sort_keys=True) + "\n")
+        return [
+            plan_path if token == "<generated-at-launch>" else token
+            for token in item["argv"]
+        ]
+
     def launch_batch(self, payload: Dict[str, Any]) -> ServiceResult:
         """Plan and launch one run per contender as a single transaction.
 
@@ -234,7 +258,7 @@ class ConsoleApplication:
         launch_specs = [
             {
                 "run_id": item["run_id"],
-                "argv": item["argv"],
+                "argv": self._materialized_argv(item),
                 "cwd": self.cwd,
                 "log_path": self.runs_dir / f"{item['run_id']}.launch.log",
                 "env_extra": scoped_launch_env(

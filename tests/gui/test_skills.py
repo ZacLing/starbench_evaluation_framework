@@ -11,7 +11,7 @@ from starbench.gui import experiments, skills
 from starbench.gui.experiments import ExperimentError
 from starbench.gui.launcher import LaunchError, build_run_argv
 from starbench.gui.skills import SkillError
-from helpers import write_json
+from helpers import launch_flags, write_json
 
 
 def make_skill_library(root: Path, entries, groups) -> None:
@@ -286,7 +286,7 @@ class ExperimentSkillTest(unittest.TestCase):
         plan = self.plan(payload)
         self.assertEqual(len(plan["plans"]), 2)
         for item in plan["plans"]:
-            joined = " ".join(item["argv"])
+            joined = launch_flags(item)
             self.assertIn("--executor-skill alpha-expert", joined)
             self.assertIn(f"--executor-skill-root {self.skills_dir}", joined)
             self.assertEqual(item["executor_skills"], ["alpha-expert"])
@@ -295,7 +295,7 @@ class ExperimentSkillTest(unittest.TestCase):
         payload = self.payload(shared_extra={"executor_skill_groups": ["core"]})
         plan = self.plan(payload)
         for item in plan["plans"]:
-            joined = " ".join(item["argv"])
+            joined = launch_flags(item)
             self.assertIn("--executor-skill-group core", joined)
             # The runner expands groups, so members are NOT also passed as ids.
             self.assertNotIn("--executor-skill alpha-expert", joined)
@@ -304,7 +304,7 @@ class ExperimentSkillTest(unittest.TestCase):
     def test_no_skills_selected_passes_no_flags(self) -> None:
         plan = self.plan(self.payload())
         for item in plan["plans"]:
-            self.assertNotIn("--executor-skill", " ".join(item["argv"]))
+            self.assertNotIn("--executor-skill", launch_flags(item))
             self.assertEqual(item["executor_skills"], [])
 
     def test_unknown_skill_id_rejected_at_plan_time(self) -> None:

@@ -50,8 +50,10 @@ console 与 core 之间只允许通过以下契约对话，全部落盘、全部
    相等性测试守护，两处必须同步修改。
 2. **`run_state.json`**——监督生命周期（含心跳、预约 token）。
 3. **`progress_events.jsonl`**——进行中观测（append-only，可 tail）。
-4. **run 启动接口**——现状是 argv 旗标（`gui/launcher.py` 拼装）；
-   规划中的 `run_plan.schema.json` + `--plan` 将取代它（见 §4 路线图）。
+4. **`run_plan.schema.json`**——类型化发射契约：`starbench-run --plan plan.json`
+   （互斥于逐旗标 argv；profile 快照内嵌其中；runner 将其物化为
+   `<run-root>/run_plan.json` 工件）。自由旗标逃生舱（extra_args）走
+   argv 传输（`gui/launcher.py` 渲染，与 plan 共享同一归一化校验）。
 
 推论：任何第三方（人、agent、CI 脚本）凭这四份契约即可替换 console，
 不需要 import 本仓库任何代码。新能力应优先扩展契约，而不是私开旁路。
@@ -75,9 +77,10 @@ console 与 core 之间只允许通过以下契约对话，全部落盘、全部
 2. ~~概念清算~~：experiment 实体已移除（对比 = 无状态 `/api/compare`，
    批次名记录在 `run_state.json`）；schema 双树由 `make sync-schemas` 派生
 3. ~~`gui/launcher.py` 拆分~~：argv 装配留在 `gui/launcher.py`，
-   进程监督器独立为 `gui/supervisor.py`
-4. `run_plan.schema.json` + `starbench-run --plan`；监督器迁 `lifecycle/`（core 侧）
-5. 前端大页 features/ 化（RunDetail 起）
+   进程监督器独立成模块
+4. ~~发射缝契约化~~：`run_plan.schema.json` + `--plan` 落地；
+   监督器已迁 `starbench/lifecycle/`（core 侧，console 是它的第一个客户）
+5. 前端大页 features/ 化（RunDetail 起）；UI 措辞清扫（experiment → launch/batch）
 
 ## 5. 文档地图
 

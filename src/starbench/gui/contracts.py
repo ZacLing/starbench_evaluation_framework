@@ -695,6 +695,9 @@ class _ExperimentPlanItemBase(TypedDict):
 
 class ExperimentPlanItem(_ExperimentPlanItemBase, total=False):
     docker_image: str
+    # The typed launch contract (run_plan.schema.json) this run starts from;
+    # null when the launch rides the argv transport (free-form extra_args).
+    run_plan: Optional[Dict[str, Any]]
     # Final, group-expanded skill ids injected into every contender (shared).
     executor_skills: List[str]
     # Auth mode the launch will use; the review-step preflight passes it

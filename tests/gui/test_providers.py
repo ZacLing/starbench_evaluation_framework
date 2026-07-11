@@ -12,7 +12,7 @@ from starbench.gui import experiments, providers
 from starbench.gui.experiments import ExperimentError
 from starbench.gui.launcher import resolve_env_spec
 from starbench.gui.providers import ProviderError
-from helpers import write_json
+from helpers import launch_flags, write_json
 
 
 class ProviderTest(unittest.TestCase):
@@ -476,7 +476,7 @@ class ProviderTest(unittest.TestCase):
             ],
         }
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        joined = " ".join(plan["plans"][0]["argv"])
+        joined = launch_flags(plan["plans"][0])
         self.assertIn("--executor-opencode-base-url https://b.example/v1", joined)
         self.assertIn("--evaluator-opencode-base-url https://a.example/v1", joined)
 
@@ -497,7 +497,7 @@ class ProviderTest(unittest.TestCase):
             ],
         }
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        joined = plan["plans"][0]["argv"]
+        joined = launch_flags(plan["plans"][0])
         self.assertIn("codex -c model_provider=openrouter", joined)
         self.assertNotIn("--evaluator-bin", joined)
 
@@ -521,7 +521,7 @@ class ProviderTest(unittest.TestCase):
             ],
         }
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
-        joined = " ".join(plan["plans"][0]["argv"])
+        joined = launch_flags(plan["plans"][0])
         self.assertIn("--evaluator-opencode-base-url https://a.example/v1", joined)
         self.assertIn("--evaluator-opencode-provider gw-a", joined)
 

@@ -454,6 +454,7 @@ export interface ExperimentPlanItem {
   warnings: string[]
   argv: string[]
   docker_image?: string
+  run_plan?: Record<string, unknown> | null
   executor_skills?: string[]
   executor_auth_mode?: string
   evaluator_agent?: string

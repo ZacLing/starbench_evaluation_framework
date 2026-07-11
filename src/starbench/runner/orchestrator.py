@@ -90,11 +90,14 @@ def write_profile_snapshot(run_root: Path, snapshot: Dict[str, Any]) -> Path:
     (plus the reservation handshake in ``.runner_claim``); every other file is
     written by the runner alone.
     """
-    target = run_root / "profile_snapshot.json"
-    body = json.dumps(snapshot, indent=2, sort_keys=True) + "\n"
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(run_root), prefix=".profile_snapshot-", suffix=".tmp"
-    )
+    return _atomic_write_run_json(run_root, "profile_snapshot.json", snapshot)
+
+
+def _atomic_write_run_json(run_root: Path, name: str, payload: Dict[str, Any]) -> Path:
+    """Temp-file + ``os.replace`` write of a run-root artifact."""
+    target = run_root / name
+    body = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    fd, tmp_name = tempfile.mkstemp(dir=str(run_root), prefix=f".{name}-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(body)
@@ -217,6 +220,11 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     # its measurement contract from the first moment the directory exists.
     if getattr(args, "profile_snapshot_data", None) is not None:
         write_profile_snapshot(run_root, args.profile_snapshot_data)
+    # A plan-launched run also materializes the exact launch request it was
+    # started from (credential-free by contract): full provenance without the
+    # plan temp file, which the supervisor deletes at terminal state.
+    if getattr(args, "run_plan_data", None) is not None:
+        _atomic_write_run_json(run_root, "run_plan.json", args.run_plan_data)
     selected_instruction_step_ids = task_runs[0].instruction_step_ids if args.instruction_mode == "select" and task_runs else []
     instruction_variants: List[Dict[str, Any]] = []
     seen_instruction_variants = set()
