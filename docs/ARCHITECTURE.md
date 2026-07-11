@@ -74,7 +74,8 @@ console 与 core 之间只允许通过以下契约对话，全部落盘、全部
 1. ~~fork 章程 + 文档收编~~（本文）
 2. ~~概念清算~~：experiment 实体已移除（对比 = 无状态 `/api/compare`，
    批次名记录在 `run_state.json`）；schema 双树由 `make sync-schemas` 派生
-3. `gui/launcher.py` 拆分：argv 构建器 / 进程监督器
+3. ~~`gui/launcher.py` 拆分~~：argv 装配留在 `gui/launcher.py`，
+   进程监督器独立为 `gui/supervisor.py`
 4. `run_plan.schema.json` + `starbench-run --plan`；监督器迁 `lifecycle/`（core 侧）
 5. 前端大页 features/ 化（RunDetail 起）
 

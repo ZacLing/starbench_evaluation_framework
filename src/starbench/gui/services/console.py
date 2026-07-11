@@ -12,11 +12,10 @@ from ..agents import DEFAULT_RUNTIMES_DIR
 from ..launcher import (
     AGENT_CHOICES,
     LaunchError,
-    LaunchRegistry,
     build_run_argv,
-    launch_transaction,
     scoped_launch_env,
 )
+from ..supervisor import LaunchRegistry, launch_transaction
 from ..skills import DEFAULT_SKILLS_DIR
 
 

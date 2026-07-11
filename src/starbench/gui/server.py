@@ -20,7 +20,8 @@ from urllib.parse import parse_qs, urlparse
 from . import data
 from .agents import AgentError, DEFAULT_RUNTIMES_DIR
 from .experiments import ExperimentError
-from .launcher import LaunchError, LaunchRegistry
+from .launcher import LaunchError
+from .supervisor import LaunchRegistry
 from .library import LibraryError
 from .providers import ProviderError
 from .services.console import ConsoleApplication

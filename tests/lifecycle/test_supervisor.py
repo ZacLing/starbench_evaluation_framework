@@ -14,7 +14,8 @@ from unittest import mock
 
 from starbench.domain import RUN_LAUNCH_TOKEN_ENV, RUN_STATE_FILENAME
 from starbench.execution.docker import build_docker_agent_command
-from starbench.gui.launcher import LaunchError, LaunchRegistry, launch_transaction
+from starbench.gui.launcher import LaunchError
+from starbench.gui.supervisor import LaunchRegistry, launch_transaction
 from starbench.runner.orchestrator import claim_run_root
 
 
@@ -392,7 +393,7 @@ class SupervisorTest(unittest.TestCase):
             completed([], 0, stdout="", stderr=""),
         ]
         with mock.patch(
-            "starbench.gui.launcher.subprocess.run", side_effect=responses
+            "starbench.gui.supervisor.subprocess.run", side_effect=responses
         ) as run:
             stopped = registry.stop("docker_run")
 
