@@ -31,8 +31,8 @@ from ..domain import (
     safe_child,
 )
 from ..execution.process import split_command
-from .fsio import atomic_write_json
-from .launcher import LaunchError
+from ..fsio import atomic_write_json
+from .errors import LaunchError
 
 
 class LaunchRegistry:

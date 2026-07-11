@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
-from ..fsio import atomic_write_json
+from ...fsio import atomic_write_json
 from ..read_models.base import SAFE_ID, _read_json
 from .errors import ExperimentError
 

@@ -1,6 +1,6 @@
 """Assemble validated `starbench-run` argv and launch env from a request.
 
-Process supervision lives in gui.supervisor; this module never spawns
+Process supervision lives in starbench.lifecycle; this module never spawns
 anything.
 """
 
@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from ..adapters import list_builtin
 from ..domain import INSTRUCTION_MODES, RIGOR_MODES
+from ..lifecycle import LaunchError
 from ..runner.env_scope import EXECUTOR_ENV_PREFIX, JUDGE_ENV_PREFIX
 from .read_models.base import SAFE_ID
 
@@ -24,10 +25,6 @@ AUTH_MODES = ("env", "global", "copy-auth")
 BACKENDS = ("local", "docker")
 THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 WEB_SEARCH_MODES = ("task", "allow", "deny")
-
-
-class LaunchError(ValueError):
-    pass
 
 
 def _require_choice(value: Any, choices: tuple, label: str) -> str:

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from ..fsio import atomic_write_json
+from ...fsio import atomic_write_json
 
 CATALOG_SCHEMA_VERSION = 1
 CATALOG_RELATIVE_PATH = Path(".starbench") / "run_catalog-v1.json"

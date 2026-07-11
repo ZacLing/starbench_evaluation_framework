@@ -15,7 +15,7 @@ from ..launcher import (
     build_run_argv,
     scoped_launch_env,
 )
-from ..supervisor import LaunchRegistry, launch_transaction
+from ...lifecycle import LaunchRegistry, launch_transaction
 from ..skills import DEFAULT_SKILLS_DIR
 
 

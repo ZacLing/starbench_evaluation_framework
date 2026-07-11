@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..fsio import atomic_write_json
+from ...fsio import atomic_write_json
 
 JSONL_INDEX_SCHEMA_VERSION = 1
 
