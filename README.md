@@ -7,6 +7,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
 ## What Is Included
 
 - Batch execution with `--seed`, `--batch-size`, `--repeat`, and deterministic task ordering.
+- A typed launch contract: `starbench-run --plan plan.json` takes one validated JSON file ([schemas/starbench/v1/run_plan.schema.json](schemas/starbench/v1/run_plan.schema.json)) instead of thirty flags, fails closed before any run state exists, and materializes the plan into the run directory for provenance. Flag-by-flag argv still works and shares the same validation.
 - Per-runtime Docker executor images for isolated execution (see [docs/docker.md](docs/docker.md)).
 - Independent executor and evaluator model selection, with separate auth modes and isolated executor/judge environment scopes.
 - Runtime selection for Codex, Claude Code, OpenCode, Grok Build, or Gemini CLI executors/evaluators.
@@ -16,7 +17,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
   - Use Grok Build for xAI Grok Build runs.
   - Use Gemini CLI for existing Gemini CLI environments.
 - Declarative custom runtimes (`custom:<id>`), with Qwen Code, Kimi Code CLI, and Trae Agent specs bundled in `runtimes/`.
-- `--thinking-effort {none,low,medium,high}` applied through each runtime's native reasoning switch where one exists (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`) and as a prompt-level instruction elsewhere.
+- `--thinking-effort {none,minimal,low,medium,high,xhigh,max}` applied through each runtime's native reasoning switch where one exists (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`) and as a prompt-level instruction elsewhere; each runtime declares which tiers it supports.
 - `--web-search {task,allow,deny}`: follow each task package's `allow_web_search` or override it for the run (enforced for Claude Code and Codex; other runtimes' own tooling decides).
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
@@ -27,7 +28,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - A default `tasks/` directory for user task packages.
 - Two sample task packages under `examples/tasks/`.
 - Unit and closed-loop fake-runner smoke tests that do not call a live model.
-- A local GUI console (`starbench-gui`): a four-step experiment wizard with readiness checks (broken task packages surfaced, CLI/credential/Docker preflight gating Launch), plus run browsing with rubric verdicts and traces.
+- A local GUI console (`starbench-gui`): a five-step launch wizard with readiness checks (broken task packages surfaced, CLI/credential/Docker preflight gating Launch), reusable measurement profiles (shared judge/seed/roster/task set, frozen into each run as `profile_snapshot.json`), a task-by-agent coverage matrix, run browsing with rubric verdicts and traces, and stateless side-by-side comparison of any runs (`/api/compare?runs=a,b,c`).
 
 ## Quick Start
 
@@ -65,6 +66,31 @@ starbench-run \
   --judge-mode single \
   --seed 123
 ```
+
+The same run as a typed plan file — one validated document instead of flags
+(`--plan` is exclusive; only `--runs-dir` and `--no-progress` may accompany it):
+
+```bash
+cat > plan.json <<'JSON'
+{
+  "schema_version": 1,
+  "run_id": "smoke_plan",
+  "tasks_dir": "examples/tasks",
+  "tasks": ["demo_python_cli"],
+  "executor_backend": "docker",
+  "docker_image": "starbench-codex:latest",
+  "auth_mode": "copy-auth",
+  "executor_model": "gpt-5.5",
+  "evaluator_model": "gpt-5.5",
+  "judge_mode": "single",
+  "seed": 123
+}
+JSON
+starbench-run --plan plan.json --runs-dir runs
+```
+
+An invalid plan (unknown key, wrong type, credential-shaped field) aborts at
+argument time with the exact contract violation; nothing is written to disk.
 
 Runtime convention:
 
@@ -176,8 +202,8 @@ Grok Build and Gemini CLI run host-local by default; both also ship Docker image
 Run-level knobs that apply to any of the above:
 
 ```text
---thinking-effort {none,low,medium,high}   reasoning effort, via each runtime's native
-                                           switch (Claude --effort, Codex
+--thinking-effort {none,minimal,low,       reasoning effort, via each runtime's native
+                   medium,high,xhigh,max}  switch (Claude --effort, Codex
                                            model_reasoning_effort, OpenCode --variant);
                                            prompt-level request for the rest
 --web-search {task,allow,deny}             follow the task package's allow_web_search,
@@ -186,6 +212,9 @@ Run-level knobs that apply to any of the above:
 --instruction-mode / --rigor-mode          expert-step sweeps and rigor prompt injection
                                            (see the docs below)
 ```
+
+Every knob above is also a field of the run plan (same names, underscores
+instead of dashes).
 
 For a no-cost local framework smoke test:
 
@@ -236,6 +265,9 @@ Each run writes to `runs/<run_id>/`.
 ```text
 runs/<run_id>/
   run_config.json
+  run_plan.json                     # plan-launched runs: the exact launch contract
+  profile_snapshot.json             # profile-launched runs: the frozen measurement contract
+  run_state.json                    # console-launched runs: supervision state (batch, heartbeat)
   progress_events.jsonl
   summary.json
   instruction_ablation_summary.json
