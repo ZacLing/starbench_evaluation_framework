@@ -437,6 +437,30 @@ def materialize_task(
     return paths
 
 
+# Docker isolation is currently implemented for the Codex runtime only; the
+# other executors always run as host-local subprocesses.
+DOCKER_CAPABLE_EXECUTORS = {"codex"}
+
+
+def resolve_executor_backend(agent: str, backend: str | None) -> str:
+    """Resolve the effective executor backend before any run state exists.
+
+    An unspecified backend defaults per runtime (docker for Codex, local for
+    everything else) instead of a global "docker" default that made every
+    non-Codex invocation abort mid-run, after the run directory was already
+    created. An explicit docker request for a runtime that cannot honor it is
+    rejected here, at argument time, for the same reason.
+    """
+    if backend is None:
+        return "docker" if agent in DOCKER_CAPABLE_EXECUTORS else "local"
+    if backend == "docker" and agent not in DOCKER_CAPABLE_EXECUTORS:
+        raise ValueError(
+            f"{agent} executor currently supports --executor-backend local; "
+            "Docker isolation is only implemented for the codex runtime."
+        )
+    return backend
+
+
 async def run_executor(
     task_run: TaskRunSpec,
     paths: Dict[str, Path],
@@ -1658,8 +1682,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--executor-backend",
         choices=["local", "docker"],
-        default="docker",
-        help="Run executor directly on the host or inside a per-task Docker container.",
+        default=None,
+        help=(
+            "Run executor directly on the host or inside a per-task Docker "
+            "container. Defaults per runtime: docker for codex, local for "
+            "runtimes without Docker support."
+        ),
     )
     parser.add_argument("--docker-bin", default="docker", help="Docker executable or shell-like command prefix.")
     parser.add_argument(
@@ -1725,6 +1753,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--rigor-mode select requires at least one --rigor")
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
+    try:
+        args.executor_backend = resolve_executor_backend(
+            args.executor_agent, args.executor_backend
+        )
+    except ValueError as error:
+        parser.error(str(error))
     args.tasks_dir = args.tasks_dir.resolve()
     args.runs_dir = args.runs_dir.resolve()
     args.executor_skill_root = args.executor_skill_root.resolve()

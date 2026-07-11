@@ -30,6 +30,7 @@ from starbench.runner.run_benchmark import (
     materialize_task,
     opencode_model_name,
     parse_args,
+    resolve_executor_backend,
 )
 from starbench.runner.task_loader import build_task_runs, load_task
 from starbench.skill_distiller.distill import resolve_source_task, write_skill
@@ -89,6 +90,34 @@ class TraceParserTests(unittest.TestCase):
         self.assertEqual(summary["command_executions"][0]["aggregated_output"], "122.1 400.591")
         self.assertEqual(summary["file_changes"][0]["changes"][0]["path"], "outputs/stellar_measure/README.md")
         self.assertEqual(summary["usage"]["output_tokens"], 2)
+
+
+class ExecutorBackendResolutionTests(unittest.TestCase):
+    def test_backend_defaults_per_runtime(self) -> None:
+        self.assertEqual(resolve_executor_backend("codex", None), "docker")
+        for agent in ("claude", "opencode", "grok", "gemini"):
+            with self.subTest(agent=agent):
+                self.assertEqual(resolve_executor_backend(agent, None), "local")
+
+    def test_explicit_backend_is_kept(self) -> None:
+        self.assertEqual(resolve_executor_backend("codex", "local"), "local")
+        self.assertEqual(resolve_executor_backend("codex", "docker"), "docker")
+        self.assertEqual(resolve_executor_backend("claude", "local"), "local")
+
+    def test_explicit_docker_for_unsupported_runtime_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "claude"):
+            resolve_executor_backend("claude", "docker")
+
+    def test_parse_args_resolves_backend_before_any_run_state(self) -> None:
+        args = parse_args(["--executor-agent", "claude"])
+        self.assertEqual(args.executor_backend, "local")
+        args = parse_args(["--executor-agent", "codex"])
+        self.assertEqual(args.executor_backend, "docker")
+        # Explicit docker for a runtime without Docker support must fail at
+        # argument time (SystemExit via parser.error), not mid-run after the
+        # run directory was created.
+        with self.assertRaises(SystemExit):
+            parse_args(["--executor-agent", "claude", "--executor-backend", "docker"])
 
 
 class AggregationTests(unittest.TestCase):
