@@ -33,7 +33,7 @@
 │   │   ├── server.py         路由层
 │   │   ├── services/         应用服务：planning（launch_batch 规划）、profiles、console
 │   │   ├── read_models/      只读视图：runs、coverage、compare、trace、catalog 缓存
-│   │   ├── launcher.py       发射请求归一化 → run_plan / argv 渲染（永不 spawn）
+│   │   ├── launcher.py       启动请求归一化 → run_plan / argv 渲染（永不 spawn）
 │   │   └── contracts.py      API TypedDict（gen-types 的源，生成 api-types.ts）
 │   ├── skills/ skill_distiller/ report/   executor 技能库 / 轨迹蒸馏 / 报告
 │   └── fsio.py               共享原子 JSON 写
@@ -90,7 +90,7 @@ console 与 core 之间只允许通过以下契约对话，全部落盘、全部
    相等性测试守护，两处必须同步修改。
 2. **`run_state.json`**——监督生命周期（含心跳、预约 token）。
 3. **`progress_events.jsonl`**——进行中观测（append-only，可 tail）。
-4. **`run_plan.schema.json`**——类型化发射契约：`starbench-run --plan plan.json`
+4. **`run_plan.schema.json`**——类型化启动契约：`starbench-run --plan plan.json`
    （互斥于逐旗标 argv；profile 快照内嵌其中；runner 将其物化为
    `<run-root>/run_plan.json` 工件）。自由旗标逃生舱（extra_args）走
    argv 传输（`gui/launcher.py` 渲染，与 plan 共享同一归一化校验）。
@@ -118,7 +118,7 @@ console 与 core 之间只允许通过以下契约对话，全部落盘、全部
    批次名记录在 `run_state.json`）；schema 双树由 `make sync-schemas` 派生
 3. ~~`gui/launcher.py` 拆分~~：argv 装配留在 `gui/launcher.py`，
    进程监督器独立成模块
-4. ~~发射缝契约化~~：`run_plan.schema.json` + `--plan` 落地；
+4. ~~启动缝契约化~~：`run_plan.schema.json` + `--plan` 落地；
    监督器已迁 `starbench/lifecycle/`（core 侧，console 是它的第一个客户）
 5. 前端大页 features/ 化（RunDetail 起）；UI 措辞清扫（experiment → launch/batch）
 

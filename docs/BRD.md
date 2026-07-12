@@ -461,9 +461,9 @@ StarBench 是本地/CLI 优先的评测框架，不是多租户 SaaS。
 
 - 优先级：P0
 - 功能描述：
-  - 一次批量发射 = 固定任务集 + 共享 judge/参数 + 多个 contenders。
+  - 一次批量启动 = 固定任务集 + 共享 judge/参数 + 多个 contenders。
   - 每个 contender 启动一个独立 `starbench-run`；批次名记录在各 run 的
-    `run_state.json`（无独立发射记录实体）。
+    `run_state.json`（无独立启动记录实体）。
 - 验收标准：
   - dry run 返回每个 contender 的 argv。
   - launch 后每个 contender 有独立 run id 和 launch log。
