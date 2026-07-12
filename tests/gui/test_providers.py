@@ -398,6 +398,68 @@ class ProviderTest(unittest.TestCase):
         self.assertEqual(provider["models_source"], "cli_cache")
         self.assertEqual(provider["models_fetched_at"], "2026-07-07T03:00:00Z")
 
+    def test_codex_cli_models_surface_per_model_reasoning_tables(self) -> None:
+        codex_home = self.tmp / "codex_home"
+        codex_home.mkdir()
+        (codex_home / "models_cache.json").write_text(
+            json.dumps(
+                {
+                    "fetched_at": "2026-07-11T03:00:00Z",
+                    "models": [
+                        {
+                            "slug": "gpt-5.6-terra",
+                            "default_reasoning_level": "medium",
+                            "supported_reasoning_levels": [
+                                {"effort": "low", "description": ""},
+                                {"effort": "medium", "description": ""},
+                                {"effort": "high", "description": ""},
+                                {"effort": "xhigh", "description": ""},
+                                {"effort": "max", "description": ""},
+                                {"effort": "ultra", "description": ""},
+                            ],
+                        },
+                        # A row without a published table gets no entry: the
+                        # console falls back to the runtime declaration.
+                        {"slug": "codex-auto-review"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        old_home = os.environ.get("CODEX_HOME")
+        os.environ["CODEX_HOME"] = str(codex_home)
+        try:
+            providers.save_providers(
+                self.runs_dir,
+                {
+                    "providers": [
+                        {
+                            "id": "openai-cli",
+                            "name": "OpenAI (CLI login)",
+                            "kind": "openai",
+                            "auth": "cli_login",
+                            "models": [],
+                        }
+                    ]
+                },
+            )
+            loaded = providers.load_providers(self.runs_dir)
+        finally:
+            if old_home is None:
+                del os.environ["CODEX_HOME"]
+            else:
+                os.environ["CODEX_HOME"] = old_home
+        provider = loaded["providers"][0]
+        self.assertEqual(
+            provider["model_reasoning"],
+            {
+                "gpt-5.6-terra": {
+                    "levels": ["low", "medium", "high", "xhigh", "max", "ultra"],
+                    "default_level": "medium",
+                }
+            },
+        )
+
     def test_cli_login_status_uses_runtime_status_command(self) -> None:
         original_which = providers.shutil.which
         original_run = providers.subprocess.run

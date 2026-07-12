@@ -134,6 +134,11 @@ export interface CliAuthStatus {
   message: string
 }
 
+export interface ModelReasoning {
+  levels: string[]
+  default_level: string | null
+}
+
 export interface AiProvider {
   id: string
   name: string
@@ -149,6 +154,7 @@ export interface AiProvider {
   anthropic_base_url?: string | null
   gemini_base_url?: string | null
   cli_status?: CliAuthStatus
+  model_reasoning?: Record<string, ModelReasoning>
 }
 
 export interface ProvidersPayload {

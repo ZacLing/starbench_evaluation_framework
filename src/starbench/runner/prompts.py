@@ -22,7 +22,8 @@ from pathlib import Path
 from .models import Rubric, TaskRunSpec, TaskSpec
 
 THINKING_EFFORT_INSTRUCTIONS = {
-    "none": "",
+    "default": "",  # leave the model's own reasoning behavior alone
+    "none": "",  # legacy spelling of "default"
     "low": "Before responding, think carefully about the task and check for obvious gaps.",
     "medium": "Before responding, think through the task carefully, including constraints, edge cases, and verification steps.",
     "high": "Before responding, think deeply about the task. Build a complete plan, inspect relevant evidence, consider failure modes and alternatives, and self-check the final deliverable before finishing.",

@@ -104,7 +104,7 @@ export default function NewRun() {
       (runtime.startsWith("custom:")
         ? customByRuntime[runtime]?.thinking_efforts
         : agentsQuery.data?.builtin.find((agent) => agent.id === runtime)?.thinking_efforts) ?? [
-        "none",
+        "default",
         "low",
         "medium",
         "high",

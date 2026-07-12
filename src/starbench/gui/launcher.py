@@ -17,6 +17,8 @@ from ..domain import INSTRUCTION_MODES, RIGOR_MODES
 from ..lifecycle import LaunchError
 from ..contracts import ContractValidationError, validate_payload
 from ..runner.cli import PLAN_LIST_FLAGS
+from ..domain import THINKING_EFFORTS as VOCAB_THINKING_EFFORTS
+from ..domain import canonical_thinking_effort
 from ..runner.env_scope import EXECUTOR_ENV_PREFIX, JUDGE_ENV_PREFIX
 from .read_models.base import SAFE_ID
 
@@ -25,7 +27,7 @@ AGENT_CHOICES = tuple(adapter.info.id for adapter in list_builtin())
 JUDGE_MODES = ("both", "single", "parallel")
 AUTH_MODES = ("env", "global", "copy-auth")
 BACKENDS = ("local", "docker")
-THINKING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+THINKING_EFFORTS = VOCAB_THINKING_EFFORTS
 WEB_SEARCH_MODES = ("task", "allow", "deny")
 
 
@@ -158,8 +160,10 @@ def _normalized_launch(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, 
                 value = _require_choice(value, AUTH_MODES, key)
             plan[key] = value
 
-    thinking = str(payload.get("thinking_effort") or "").strip()
-    if thinking and thinking != "none":
+    # "default" (and its legacy spelling "none") is the runner default: leave
+    # it out of the plan instead of restating it.
+    thinking = canonical_thinking_effort(str(payload.get("thinking_effort") or "").strip())
+    if thinking and thinking != "default":
         plan["thinking_effort"] = _require_choice(thinking, THINKING_EFFORTS, "thinking effort")
 
     web_search = str(payload.get("web_search") or "").strip()

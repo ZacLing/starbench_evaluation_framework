@@ -66,13 +66,15 @@
         "thinking_effort": {
           "type": "string",
           "enum": [
-            "none",
+            "default",
             "minimal",
             "low",
             "medium",
             "high",
             "xhigh",
-            "max"
+            "max",
+            "ultra",
+            "none"
           ]
         },
         "auth_mode": {
@@ -119,13 +121,15 @@
           "thinking_effort": {
             "type": "string",
             "enum": [
-              "none",
+              "default",
               "minimal",
               "low",
               "medium",
               "high",
               "xhigh",
-              "max"
+              "max",
+              "ultra",
+              "none"
             ]
           },
           "auth_mode": {

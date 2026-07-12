@@ -61,7 +61,7 @@ class ConsoleApplication:
             "judge_modes": ["single", "parallel", "both"],
             "auth_modes": ["env", "global", "copy-auth"],
             "backends": ["local", "docker"],
-            "thinking_efforts": ["none", "low", "medium", "high"],
+            "thinking_efforts": ["default", "low", "medium", "high"],
         }
 
     def list_runs(self) -> Dict[str, Any]:

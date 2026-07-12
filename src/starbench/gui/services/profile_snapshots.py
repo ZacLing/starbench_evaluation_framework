@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...contracts import ARTIFACT_SCHEMA_VERSION
+from ...domain import canonical_thinking_effort
 from .errors import ExperimentError
 from .planning_inputs import _resolve_selected_steps
 
@@ -64,7 +65,7 @@ def _roster_comparison_key(entry: Dict[str, Any]) -> Tuple[str, str, str, str]:
         str(entry.get("agent") or ""),
         str(entry.get("model") or "").strip(),
         str(entry.get("provider_id") or ""),
-        str(entry.get("thinking_effort") or "none"),
+        canonical_thinking_effort(str(entry.get("thinking_effort") or "default")),
     )
 
 

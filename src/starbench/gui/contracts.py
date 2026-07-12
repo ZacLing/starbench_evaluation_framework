@@ -185,10 +185,23 @@ class CliAuthStatus(TypedDict):
     message: str
 
 
+class ModelReasoning(TypedDict):
+    """One model's published reasoning-effort table (from the runtime's own
+    model catalog, e.g. Codex's models_cache.json). Levels are tier names in
+    the CLI's own vocabulary; ``default_level`` is what runs when the launch
+    says "default"."""
+
+    levels: List[str]
+    default_level: Optional[str]
+
+
 class AiProvider(_AiProviderBase, total=False):
     anthropic_base_url: Optional[str]
     gemini_base_url: Optional[str]
     cli_status: CliAuthStatus
+    # Per-model reasoning tables, present only when the provider's runtime
+    # publishes them (currently: Codex CLI-login via its local models cache).
+    model_reasoning: Dict[str, ModelReasoning]
 
 
 class _ProvidersPayloadBase(TypedDict):
@@ -1345,6 +1358,7 @@ GENERATED_TYPES = [
     "CustomRuntime",
     "AgentsPayload",
     "CliAuthStatus",
+    "ModelReasoning",
     "AiProvider",
     "ProvidersPayload",
     "ProviderCliStatusPayload",

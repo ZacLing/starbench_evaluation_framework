@@ -7,4 +7,25 @@ wizard metadata can never drift apart.
 INSTRUCTION_MODES = ("none", "traverse", "select", "ablation")
 RIGOR_MODES = ("none", "select")
 
-__all__ = ["INSTRUCTION_MODES", "RIGOR_MODES"]
+# Thinking-effort tiers, shallow to deep. "default" means "leave the
+# runtime/model default alone" — no switch is passed and no prompt instruction
+# is injected. Each runtime narrows this to the tiers its CLI accepts
+# (RuntimeInfo.thinking_efforts); models can narrow further via their own
+# published level tables. "none" is the legacy spelling of "default" and is
+# still accepted at every input boundary.
+THINKING_EFFORTS = ("default", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+LEGACY_THINKING_EFFORT = "none"
+
+
+def canonical_thinking_effort(value: str) -> str:
+    """Fold the legacy "none" spelling into "default"; pass everything else through."""
+    return "default" if value == LEGACY_THINKING_EFFORT else value
+
+
+__all__ = [
+    "INSTRUCTION_MODES",
+    "RIGOR_MODES",
+    "THINKING_EFFORTS",
+    "LEGACY_THINKING_EFFORT",
+    "canonical_thinking_effort",
+]

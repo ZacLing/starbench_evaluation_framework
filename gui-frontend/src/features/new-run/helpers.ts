@@ -1,5 +1,37 @@
-import type { Profile } from "@/lib/api"
+import type { AiProvider, ModelReasoning, Profile } from "@/lib/api"
 import type { LibraryRef } from "./types"
+
+/* "default" = leave the runtime/model default alone. Legacy drafts and
+   profiles spell it "none"; canonicalEffort folds that in one place. */
+export const DEFAULT_EFFORT = "default"
+
+export function canonicalEffort(value: string | undefined | null): string {
+  return !value || value === "none" ? DEFAULT_EFFORT : value
+}
+
+/* The model's own published effort table (from the runtime's model catalog,
+   surfaced on the provider). Null → the UI falls back to the runtime's
+   declared level set. */
+export function modelEffortTable(
+  provider: AiProvider | undefined,
+  model: string | undefined,
+): ModelReasoning | null {
+  if (!provider || !model) return null
+  return provider.model_reasoning?.[model] ?? null
+}
+
+/* The options the effort picker offers for one contender: the model's own
+   table when it publishes one, otherwise the runtime declaration. "default"
+   is always offered first. */
+export function effortOptions(
+  provider: AiProvider | undefined,
+  model: string | undefined,
+  runtimeEfforts: string[],
+): { efforts: string[]; catalog: ModelReasoning | null } {
+  const catalog = modelEffortTable(provider, model)
+  if (!catalog) return { efforts: runtimeEfforts.map(canonicalEffort), catalog: null }
+  return { efforts: [DEFAULT_EFFORT, ...catalog.levels], catalog }
+}
 
 export function resolveLibraryDir(
   tasksDir: string,

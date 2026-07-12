@@ -261,14 +261,29 @@ def _codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
 
 
-def _codex_models_from_cache() -> Tuple[List[str], Optional[str]]:
+def _codex_model_reasoning(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """One model's published reasoning-effort table, when the cache row has one."""
+    levels = [
+        str(entry.get("effort") or "").strip()
+        for entry in row.get("supported_reasoning_levels") or []
+        if isinstance(entry, dict)
+    ]
+    levels = [level for level in levels if level]
+    if not levels:
+        return None
+    default_level = str(row.get("default_reasoning_level") or "").strip() or None
+    return {"levels": levels, "default_level": default_level}
+
+
+def _codex_models_from_cache() -> Tuple[List[str], Optional[str], Dict[str, Any]]:
     path = _codex_home() / "models_cache.json"
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return [], None
+        return [], None, {}
     rows = payload.get("models") if isinstance(payload, dict) else None
     models: List[str] = []
+    reasoning: Dict[str, Any] = {}
     for row in rows or []:
         if isinstance(row, str):
             model = row.strip()
@@ -276,19 +291,27 @@ def _codex_models_from_cache() -> Tuple[List[str], Optional[str]]:
             model = str(row.get("slug") or row.get("id") or row.get("model") or "").strip()
         else:
             model = ""
-        if model:
-            models.append(model)
-    return list(dict.fromkeys(models)), str(payload.get("fetched_at") or "") or None
+        if not model:
+            continue
+        models.append(model)
+        if isinstance(row, dict):
+            table = _codex_model_reasoning(row)
+            if table:
+                reasoning[model] = table
+    fetched_at = str(payload.get("fetched_at") or "") or None
+    return list(dict.fromkeys(models)), fetched_at, reasoning
 
 
-def _cli_model_snapshot(provider: Dict[str, Any]) -> Optional[Tuple[List[str], Optional[str]]]:
+def _cli_model_snapshot(
+    provider: Dict[str, Any],
+) -> Optional[Tuple[List[str], Optional[str], Dict[str, Any]]]:
     if provider.get("auth") != "cli_login":
         return None
     agent = KIND_TO_CLI_AGENT.get(str(provider.get("kind") or ""))
     if agent == "codex":
-        models, fetched_at = _codex_models_from_cache()
+        models, fetched_at, reasoning = _codex_models_from_cache()
         if models:
-            return models, fetched_at
+            return models, fetched_at, reasoning
     return None
 
 
@@ -412,9 +435,10 @@ def _decorate(provider: Dict[str, Any], *, include_cli_status: bool = False) -> 
     models = _normalize_catalog_models(provider)
     models_fetched_at = provider.get("models_fetched_at")
     models_source = provider.get("models_source")
+    model_reasoning: Dict[str, Any] = {}
     cli_snapshot = _cli_model_snapshot(provider)
     if cli_snapshot:
-        models, models_fetched_at = cli_snapshot
+        models, models_fetched_at, model_reasoning = cli_snapshot
         models_source = "cli_cache"
     decorated = {
         "auth": "api_key",
@@ -429,6 +453,8 @@ def _decorate(provider: Dict[str, Any], *, include_cli_status: bool = False) -> 
         "agent": agent,
         "key_present": bool(api_key_env and os.environ.get(api_key_env)),
     }
+    if model_reasoning:
+        decorated["model_reasoning"] = model_reasoning
     if include_cli_status and decorated["auth"] == "cli_login":
         decorated["cli_status"] = _cli_login_status(agent)
     return decorated
@@ -654,7 +680,9 @@ def _refresh_provider_models_locked(runs_dir: Path, provider_id: str) -> Dict[st
     if models is None:
         cli_snapshot = _cli_model_snapshot(target)
         if cli_snapshot:
-            models, fetched_at = cli_snapshot
+            # Reasoning tables are not persisted: _decorate re-reads the live
+            # cache on every load, so the stored snapshot stays models-only.
+            models, fetched_at, _reasoning = cli_snapshot
             source = "cli_cache"
     if models is None:
         try:

@@ -17,7 +17,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
   - Use Grok Build for xAI Grok Build runs.
   - Use Gemini CLI for existing Gemini CLI environments.
 - Declarative custom runtimes (`custom:<id>`), with Qwen Code, Kimi Code CLI, and Trae Agent specs bundled in `runtimes/`.
-- `--thinking-effort {none,minimal,low,medium,high,xhigh,max}` applied through each runtime's native reasoning switch where one exists (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`) and as a prompt-level instruction elsewhere; each runtime declares which tiers it supports.
+- `--thinking-effort {default,minimal,low,medium,high,xhigh,max,ultra}` applied through each runtime's native reasoning switch where one exists (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`) and as a prompt-level instruction elsewhere. `default` leaves the runtime/model default alone (`none` is its deprecated spelling); each runtime declares which tiers it supports, and the console narrows the choice further to the selected model's own published level table where the runtime ships one (Codex model catalog).
 - `--web-search {task,allow,deny}`: follow each task package's `allow_web_search` or override it for the run (enforced for Claude Code and Codex; other runtimes' own tooling decides).
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
@@ -202,10 +202,11 @@ Grok Build and Gemini CLI run host-local by default; both also ship Docker image
 Run-level knobs that apply to any of the above:
 
 ```text
---thinking-effort {none,minimal,low,       reasoning effort, via each runtime's native
-                   medium,high,xhigh,max}  switch (Claude --effort, Codex
-                                           model_reasoning_effort, OpenCode --variant);
-                                           prompt-level request for the rest
+--thinking-effort {default,minimal,low,    reasoning effort, via each runtime's native
+                   medium,high,xhigh,       switch (Claude --effort, Codex
+                   max,ultra}               model_reasoning_effort, OpenCode --variant);
+                                           prompt-level request for the rest;
+                                           "default" = leave the model default alone
 --web-search {task,allow,deny}             follow the task package's allow_web_search,
                                            or force it on/off for the whole run
                                            (enforced for Claude Code and Codex)

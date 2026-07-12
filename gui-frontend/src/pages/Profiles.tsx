@@ -43,6 +43,7 @@ import {
   runtimeFilters,
 } from "@/components/brand"
 import { CredentialStatus } from "@/components/credential-status"
+import { canonicalEffort, effortOptions } from "@/features/new-run/helpers"
 import { Hint } from "@/components/hint"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { ErrorNote } from "@/components/error-note"
@@ -134,7 +135,7 @@ const BACKEND_GLOSS: Record<string, string> = {
   docker: "each task isolated in its own container",
 }
 
-const THINKING_DEFAULT = "none"
+const THINKING_DEFAULT = "default"
 
 function GlossSelectItem({ value, gloss }: { value: string; gloss?: string }) {
   return (
@@ -153,7 +154,7 @@ function runtimeLabelOf(refs: RuntimeRef[], id: string | undefined): string {
 }
 
 function thinkingEffortsOf(refs: RuntimeRef[], id: string | undefined): string[] {
-  return refs.find((r) => r.id === id)?.thinking_efforts ?? ["none", "low", "medium", "high"]
+  return refs.find((r) => r.id === id)?.thinking_efforts ?? ["default", "low", "medium", "high"]
 }
 
 function ProfileSummaryStrip({ value }: { value: Draft }) {
@@ -283,7 +284,7 @@ function fromDraft(draft: Draft): Profile {
     if (entry.model) out.model = entry.model
     if (entry.provider_id) out.provider_id = entry.provider_id
     if (entry.label) out.label = entry.label
-    if (entry.thinking_effort && entry.thinking_effort !== THINKING_DEFAULT)
+    if (canonicalEffort(entry.thinking_effort) !== THINKING_DEFAULT)
       out.thinking_effort = entry.thinking_effort
     return out
   })
@@ -746,7 +747,8 @@ function ProfileEditor({
   }
   const normalizeThinkingEffort = (agent: string, effort?: string) => {
     const efforts = thinkingEffortsOf(refs, agent)
-    return effort && efforts.includes(effort) ? effort : defaultThinkingEffort(agent)
+    const canonical = canonicalEffort(effort)
+    return efforts.includes(canonical) ? canonical : defaultThinkingEffort(agent)
   }
 
   const setRoster = (roster: RosterEntry[]) => patch({ roster, hasRoster: true })
@@ -871,11 +873,18 @@ function ProfileEditor({
                 </div>
                 <div className="divide-y">
                   {(value.roster ?? []).map((entry, index) => {
-                    const thinkingEfforts = thinkingEffortsOf(refs, entry.agent)
-                    const thinkingValue = normalizeThinkingEffort(
-                      entry.agent,
-                      entry.thinking_effort,
+                    const rosterProvider = providers.find(
+                      (item) => item.id === entry.provider_id,
                     )
+                    const { efforts: thinkingEfforts, catalog: effortCatalog } = effortOptions(
+                      rosterProvider,
+                      entry.model,
+                      thinkingEffortsOf(refs, entry.agent),
+                    )
+                    const canonicalValue = canonicalEffort(entry.thinking_effort)
+                    const thinkingValue = thinkingEfforts.includes(canonicalValue)
+                      ? canonicalValue
+                      : THINKING_DEFAULT
                     return (
                       <div
                         key={index}
@@ -936,9 +945,21 @@ function ProfileEditor({
                             model={entry.model ?? ""}
                             providerFilter={filters[entry.agent]}
                             runtimeId={entry.agent}
-                            onChange={({ provider, model }) =>
-                              updateRoster(index, { provider_id: provider.id, model })
-                            }
+                            onChange={({ provider, model }) => {
+                              const next = effortOptions(
+                                provider,
+                                model,
+                                thinkingEffortsOf(refs, entry.agent),
+                              )
+                              const keep = next.efforts.includes(
+                                canonicalEffort(entry.thinking_effort),
+                              )
+                              updateRoster(index, {
+                                provider_id: provider.id,
+                                model,
+                                ...(keep ? {} : { thinking_effort: THINKING_DEFAULT }),
+                              })
+                            }}
                           />
                         </Field>
 
@@ -955,9 +976,16 @@ function ProfileEditor({
                             <SelectContent>
                               {thinkingEfforts.map((effort) => (
                                 <SelectItem key={effort} value={effort} className="font-mono text-xs">
-                                  {effort}
+                                  {effort === THINKING_DEFAULT && effortCatalog?.default_level
+                                    ? `default · ${effortCatalog.default_level}`
+                                    : effort}
                                 </SelectItem>
                               ))}
+                              <div className="border-t px-2 py-1.5 text-[11px] text-muted-foreground">
+                                {effortCatalog
+                                  ? "levels from the model catalog"
+                                  : "runtime-declared levels — no model catalog"}
+                              </div>
                             </SelectContent>
                           </Select>
                         </Field>

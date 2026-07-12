@@ -87,8 +87,8 @@ def build_claude_print_command(
     if model:
         command.extend(["--model", model])
     # Claude Code's native reasoning switch (adaptive-thinking effort level);
-    # "none" leaves the CLI's own default alone.
-    if effort and effort != "none":
+    # "default" (legacy "none") leaves the CLI's own default alone.
+    if effort and effort not in ("default", "none"):
         command.extend(["--effort", effort])
     if permission_mode:
         command.extend(["--permission-mode", permission_mode])
@@ -207,7 +207,7 @@ class ClaudeAdapter(RuntimeAdapter):
         # Claude Code's own --effort switch (adaptive-thinking effort level);
         # levels are the CLI's real set, verified against `claude --help`.
         thinking_channel="native_config",
-        thinking_efforts=("none", "low", "medium", "high", "xhigh", "max"),
+        thinking_efforts=("default", "low", "medium", "high", "xhigh", "max"),
     )
 
     def executor_skill_prompt_location(self) -> str:

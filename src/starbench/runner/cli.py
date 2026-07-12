@@ -26,7 +26,14 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..adapters import BUILTIN_AGENTS, DEFAULT_DOCKER_IMAGES, resolve
 from ..contracts import ContractValidationError, validate_payload
-from ..domain import INSTRUCTION_MODES, RIGOR_MODES, parse_safe_id
+from ..domain import (
+    INSTRUCTION_MODES,
+    LEGACY_THINKING_EFFORT,
+    RIGOR_MODES,
+    THINKING_EFFORTS,
+    canonical_thinking_effort,
+    parse_safe_id,
+)
 from .custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .orchestrator import run_benchmark
 
@@ -197,20 +204,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--thinking-effort",
         dest="thinking_effort",
-        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-        default="none",
+        choices=[*THINKING_EFFORTS, LEGACY_THINKING_EFFORT],
+        default="default",
         help=(
             "Reasoning effort for the executor, applied through each runtime's native switch "
             "where one exists (Claude Code --effort: low..max; Codex model_reasoning_effort: "
-            "minimal..xhigh; OpenCode --variant) and as a prompt-level instruction for the "
-            "rest (low/medium/high). Levels a runtime does not support are rejected at start."
+            "minimal..ultra; OpenCode --variant) and as a prompt-level instruction for the "
+            "rest (low/medium/high). 'default' leaves the runtime/model default alone "
+            "('none' is its deprecated spelling). Levels a runtime does not support are "
+            "rejected at start."
         ),
     )
     parser.add_argument(
         "--claude-thinking-effort",
         dest="thinking_effort",
-        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-        default="none",
+        choices=[*THINKING_EFFORTS, LEGACY_THINKING_EFFORT],
+        default="default",
         help="Deprecated alias for --thinking-effort.",
     )
     parser.add_argument(
@@ -359,6 +368,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         tokens, run_plan_data = _expand_plan_argv(tokens, parser)
     args = parser.parse_args(tokens)
     args.run_plan_data = run_plan_data
+    # Legacy spelling: old plans/scripts say "none"; everything downstream
+    # (adapters, artifacts, validation) sees only the canonical "default".
+    args.thinking_effort = canonical_thinking_effort(args.thinking_effort)
     if args.run_id is not None:
         try:
             args.run_id = parse_safe_id(args.run_id, kind="run id")

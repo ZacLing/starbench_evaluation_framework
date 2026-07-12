@@ -369,7 +369,7 @@ function TaskHistoryConfigLine({
     config.judge_mode,
     config.executor_backend,
     config.instruction_mode && config.instruction_mode !== "none" ? config.instruction_mode : "",
-    config.thinking_effort && config.thinking_effort !== "none"
+    config.thinking_effort && !["none", "default"].includes(config.thinking_effort)
       ? `think ${config.thinking_effort}`
       : "",
     config.repeat && config.repeat > 1 ? `x${config.repeat}` : "",

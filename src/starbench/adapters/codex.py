@@ -97,9 +97,9 @@ def build_codex_exec_command(
     command.append("exec")
     if model:
         command.extend(["-m", model])
-    # Codex's native reasoning switch ("low"/"medium"/"high"); "none" means
-    # leave the model's default alone rather than forcing a floor.
-    if reasoning_effort and reasoning_effort != "none":
+    # Codex's native reasoning switch; "default" (legacy "none") means leave
+    # the model's default alone rather than forcing a floor.
+    if reasoning_effort and reasoning_effort not in ("default", "none"):
         command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
     command.extend(
         [
@@ -253,10 +253,12 @@ class CodexAdapter(RuntimeAdapter):
         provider_filter=ProviderFilter(kinds=("openai", "openai-compatible")),
         injection=InjectionChannel(kind="codex_config", default_api_key_env="OPENAI_API_KEY"),
         # Codex's own model_reasoning_effort config: a real switch, not a
-        # prompt request. xhigh is model-dependent; Codex coerces unsupported
-        # levels to the nearest one the model accepts.
+        # prompt request. The upper tiers are model-dependent (gpt-5.6 ships
+        # max/ultra); Codex coerces unsupported levels to the nearest one the
+        # model accepts, and each model's real table comes from the CLI's
+        # models cache (surfaced per-model by the console).
         thinking_channel="native_config",
-        thinking_efforts=("none", "minimal", "low", "medium", "high", "xhigh"),
+        thinking_efforts=("default", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
     )
 
     def executor_skill_prompt_location(self) -> str:
@@ -350,7 +352,7 @@ class CodexAdapter(RuntimeAdapter):
         return await run_codex_process(
             command,
             cwd=judge_workspace,
-            prompt=append_thinking_instruction(base_prompt, "none"),
+            prompt=append_thinking_instruction(base_prompt, "default"),
             env=env,
             stdout_path=events_path,
             stderr_path=stderr_path,

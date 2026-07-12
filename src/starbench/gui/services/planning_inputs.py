@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...adapters import list_builtin
-from ...domain import INSTRUCTION_MODES, RIGOR_MODES
+from ...domain import INSTRUCTION_MODES, RIGOR_MODES, canonical_thinking_effort
 from .. import injection
 from ..agents import get_custom_agent
 from ..read_models.base import _read_json
@@ -18,10 +18,10 @@ _BUILTIN_INFO = {adapter.info.id: adapter.info for adapter in list_builtin()}
 DOCKER_CAPABLE_AGENTS = {info.id for info in _BUILTIN_INFO.values() if info.docker_capable}
 JUDGE_ENV_SENSITIVE = {info.id: info.judge_sensitive_env for info in _BUILTIN_INFO.values()}
 THINKING_EFFORTS_BY_AGENT = {info.id: info.thinking_efforts for info in _BUILTIN_INFO.values()}
-PROMPT_THINKING_EFFORTS = ("none", "low", "medium", "high")
+PROMPT_THINKING_EFFORTS = ("default", "low", "medium", "high")
 
 def _validated_thinking_effort(agent: str, contender: Dict[str, Any], label: str) -> str:
-    effort = str(contender.get("thinking_effort") or "none")
+    effort = canonical_thinking_effort(str(contender.get("thinking_effort") or "default"))
     supported = THINKING_EFFORTS_BY_AGENT.get(agent, PROMPT_THINKING_EFFORTS)
     if effort not in supported:
         raise ExperimentError(

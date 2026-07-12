@@ -61,8 +61,9 @@ def build_opencode_run_command(
         command.extend(["--model", model])
     # OpenCode's native reasoning switch: `--variant` picks a built-in
     # provider variant (OpenAI ships low/medium/high; unknown names are
-    # ignored by the CLI). "none" leaves the model's default alone.
-    if variant and variant != "none":
+    # ignored by the CLI). "default" (legacy "none") leaves the model's
+    # default alone.
+    if variant and variant not in ("default", "none"):
         command.extend(["--variant", variant])
     command.append("--dangerously-skip-permissions")
     return command
@@ -253,7 +254,7 @@ class OpenCodeAdapter(RuntimeAdapter):
         # Google low/high); unknown names are ignored by the CLI, so the set
         # here is the union of the built-ins.
         thinking_channel="native_config",
-        thinking_efforts=("none", "minimal", "low", "medium", "high", "xhigh", "max"),
+        thinking_efforts=("default", "minimal", "low", "medium", "high", "xhigh", "max"),
     )
 
     def executor_skill_prompt_location(self) -> str:

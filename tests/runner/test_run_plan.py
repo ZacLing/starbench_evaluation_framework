@@ -91,6 +91,23 @@ class RunPlanTests(unittest.TestCase):
         self.assertEqual(args.runs_dir, self.tmp.resolve())
         self.assertEqual(args.run_plan_data["run_id"], "plan_run")
 
+    def test_legacy_none_thinking_effort_canonicalizes_to_default(self) -> None:
+        # Old plans and scripts spell the do-nothing tier "none"; the parser
+        # folds it so everything downstream sees only "default".
+        path = self.write_plan(thinking_effort="none")
+        args = parse_args(["--plan", str(path), "--runs-dir", str(self.tmp)])
+        self.assertEqual(args.thinking_effort, "default")
+        argv_args = parse_args(
+            ["--tasks-dir", str(self.tmp), "--thinking-effort", "none"]
+        )
+        self.assertEqual(argv_args.thinking_effort, "default")
+
+    def test_model_dependent_upper_tiers_parse(self) -> None:
+        args = parse_args(
+            ["--tasks-dir", str(self.tmp), "--thinking-effort", "ultra"]
+        )
+        self.assertEqual(args.thinking_effort, "ultra")
+
     def test_plan_is_exclusive_with_config_flags(self) -> None:
         path = self.write_plan()
         message = self.parse_error(

@@ -13,6 +13,8 @@ import {
   type SharedConfig,
 } from "@/lib/api"
 import {
+  DEFAULT_EFFORT,
+  canonicalEffort,
   nextContenderKey,
   resolveLibraryDir,
   timestampName,
@@ -94,7 +96,7 @@ export function useRunDraft({
             runtime: entry.agent,
             provider_id: providerId,
             model: entry.model ?? "",
-            thinking_effort: entry.thinking_effort ?? "none",
+            thinking_effort: canonicalEffort(entry.thinking_effort),
           }
         }),
       )
@@ -184,7 +186,7 @@ export function useRunDraft({
           runtime,
           provider_id: provider?.id ?? "",
           model: provider?.models[0] ?? "",
-          thinking_effort: "none",
+          thinking_effort: DEFAULT_EFFORT,
         },
       ])
     },
@@ -226,7 +228,7 @@ export function useRunDraft({
         agent: draft.runtime,
         ...(draft.model.trim() ? { model: draft.model.trim() } : {}),
         ...(draft.provider_id ? { provider_id: draft.provider_id } : {}),
-        ...(draft.thinking_effort && draft.thinking_effort !== "none"
+        ...(canonicalEffort(draft.thinking_effort) !== DEFAULT_EFFORT
           ? { thinking_effort: draft.thinking_effort }
           : {}),
       }))

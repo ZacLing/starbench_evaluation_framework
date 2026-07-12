@@ -21,6 +21,7 @@ import type {
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { BUILTIN_RUNTIMES } from "../constants"
+import { DEFAULT_EFFORT, canonicalEffort, effortOptions } from "../helpers"
 import type { ContenderDraft, RuntimeOption } from "../types"
 
 function AgentPickerStatusLine({
@@ -296,6 +297,9 @@ function ContenderCard({
   const ownLogin = custom ? (custom.protocol ?? "none") === "none" : false
   const hasCompatibleProvider =
     compatibleProviders(providerFilter, providers, draft.runtime).length > 0
+  const { efforts, catalog } = effortOptions(provider, draft.model, thinkingEfforts)
+  const effortValue = canonicalEffort(draft.thinking_effort)
+  const effortStale = !efforts.includes(effortValue)
   return (
     <Card className="py-4">
       <CardContent className="grid gap-3 px-4">
@@ -347,9 +351,18 @@ function ContenderCard({
               runtimeId={draft.runtime}
               providerId={draft.provider_id}
               model={draft.model}
-              onChange={({ provider: next, model }) =>
-                onUpdate({ provider_id: next.id, model })
-              }
+              onChange={({ provider: next, model }) => {
+                /* Effort levels are model facts: when the new model's table
+                   no longer offers the picked level, fall back to default
+                   (visible immediately in the pills below). */
+                const nextOptions = effortOptions(next, model, thinkingEfforts)
+                const keep = nextOptions.efforts.includes(canonicalEffort(draft.thinking_effort))
+                onUpdate({
+                  provider_id: next.id,
+                  model,
+                  ...(keep ? {} : { thinking_effort: DEFAULT_EFFORT }),
+                })
+              }}
             />
           ) : (
             <span className="text-xs text-warn-ink">
@@ -371,34 +384,64 @@ function ContenderCard({
         <div className="flex flex-wrap items-center gap-2">
           <Label className="text-xs text-muted-foreground">Thinking effort</Label>
           <RadioGroup
-            value={draft.thinking_effort}
+            value={effortValue}
             onValueChange={(value) => onUpdate({ thinking_effort: value })}
             className="flex flex-wrap gap-1.5"
           >
-            {thinkingEfforts.map((effort) => (
+            {efforts.map((effort) => (
               <label
                 key={effort}
+                title={
+                  effort === "default"
+                    ? catalog?.default_level
+                      ? `Runs the model's own default (${catalog.default_level}).`
+                      : "Leaves the runtime/model default alone."
+                    : undefined
+                }
                 className={cn(
                   "flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
-                  draft.thinking_effort === effort
+                  effortValue === effort
                     ? "border-primary bg-accent/60"
                     : "hover:border-primary/40",
                 )}
               >
                 <RadioGroupItem value={effort} className="size-3" />
-                {effort}
+                {effort === "default" && catalog?.default_level
+                  ? `default · ${catalog.default_level}`
+                  : effort}
               </label>
             ))}
           </RadioGroup>
           <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+            {catalog ? "levels from the model catalog" : "runtime-declared levels"}
+            {" · "}
             {thinkingChannel === "native_config" ? "native reasoning setting" : "prompt-level request"}
             <Hint>
-              {thinkingChannel === "native_config"
-                ? "Applied through the CLI's own reasoning switch (Claude Code --effort, Codex model_reasoning_effort, OpenCode --variant)."
-                : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."}
+              {catalog
+                ? `This level table is published by ${draft.model || "the model"} itself in its runtime's model catalog; "default" runs the model's own default${
+                    catalog.default_level ? ` (${catalog.default_level})` : ""
+                  }. ${
+                    thinkingChannel === "native_config"
+                      ? "Applied through the CLI's own reasoning switch."
+                      : "Requested in the prompt."
+                  }`
+                : `${
+                    draft.model
+                      ? "This model publishes no level table, so the list falls back to the runtime's declared set; the CLI coerces a level the model does not support to the nearest accepted one."
+                      : "Pick a model to narrow this to its published level table; until then the list is the runtime's declared set."
+                  } ${
+                    thinkingChannel === "native_config"
+                      ? "Applied through the CLI's own reasoning switch (Claude Code --effort, Codex model_reasoning_effort, OpenCode --variant)."
+                      : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."
+                  }`}
             </Hint>
           </span>
         </div>
+        {effortStale && (
+          <p className="text-xs text-warn-ink">
+            Saved level "{effortValue}" is not offered by this model — pick a level above.
+          </p>
+        )}
       </CardContent>
     </Card>
   )
