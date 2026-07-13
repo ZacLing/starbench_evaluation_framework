@@ -27,9 +27,17 @@ writes its own database.
 Precise, calm, legible. A lab instrument, not a marketing dashboard. It should feel
 like the trustworthy front panel of a machine that is doing serious measurement work.
 
+## Visual Reference
+
+The console follows the light SaaS-dashboard language of the HSW Eval reference
+(operator decision, 2026-07): light-gray canvas under white cards, KPI stat strip,
+dot-plus-word status chips, progress bars, and a selected-item inspector panel.
+Every figure must still come from `runs/` on disk.
+
 ## Anti-references
 
-- SaaS analytics dashboards: hero metrics, gradient cards, decorative charts.
+- Invented dashboard metrics: cost, owners, or trend deltas with no source on disk.
+- Gradient decoration; charts that exist for looks rather than a question.
 - Grafana-style neon-on-dark observability walls.
 - Terminal cosplay: fake scanlines, phosphor green, TUI-in-browser aesthetics.
 - Anything that hides the underlying files or invents state not present on disk.

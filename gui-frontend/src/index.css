@@ -9,7 +9,8 @@
 :root {
   --radius: 0.5rem;
 
-  --background: oklch(1 0 0);
+  /* Light-gray canvas under white cards (HSW Eval reference look). */
+  --background: oklch(0.977 0.003 280);
   --foreground: oklch(0.235 0.018 285);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.235 0.018 285);
@@ -35,7 +36,7 @@
   --chart-4: oklch(0.6 0.125 80);
   --chart-5: oklch(0.545 0.185 27);
 
-  --sidebar: oklch(0.977 0.003 280);
+  --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.235 0.018 285);
   --sidebar-primary: oklch(0.5 0.16 280);
   --sidebar-primary-foreground: oklch(1 0 0);

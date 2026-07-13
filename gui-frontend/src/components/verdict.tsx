@@ -4,6 +4,31 @@ import type { ExecutorStats, HswCellState, JudgeCell } from "@/lib/api"
 
 /* Verdicts are always glyph + word + color, never color alone. */
 
+/* Reference-style status: colored dot + word, no pill background. The word
+   carries the meaning; the dot carries the color. */
+const RUN_STATUS_DOT: Record<string, { label: string; dot: string; text: string; pulse?: boolean }> = {
+  complete: { label: "Completed", dot: "bg-pass", text: "text-pass-ink" },
+  running: { label: "Running", dot: "bg-live", text: "text-live-ink", pulse: true },
+  interrupted: { label: "Interrupted", dot: "bg-warn", text: "text-warn-ink" },
+}
+
+export function RunStatusChip({ status }: { status: string }) {
+  const spec = RUN_STATUS_DOT[status] ?? {
+    label: status,
+    dot: "bg-muted-foreground",
+    text: "text-muted-foreground",
+  }
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-[0.8125rem] font-medium", spec.text)}>
+      <span
+        className={cn("size-1.5 shrink-0 rounded-full", spec.dot, spec.pulse && "animate-pulse")}
+        aria-hidden
+      />
+      {spec.label}
+    </span>
+  )
+}
+
 export function StatusBadge({ status }: { status: string }) {
   if (status === "running") {
     return (
