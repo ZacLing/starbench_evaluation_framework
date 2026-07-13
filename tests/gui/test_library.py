@@ -340,6 +340,9 @@ class PreflightTest(unittest.TestCase):
         self.assertEqual(by_id["executor_cli"]["status"], "fail")
         self.assertIn("definitely-missing-cli", by_id["executor_cli"]["label"])
         self.assertIn("STARBENCH_ABSENT_KEY", by_id["executor_auth"]["hint"])
+        # env auth with a known key that is absent is a guaranteed launch
+        # failure, not a maybe — the check must block, not advise.
+        self.assertEqual(by_id["executor_auth"]["status"], "fail")
 
     def test_preflight_checks_role_specific_opencode_keys(self) -> None:
         with mock.patch.dict(
