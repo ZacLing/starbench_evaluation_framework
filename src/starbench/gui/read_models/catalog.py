@@ -15,8 +15,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ...fsio import atomic_write_json
 
-CATALOG_SCHEMA_VERSION = 1
-CATALOG_RELATIVE_PATH = Path(".starbench") / "run_catalog-v1.json"
+CATALOG_SCHEMA_VERSION = 2
+CATALOG_RELATIVE_PATH = Path(".starbench") / "run_catalog-v2.json"
 
 _ROOT_MARKERS = (
     "run_config.json",

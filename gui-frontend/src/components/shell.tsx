@@ -22,8 +22,8 @@ type NavEntry = { to: string; label: string; icon: LucideIcon; end: boolean }
 
 // Primary destinations: the places an operator lives while a run is cooking.
 const PRIMARY_NAV: NavEntry[] = [
-  { to: "/", label: "Dashboard", icon: Gauge, end: true },
-  { to: "/coverage", label: "Coverage", icon: Grid3X3, end: true },
+  { to: "/", label: "Overview", icon: Gauge, end: true },
+  { to: "/coverage", label: "Run matrix", icon: Grid3X3, end: true },
   { to: "/tasks", label: "Task library", icon: Library, end: true },
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
 ]
@@ -125,9 +125,9 @@ function NavItem({ item }: { item: NavEntry }) {
 function Crumbs({ pathname }: { pathname: string }) {
   const segments = pathname.split("/").filter(Boolean)
   const crumbs: { label: string; to?: string }[] = []
-  if (segments.length === 0) crumbs.push({ label: "Dashboard" })
+  if (segments.length === 0) crumbs.push({ label: "Overview" })
   else if (segments[0] === "new") crumbs.push({ label: "New experiment" })
-  else if (segments[0] === "coverage") crumbs.push({ label: "Coverage" })
+  else if (segments[0] === "coverage") crumbs.push({ label: "Run matrix" })
   else if (segments[0] === "tasks") crumbs.push({ label: "Task library" })
   else if (segments[0] === "profiles") crumbs.push({ label: "Profiles" })
   else if (segments[0] === "agents") crumbs.push({ label: "Agents" })

@@ -108,6 +108,18 @@ capped at 1400px with 24px gutters. Breadcrumbs carry location within the shallo
 object hierarchy (runs → run → task run). Tables are the primary surface: sticky
 header rows, row hover, generous first column, right-aligned numerics.
 
+The console's navigation principle: the Overview reads progress, the Run matrix
+finds differences, the run/task detail pages explain causes. The matrix
+(`/coverage`, nav label "Run matrix") is Task × Agent × Model with two-level
+headers and a metric switcher — one lens at a time (HSW coverage, rubric %,
+pass rate, stability σ, duration, run status), so color never carries two
+meanings at once. Clicking a cell opens a run-group rail (aggregates + recent
+task runs); clicking a column header opens the combination rollup. The Overview
+(`/`) is a KPI strip (planned coverage cells, run states, pass rate, runtime),
+progress-over-time and status-donut charts, an Agent × Model heatmap, top and
+bottom tasks by rubric mean, and a side rail of running runs and recent
+failures — all computed from `runs/` plus the task library.
+
 Runs follows the HSW Eval reference layout: page header with freshness controls
 ("Last updated" + working auto-refresh switch), a KPI stat strip (all figures
 computed from disk), a filter row (search + status/runtime selects), the ledger

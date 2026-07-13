@@ -1,239 +1,677 @@
-import { Link, useNavigate } from "react-router-dom"
+import { useMemo, useState } from "react"
+import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, XAxis, YAxis, Tooltip as ChartTooltip } from "recharts"
-import { Activity, CheckCircle2, ListChecks, Plus } from "lucide-react"
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+  Tooltip as ChartTooltip,
+} from "recharts"
+import {
+  CheckCircle2,
+  Clock,
+  Grid3X3,
+  ListChecks,
+  Loader2,
+  Plus,
+  Timer,
+  TrendingUp,
+  XCircle,
+} from "lucide-react"
 import { ErrorNote } from "@/components/error-note"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { PassSummaryBadge, StatusBadge } from "@/components/verdict"
-import { api } from "@/lib/api"
-import { fmtTime, fmtRate, percent, shortDir } from "@/lib/format"
+import { RunStatusChip } from "@/components/verdict"
+import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { api, type CoveragePayload, type RunOverview } from "@/lib/api"
+import { fmtDuration, fmtRelative, shortDir, spanBetween } from "@/lib/format"
+import { cn } from "@/lib/utils"
 
+/* Overview: progress first, anomalies second, early conclusions third.
+   Every figure is computed from runs/ and the task library on disk. */
 export default function Dashboard() {
-  const navigate = useNavigate()
   const runsQuery = useQuery({
     queryKey: ["runs"],
     queryFn: api.runs,
     refetchInterval: (query) =>
-      query.state.data?.runs.some((run) => run.status === "running") ? 4000 : false,
+      query.state.data?.runs.some((run) => run.status === "running") ? 4000 : 30_000,
   })
+  const coverageQuery = useQuery({ queryKey: ["coverage"], queryFn: () => api.coverage() })
   const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta, staleTime: Infinity })
 
-  if (runsQuery.isPending) {
-    return (
-      <div className="grid gap-4">
-        <Skeleton className="h-28" />
-        <Skeleton className="h-64" />
-      </div>
-    )
-  }
-  if (runsQuery.isError) {
-    return <ErrorNote message={(runsQuery.error as Error).message} />
-  }
+  if (runsQuery.isPending) return <OverviewSkeleton />
+  if (runsQuery.isError) return <ErrorNote message={(runsQuery.error as Error).message} />
 
   const runs = runsQuery.data.runs
   if (!runs.length) return <EmptyOnboarding />
 
-  const judged = runs.filter((run) => run.judge_totals.single > 0)
-  const taskPassTotal = judged.reduce((sum, run) => sum + run.judge_totals.single, 0)
-  const taskPassCount = judged.reduce((sum, run) => sum + run.judge_passes.single, 0)
-  const execTotal = runs.reduce(
-    (sum, run) =>
-      sum + run.executor_stats.success + run.executor_stats.failed + run.executor_stats.timeout,
-    0,
-  )
-  const execSuccess = runs.reduce((sum, run) => sum + run.executor_stats.success, 0)
-  const running = runs.filter((run) => run.status === "running")
-
-  const chartData = [...runs]
-    .filter((run) => run.judge_totals.single > 0)
-    .slice(0, 10)
-    .reverse()
-    .map((run) => ({
-      name: run.run_id,
-      rate: Math.round(((run.judge_passes.single / run.judge_totals.single) * 1000)) / 10,
-    }))
-
   return (
-    <div className="grid gap-6">
+    <div className="flex flex-col gap-5">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-sm text-muted-foreground">
-          {runs.length} runs in{" "}
+        <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+        <p className="mt-0.5 text-sm text-muted-foreground">
+          Evaluation progress and results in{" "}
           <span className="font-mono" title={meta.data?.runs_dir}>
             {shortDir(meta.data?.runs_dir) || "this directory"}
           </span>
-          {running.length > 0 && `, ${running.length} running now`}
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={<ListChecks className="size-4" />}
-          label="Runs"
-          value={String(runs.length)}
-          hint={`${runs.filter((run) => run.status === "complete").length} complete`}
-        />
-        <StatCard
-          icon={<CheckCircle2 className="size-4" />}
-          label="Task pass rate"
-          value={fmtRate(percent(taskPassCount, taskPassTotal))}
-          hint={`${taskPassCount}/${taskPassTotal} judged tasks passed`}
-        />
-        <StatCard
-          icon={<CheckCircle2 className="size-4" />}
-          label="Executor success"
-          value={fmtRate(percent(execSuccess, execTotal))}
-          hint={`${execSuccess}/${execTotal} executions succeeded`}
-        />
-        <StatCard
-          icon={<Activity className="size-4" />}
-          label="Running now"
-          value={String(running.length)}
-          hint={running.length ? `${running[0].run_id} →` : "nothing in flight"}
-          live={running.length > 0}
-          to={running.length ? `/runs/${encodeURIComponent(running[0].run_id)}` : undefined}
-        />
-      </div>
+      <KpiStrip runs={runs} coverage={coverageQuery.data} />
 
-      <div className="grid gap-4 lg:grid-cols-5">
-        <Card className="min-w-0 lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Pass rate by run</CardTitle>
-            <CardDescription>
-              Single-judge task pass rate, oldest to newest ·{" "}
-              <span className="text-pass-ink">green</span> = all passed,{" "}
-              <span className="text-fail-ink">red</span> = none
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="h-56">
-            {chartData.length ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 4, right: 4, bottom: 0, left: -22 }}>
-                  <CartesianGrid vertical={false} stroke="var(--border)" />
-                  <XAxis
-                    dataKey="name"
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-                    tickFormatter={(value: string) =>
-                      // Run ids share long prefixes; the tail is what tells them apart.
-                      value.length > 14 ? `…${value.slice(-13)}` : value
-                    }
-                  />
-                  <YAxis
-                    domain={[0, 100]}
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
-                    tickFormatter={(value: number) => `${value}%`}
-                  />
-                  <ChartTooltip
-                    cursor={{ fill: "var(--muted)" }}
-                    formatter={(value) => [`${value}%`, "pass rate"]}
-                    contentStyle={{
-                      borderRadius: 8,
-                      border: "1px solid var(--border)",
-                      fontSize: 12,
-                    }}
-                  />
-                  <Bar dataKey="rate" radius={[4, 4, 0, 0]} maxBarSize={48}>
-                    {chartData.map((entry) => (
-                      <Cell
-                        key={entry.name}
-                        fill={entry.rate >= 100 ? "var(--pass)" : entry.rate > 0 ? "var(--chart-1)" : "var(--fail)"}
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="grid h-full place-content-center text-sm text-muted-foreground">
-                No judged runs yet.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+      <div className="flex min-w-0 items-start gap-4">
+        <div className="grid min-w-0 flex-1 gap-4">
+          <div className="grid gap-4 xl:grid-cols-5">
+            <ProgressOverTime runs={runs} className="min-w-0 xl:col-span-3" />
+            <RunsByStatus runs={runs} className="min-w-0 xl:col-span-2" />
+          </div>
+          {coverageQuery.data && <PerformanceHeatmap coverage={coverageQuery.data} />}
+          {coverageQuery.data && <TopBottomTasks coverage={coverageQuery.data} />}
+        </div>
 
-        <Card className="min-w-0 lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Recent runs</CardTitle>
-            <CardDescription>Newest first</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-1">
-            {runs.slice(0, 6).map((run) => (
-              <button
-                key={run.run_id}
-                type="button"
-                onClick={() => navigate(`/runs/${encodeURIComponent(run.run_id)}`)}
-                className="flex min-w-0 items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-mono text-sm">{run.run_id}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {fmtTime(run.started_at)} · {run.task_count} tasks
-                  </span>
-                </span>
-                <PassSummaryBadge
-                  passed={run.judge_passes.single}
-                  total={run.judge_totals.single}
-                />
-                <StatusBadge status={run.status} />
-              </button>
-            ))}
-            <Button asChild variant="ghost" size="sm" className="mt-1 justify-start text-muted-foreground">
-              <Link to="/runs">View all runs →</Link>
-            </Button>
-          </CardContent>
-        </Card>
+        <aside className="sticky top-[4.5rem] hidden w-[21rem] shrink-0 flex-col gap-3 xl:flex">
+          <RunningNow runs={runs} />
+          <RecentFailures runs={runs} />
+        </aside>
       </div>
     </div>
   )
 }
 
-function StatCard({
-  icon,
+/* ------------------------------------------------------------------ KPI -- */
+
+function KpiStrip({ runs, coverage }: { runs: RunOverview[]; coverage?: CoveragePayload }) {
+  const now = Date.now()
+  const total = runs.length
+  const running = runs.filter((run) => run.status === "running").length
+  const complete = runs.filter((run) => run.status === "complete").length
+  const interrupted = total - running - complete
+  const last7d = runs.filter((run) => {
+    const started = run.started_at ? Date.parse(run.started_at) : NaN
+    return Number.isFinite(started) && now - started <= 7 * 86_400_000
+  }).length
+  const judgedTotal = runs.reduce((sum, run) => sum + (run.judge_totals.single ?? 0), 0)
+  const judgedPassed = runs.reduce((sum, run) => sum + (run.judge_passes.single ?? 0), 0)
+  const spans = runs
+    .filter((run) => run.started_at && run.ended_at)
+    .map((run) => (Date.parse(run.ended_at as string) - Date.parse(run.started_at as string)) / 1000)
+    .filter((span) => Number.isFinite(span) && span > 0)
+    .sort((a, b) => a - b)
+  const totalRuntime = spans.reduce((sum, span) => sum + span, 0)
+  const p95 = spans.length ? spans[Math.max(0, Math.ceil(spans.length * 0.95) - 1)] : null
+
+  /* Planned = rostered contenders × library tasks: the coverage denominator.
+     Tested counts cells with at least one judged sample. */
+  let planned: { total: number; tested: number } | null = null
+  if (coverage?.profile) {
+    const rosteredKeys = new Set(
+      coverage.columns.filter((column) => column.rostered).map((column) => column.key),
+    )
+    const libraryRows = coverage.rows.filter((row) => row.in_library)
+    let tested = 0
+    for (const row of libraryRows) {
+      for (const cell of row.cells) {
+        if (rosteredKeys.has(cell.column_key) && cell.judged > 0) tested += 1
+      }
+    }
+    planned = { total: rosteredKeys.size * libraryRows.length, tested }
+  }
+
+  const pct = (value: number) => (total ? `${Math.round((value / total) * 100)}%` : "–")
+
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 min-[1700px]:grid-cols-8">
+      {planned && (
+        <Kpi
+          icon={Grid3X3}
+          tint="bg-accent text-accent-foreground"
+          label="Planned cells"
+          value={String(planned.total)}
+          sub={`${planned.tested} tested`}
+        />
+      )}
+      <Kpi
+        icon={ListChecks}
+        tint="bg-accent text-accent-foreground"
+        label="Total runs"
+        value={String(total)}
+        sub={last7d > 0 ? `+${last7d} last 7d` : "none in last 7d"}
+      />
+      <Kpi
+        icon={Loader2}
+        tint="bg-live-soft text-live-ink"
+        label="Running"
+        value={String(running)}
+        sub={pct(running)}
+      />
+      <Kpi
+        icon={CheckCircle2}
+        tint="bg-pass-soft text-pass-ink"
+        label="Completed"
+        value={String(complete)}
+        sub={pct(complete)}
+      />
+      <Kpi
+        icon={XCircle}
+        tint="bg-warn-soft text-warn-ink"
+        label="Interrupted"
+        value={String(interrupted)}
+        sub={pct(interrupted)}
+      />
+      <Kpi
+        icon={TrendingUp}
+        tint="bg-pass-soft text-pass-ink"
+        label="Pass rate"
+        value={judgedTotal ? `${((judgedPassed / judgedTotal) * 100).toFixed(1)}%` : "–"}
+        sub={judgedTotal ? `${judgedPassed}/${judgedTotal} judged tasks` : "no judged tasks"}
+      />
+      <Kpi
+        icon={Timer}
+        tint="bg-accent text-accent-foreground"
+        label="Total runtime"
+        value={totalRuntime > 0 ? fmtDuration(totalRuntime) : "–"}
+        sub={`across ${spans.length} finished runs`}
+      />
+      <Kpi
+        icon={Clock}
+        tint="bg-accent text-accent-foreground"
+        label="P95 run duration"
+        value={p95 !== null ? fmtDuration(p95) : "–"}
+        sub="finished runs"
+      />
+    </div>
+  )
+}
+
+function Kpi({
+  icon: Icon,
+  tint,
   label,
   value,
-  hint,
-  live,
-  to,
+  sub,
 }: {
-  icon: React.ReactNode
+  icon: React.ComponentType<{ className?: string }>
+  tint: string
   label: string
   value: string
-  hint: string
-  live?: boolean
-  /* When set, the whole card links to this route (e.g. the running run). */
-  to?: string
+  sub: string
 }) {
-  const card = (
-    <Card className={to ? "transition-colors hover:border-live-ink/40 hover:bg-muted/40" : undefined}>
-      <CardContent className="grid gap-1">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          {icon}
-          {label}
-          {live && <span className="size-1.5 animate-pulse rounded-full bg-live-ink" aria-hidden />}
+  return (
+    <Card className="gap-2 rounded-xl px-4 py-4">
+      <div className="flex items-center gap-2.5">
+        <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-full", tint)}>
+          <Icon className="size-4" />
+        </span>
+        <span className="truncate text-sm text-muted-foreground">{label}</span>
+      </div>
+      <div className="text-2xl font-semibold tabular-nums tracking-tight">{value}</div>
+      <div className="truncate text-xs text-muted-foreground" title={sub}>
+        {sub}
+      </div>
+    </Card>
+  )
+}
+
+/* --------------------------------------------------------------- charts -- */
+
+/* Cumulative finished runs per day. Two series only: completed and
+   interrupted — the honest terminal states we have. */
+function ProgressOverTime({ runs, className }: { runs: RunOverview[]; className?: string }) {
+  const data = useMemo(() => {
+    const finished = runs
+      .filter((run) => run.status !== "running")
+      .map((run) => ({
+        status: run.status,
+        at: Date.parse(run.ended_at ?? run.started_at ?? ""),
+      }))
+      .filter((entry) => Number.isFinite(entry.at))
+      .sort((a, b) => a.at - b.at)
+    if (!finished.length) return []
+    const dayMs = 86_400_000
+    const firstDay = Math.floor(finished[0].at / dayMs) * dayMs
+    const lastDay = Math.floor(Date.now() / dayMs) * dayMs
+    const points: { day: string; completed: number; interrupted: number }[] = []
+    let completed = 0
+    let interrupted = 0
+    let index = 0
+    for (let day = firstDay; day <= lastDay; day += dayMs) {
+      while (index < finished.length && finished[index].at < day + dayMs) {
+        if (finished[index].status === "complete") completed += 1
+        else interrupted += 1
+        index += 1
+      }
+      points.push({
+        day: new Date(day).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        completed,
+        interrupted,
+      })
+    }
+    return points
+  }, [runs])
+
+  return (
+    <Card className={cn("gap-3 rounded-xl py-4", className)}>
+      <div className="px-4">
+        <h2 className="text-sm font-semibold">Progress over time</h2>
+        <p className="text-xs text-muted-foreground">Cumulative finished runs, by day</p>
+      </div>
+      <CardContent className="h-52 px-2">
+        {data.length ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -22 }}>
+              <CartesianGrid vertical={false} stroke="var(--border)" />
+              <XAxis
+                dataKey="day"
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              />
+              <YAxis
+                allowDecimals={false}
+                tickLine={false}
+                axisLine={false}
+                tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+              />
+              <ChartTooltip
+                cursor={{ stroke: "var(--border)" }}
+                contentStyle={{ borderRadius: 8, border: "1px solid var(--border)", fontSize: 12 }}
+              />
+              <Area
+                dataKey="completed"
+                name="Completed"
+                stackId="finished"
+                stroke="var(--pass)"
+                fill="var(--pass)"
+                fillOpacity={0.18}
+                strokeWidth={2}
+                isAnimationActive={false}
+              />
+              <Area
+                dataKey="interrupted"
+                name="Interrupted"
+                stackId="finished"
+                stroke="var(--warn)"
+                fill="var(--warn)"
+                fillOpacity={0.18}
+                strokeWidth={2}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        ) : (
+          <p className="grid h-full place-content-center text-sm text-muted-foreground">
+            No finished runs yet.
+          </p>
+        )}
+      </CardContent>
+      <div className="flex items-center gap-4 px-4 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="size-2.5 rounded-sm bg-pass" aria-hidden /> Completed
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="size-2.5 rounded-sm bg-warn" aria-hidden /> Interrupted
+        </span>
+      </div>
+    </Card>
+  )
+}
+
+const STATUS_SLICES = [
+  { key: "complete", label: "Completed", color: "var(--pass)" },
+  { key: "running", label: "Running", color: "var(--live)" },
+  { key: "interrupted", label: "Interrupted", color: "var(--warn)" },
+] as const
+
+function RunsByStatus({ runs, className }: { runs: RunOverview[]; className?: string }) {
+  const counts = STATUS_SLICES.map((slice) => ({
+    ...slice,
+    value: runs.filter((run) => run.status === slice.key).length,
+  })).filter((slice) => slice.value > 0)
+
+  return (
+    <Card className={cn("gap-3 rounded-xl py-4", className)}>
+      <div className="px-4">
+        <h2 className="text-sm font-semibold">Runs by status</h2>
+      </div>
+      <CardContent className="flex items-center gap-4 px-4">
+        <div className="relative h-40 w-40 shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={counts}
+                dataKey="value"
+                nameKey="label"
+                innerRadius={52}
+                outerRadius={72}
+                paddingAngle={2}
+                isAnimationActive={false}
+              >
+                {counts.map((slice) => (
+                  <Cell key={slice.key} fill={slice.color} stroke="var(--card)" />
+                ))}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="pointer-events-none absolute inset-0 grid place-content-center text-center">
+            <span className="text-xl font-semibold tabular-nums">{runs.length}</span>
+            <span className="text-xs text-muted-foreground">runs</span>
+          </div>
         </div>
-        <div className="text-2xl font-semibold tabular-nums tracking-tight">{value}</div>
-        <div className="truncate text-xs text-muted-foreground" title={hint}>
-          {hint}
-        </div>
+        <ul className="grid gap-2 text-sm">
+          {counts.map((slice) => (
+            <li key={slice.key} className="flex items-center gap-2">
+              <span
+                className="size-2.5 shrink-0 rounded-sm"
+                style={{ background: slice.color }}
+                aria-hidden
+              />
+              <span className="text-muted-foreground">{slice.label}</span>
+              <span className="ml-auto font-medium tabular-nums">
+                {slice.value}{" "}
+                <span className="font-normal text-muted-foreground">
+                  ({Math.round((slice.value / runs.length) * 100)}%)
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   )
-  if (!to) return card
+}
+
+/* ------------------------------------------------------------- heatmap -- */
+
+/* Agent rows × model columns; cell = rubric mean + pass rate from the
+   combination rollup. A dash is a combination never run — a visible gap. */
+function PerformanceHeatmap({ coverage }: { coverage: CoveragePayload }) {
+  const agents = [...new Set(coverage.columns.map((column) => column.agent))]
+  const models = [...new Set(coverage.columns.map((column) => column.model ?? "unknown"))]
+  const byKey = new Map(coverage.columns.map((column) => [column.key, column]))
+
+  if (!coverage.columns.length) return null
+
   return (
-    <Link
-      to={to}
-      aria-label={`${label}: ${hint}`}
-      className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {card}
-    </Link>
+    <Card className="gap-3 rounded-xl py-4">
+      <div className="flex items-baseline justify-between px-4">
+        <div>
+          <h2 className="text-sm font-semibold">Performance heatmap</h2>
+          <p className="text-xs text-muted-foreground">
+            Rubric mean and task pass rate per Agent × Model
+          </p>
+        </div>
+        <Link to="/coverage" className="text-xs font-medium text-primary hover:underline">
+          Open run matrix
+        </Link>
+      </div>
+      <CardContent className="overflow-x-auto px-4">
+        <table className="w-full min-w-[36rem] border-separate border-spacing-1">
+          <thead>
+            <tr>
+              <th className="w-36 text-left text-xs font-medium text-muted-foreground">
+                Agent \ Model
+              </th>
+              {models.map((model) => (
+                <th
+                  key={model}
+                  className="truncate px-2 pb-1 text-left font-mono text-xs font-medium text-muted-foreground"
+                  title={model}
+                >
+                  {model}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {agents.map((agent) => (
+              <tr key={agent}>
+                <td className="pr-2">
+                  <span className="inline-flex items-center gap-1.5 text-sm">
+                    <AgentIcon agent={agent} size={16} />
+                    {AGENT_LABELS[agent] ?? agent}
+                  </span>
+                </td>
+                {models.map((model) => {
+                  const column = byKey.get(`${agent}::${model === "unknown" ? "" : model}`)
+                  const mean = column?.stats.rubric_ratio_mean ?? null
+                  const passRate =
+                    column && column.stats.judged
+                      ? column.stats.passed / column.stats.judged
+                      : null
+                  return (
+                    <td key={model}>
+                      {column && mean !== null ? (
+                        <Link
+                          to="/coverage"
+                          className={cn(
+                            "block rounded-md px-2.5 py-2 transition-colors hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            heatTint(mean),
+                          )}
+                        >
+                          <span className="block text-sm font-semibold tabular-nums">
+                            {Math.round(mean * 100)}%
+                          </span>
+                          <span className="block text-xs tabular-nums opacity-80">
+                            {passRate !== null ? `${Math.round(passRate * 100)}% pass` : "–"}
+                          </span>
+                        </Link>
+                      ) : (
+                        <span className="block rounded-md bg-muted/40 px-2.5 py-3 text-center text-muted-foreground/60">
+                          –
+                        </span>
+                      )}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
   )
 }
+
+function heatTint(ratio: number) {
+  if (ratio >= 0.9) return "bg-pass/20 text-pass-ink"
+  if (ratio >= 0.75) return "bg-pass-soft text-pass-ink"
+  if (ratio >= 0.5) return "bg-warn-soft text-warn-ink"
+  if (ratio >= 0.25) return "bg-fail-soft/70 text-fail-ink"
+  return "bg-fail/20 text-fail-ink"
+}
+
+/* -------------------------------------------------------- top / bottom -- */
+
+function TopBottomTasks({ coverage }: { coverage: CoveragePayload }) {
+  const [tab, setTab] = useState<"top" | "bottom">("top")
+  const ranked = useMemo(() => {
+    const entries = coverage.rows
+      .map((row) => {
+        const ratios: number[] = []
+        for (const cell of row.cells) {
+          if (cell.rubric_ratio_mean !== null && cell.rubric_samples > 0) {
+            ratios.push(cell.rubric_ratio_mean)
+          }
+        }
+        if (!ratios.length) return null
+        return {
+          task_id: row.task_id,
+          mean: ratios.reduce((sum, value) => sum + value, 0) / ratios.length,
+          combos: ratios.length,
+        }
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+      .sort((a, b) => b.mean - a.mean)
+    return entries
+  }, [coverage])
+
+  if (!ranked.length) return null
+  const shown = tab === "top" ? ranked.slice(0, 5) : [...ranked].reverse().slice(0, 5)
+
+  return (
+    <Card className="gap-3 rounded-xl py-4">
+      <div className="flex items-center justify-between px-4">
+        <h2 className="text-sm font-semibold">Tasks by rubric mean</h2>
+        <div className="flex items-center gap-1 rounded-lg border bg-background p-0.5">
+          {(["top", "bottom"] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              data-active={tab === key}
+              className="rounded-md px-2.5 py-1 text-xs text-muted-foreground transition-colors data-[active=true]:bg-accent data-[active=true]:font-medium data-[active=true]:text-accent-foreground"
+            >
+              {key === "top" ? "Top 5" : "Bottom 5"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <CardContent className="grid gap-1 px-2">
+        {shown.map((entry, index) => (
+          <div key={entry.task_id} className="flex items-center gap-3 rounded-md px-2 py-1.5">
+            <span className="w-4 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+              {index + 1}
+            </span>
+            <span
+              className="min-w-0 flex-1 truncate font-mono text-sm"
+              title={`${entry.task_id} — mean over ${entry.combos} combination${entry.combos === 1 ? "" : "s"}`}
+            >
+              {entry.task_id}
+            </span>
+            <div className="h-1.5 w-28 shrink-0 overflow-hidden rounded-full bg-muted">
+              <div
+                className={cn(
+                  "h-full rounded-full",
+                  entry.mean >= 0.5 ? "bg-pass" : "bg-warn",
+                )}
+                style={{ width: `${Math.round(entry.mean * 100)}%` }}
+              />
+            </div>
+            <span className="w-12 shrink-0 text-right text-sm font-medium tabular-nums">
+              {Math.round(entry.mean * 100)}%
+            </span>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+/* ------------------------------------------------------------ side rail -- */
+
+function RunningNow({ runs }: { runs: RunOverview[] }) {
+  const running = runs.filter((run) => run.status === "running")
+  return (
+    <Card className="gap-0 rounded-xl py-0">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <h2 className="text-sm font-semibold">Running now</h2>
+        <Link to="/runs" className="text-xs font-medium text-primary hover:underline">
+          View all
+        </Link>
+      </div>
+      {running.length === 0 ? (
+        <p className="px-4 py-4 text-sm text-muted-foreground">Nothing in flight.</p>
+      ) : (
+        <ul className="px-2 py-1.5">
+          {running.map((run) => {
+            const stats = run.executor_stats
+            const done = stats.success + stats.failed + stats.timeout + (stats.skipped ?? 0)
+            const pct = run.task_count ? Math.round((done / run.task_count) * 100) : 0
+            return (
+              <li key={run.run_id}>
+                <Link
+                  to={`/runs/${encodeURIComponent(run.run_id)}`}
+                  className="grid gap-1.5 rounded-lg px-2 py-2 transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate font-mono text-[0.8125rem]">{run.run_id}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {spanBetween(run.started_at, run.ended_at, true)}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                      <span
+                        className="block h-full rounded-full bg-live transition-[width] duration-300"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {pct}%
+                    </span>
+                  </span>
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
+/* Recent failures: runs whose executors failed or timed out, or whose judges
+   came back inconclusive — the honest failure taxonomy we have on disk. */
+function RecentFailures({ runs }: { runs: RunOverview[] }) {
+  const failures = runs
+    .map((run) => {
+      const parts: string[] = []
+      if (run.executor_stats.failed) parts.push(`${run.executor_stats.failed} executor failed`)
+      if (run.executor_stats.timeout) parts.push(`${run.executor_stats.timeout} timeout`)
+      const inconclusive = run.judge_inconclusive.single ?? 0
+      if (inconclusive) parts.push(`${inconclusive} inconclusive`)
+      if (run.status === "interrupted") parts.push("interrupted")
+      if (!parts.length) return null
+      return { run, parts }
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .slice(0, 6)
+
+  return (
+    <Card className="gap-0 rounded-xl py-0">
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <h2 className="text-sm font-semibold">Recent failures</h2>
+        <Link to="/runs" className="text-xs font-medium text-primary hover:underline">
+          View all
+        </Link>
+      </div>
+      {failures.length === 0 ? (
+        <p className="px-4 py-4 text-sm text-muted-foreground">No failures on disk.</p>
+      ) : (
+        <ul className="px-2 py-1.5">
+          {failures.map(({ run, parts }) => (
+            <li key={run.run_id}>
+              <Link
+                to={`/runs/${encodeURIComponent(run.run_id)}`}
+                className="grid gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate font-mono text-[0.8125rem]">{run.run_id}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {fmtRelative(run.ended_at ?? run.started_at)}
+                  </span>
+                </span>
+                <span className="flex items-center justify-between gap-2">
+                  <span className="truncate text-xs text-warn-ink">{parts.join(" · ")}</span>
+                  <RunStatusChip status={run.status} />
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  )
+}
+
+/* ---------------------------------------------------------------- misc -- */
 
 function EmptyOnboarding() {
   return (
@@ -241,8 +679,9 @@ function EmptyOnboarding() {
       <CardContent className="grid place-content-center gap-3 py-16 text-center">
         <h2 className="text-lg font-semibold">No runs yet</h2>
         <p className="max-w-md text-sm text-muted-foreground">
-          Launch an evaluation from this console, or run <code className="font-mono">starbench-run</code>{" "}
-          in a terminal against this runs directory. Results appear here as soon as they hit disk.
+          Launch an evaluation from this console, or run{" "}
+          <code className="font-mono">starbench-run</code> in a terminal against this runs
+          directory. Results appear here as soon as they hit disk.
         </p>
         <div className="mt-2 flex justify-center">
           <Button asChild>
@@ -253,5 +692,22 @@ function EmptyOnboarding() {
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function OverviewSkeleton() {
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <Skeleton className="h-8 w-36" />
+        <Skeleton className="mt-2 h-4 w-72" />
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 8 }, (_, index) => (
+          <Skeleton key={index} className="h-28 rounded-xl" />
+        ))}
+      </div>
+      <Skeleton className="h-64 w-full rounded-xl" />
+    </div>
   )
 }

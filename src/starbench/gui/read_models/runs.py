@@ -307,6 +307,8 @@ def _catalog_run_record(run_root: Path) -> Dict[str, Any]:
 
     run_config = _read_json(run_root / "run_config.json")
     config = run_config if isinstance(run_config, dict) else {}
+    judge_mode = config.get("judge_mode")
+    judge_mode = judge_mode if isinstance(judge_mode, str) and judge_mode else "single"
     task_samples: List[Dict[str, Any]] = []
     for task_run_id in _task_dirs(run_root, config):
         task_root = run_root / task_run_id
@@ -316,6 +318,11 @@ def _catalog_run_record(run_root: Path) -> Dict[str, Any]:
             for cell in row.get("judges", {}).values()
             if isinstance(cell, dict) and isinstance(cell.get("outcome"), str)
         ]
+        # Rubric tallies from the run's own judge mode; a missing or crashed
+        # judge stays None (honest absence), never a zero score.
+        judge_cell = row.get("judges", {}).get(judge_mode)
+        rubric_passed = judge_cell.get("passed_count") if isinstance(judge_cell, dict) else None
+        rubric_total = judge_cell.get("total_count") if isinstance(judge_cell, dict) else None
         task_samples.append(
             {
                 "run_task_id": task_run_id,
@@ -323,6 +330,10 @@ def _catalog_run_record(run_root: Path) -> Dict[str, Any]:
                 "instruction_variant": row.get("instruction_variant"),
                 "tested_at": _task_run_tested_at(task_root),
                 "outcomes": outcomes,
+                "executor_status": row.get("executor_status"),
+                "executor_duration_seconds": row.get("executor_duration_seconds"),
+                "rubric_passed": rubric_passed if isinstance(rubric_passed, int) else None,
+                "rubric_total": rubric_total if isinstance(rubric_total, int) else None,
             }
         )
     return {

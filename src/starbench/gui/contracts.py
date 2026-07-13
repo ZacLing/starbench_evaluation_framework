@@ -471,6 +471,38 @@ class CoverageCell(TypedDict):
     inconclusive: int
     last_tested: Optional[str]
     recent_refs: List[CoverageRunRef]
+    # Aggregates across every task-run sample in the cell. Rubric ratios come
+    # from each run's own judge mode (passed/total rubrics); a task-run whose
+    # judge produced no tallies contributes nothing — None means "no rubric
+    # evidence", never a zero score. ``rubric_ratio_std`` is the population
+    # standard deviation and needs >= 2 samples; ``duration_p95_seconds`` is
+    # nearest-rank over executor durations. Executor status tallies partition
+    # ``total`` (pending = no terminal status yet).
+    rubric_samples: int
+    rubric_ratio_mean: Optional[float]
+    rubric_ratio_std: Optional[float]
+    duration_mean_seconds: Optional[float]
+    duration_p95_seconds: Optional[float]
+    exec_success: int
+    exec_failed: int
+    exec_timeout: int
+    exec_pending: int
+
+
+class CoverageComboStats(TypedDict):
+    """One contender column rolled up across all its cells: the combination
+    panel, comparison table, and overview heatmap all read from here. Same
+    honesty rules as ``CoverageCell``: None is absent evidence, never zero."""
+
+    tasks_tested: int
+    judged: int
+    passed: int
+    exec_pending: int
+    rubric_samples: int
+    rubric_ratio_mean: Optional[float]
+    rubric_ratio_std: Optional[float]
+    duration_p95_seconds: Optional[float]
+    last_tested: Optional[str]
 
 
 class CoverageColumn(TypedDict):
@@ -487,6 +519,7 @@ class CoverageColumn(TypedDict):
     model: Optional[str]
     run_count: int
     rostered: bool
+    stats: CoverageComboStats
 
 
 class CoverageRow(TypedDict):
@@ -1384,6 +1417,7 @@ GENERATED_TYPES = [
     "OutputsListing",
     "CoverageRunRef",
     "CoverageCell",
+    "CoverageComboStats",
     "CoverageColumn",
     "CoverageRow",
     "CoverageProfile",
