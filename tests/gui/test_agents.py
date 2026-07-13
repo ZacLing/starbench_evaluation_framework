@@ -212,6 +212,39 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertIsNone(status["update_available"])
         self.assertEqual(status["version"], "0.141.0")
 
+    def test_default_path_serves_still_fresh_npm_answers_from_cache(self) -> None:
+        """A reload without check_updates must not forget an update the console
+        already learned — the cached npm answer is served, npm is not called."""
+        original_which = agents.shutil.which
+        original_run = agents._run
+        npm_calls = []
+
+        def fake_which(name: str):
+            if name in {"codex", "npm"}:
+                return f"/bin/{name}"
+            return None
+
+        def fake_run(command, *, timeout):
+            if command[:2] == ["/bin/codex", "--version"]:
+                return subprocess.CompletedProcess(command, 0, "codex 0.141.0\n", "")
+            if command[:3] == ["npm", "view", "@openai/codex"]:
+                npm_calls.append(list(command))
+                return subprocess.CompletedProcess(command, 0, "0.142.5\n", "")
+            return subprocess.CompletedProcess(command, 1, "", "not found")
+
+        agents.shutil.which = fake_which
+        agents._run = fake_run
+        try:
+            agents.agent_statuses(self.runtimes_dir, check_updates=True)
+            status = agents.agent_statuses(self.runtimes_dir)["statuses"]["codex"]
+        finally:
+            agents.shutil.which = original_which
+            agents._run = original_run
+
+        self.assertEqual(len(npm_calls), 1, npm_calls)
+        self.assertEqual(status["latest_version"], "0.142.5")
+        self.assertTrue(status["update_available"])
+
     def test_agent_statuses_caches_local_probes(self) -> None:
         original_which = agents.shutil.which
         original_run = agents._run

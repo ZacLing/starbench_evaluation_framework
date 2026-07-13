@@ -67,14 +67,17 @@ const PARSER_NOTES: Record<string, string> = {
 export default function Agents() {
   const queryClient = useQueryClient()
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
-  // The page paints from local CLI probes only; npm update checks hit the
-  // network and run solely when the user clicks "Check updates".
-  const [checkUpdates, setCheckUpdates] = useState(false)
+  /* Every visit to this page re-probes with an update check: the npm hop is
+     rate-limited by the server's own cache (10 min TTL), so switching tabs is
+     cheap while the version column never shows yesterday's answer. staleTime 0
+     + refetchOnMount "always" is what makes tab switches refresh. */
   const agentStatusQuery = useQuery({
-    queryKey: ["agent-status", checkUpdates],
-    queryFn: () => api.agentStatus(checkUpdates),
+    queryKey: ["agent-status", true],
+    queryFn: () => api.agentStatus(true),
     enabled: agentsQuery.isSuccess,
     retry: false,
+    staleTime: 0,
+    refetchOnMount: "always",
     placeholderData: keepPreviousData,
   })
   const providersQuery = useQuery({ queryKey: ["providers"], queryFn: api.providers })
@@ -138,10 +141,7 @@ export default function Agents() {
           <Button
             variant="outline"
             className="gap-1.5"
-            onClick={() => {
-              if (checkUpdates) agentStatusQuery.refetch()
-              else setCheckUpdates(true)
-            }}
+            onClick={() => agentStatusQuery.refetch()}
             disabled={agentStatusQuery.isFetching}
           >
             <RefreshCw className={cn("size-4", agentStatusQuery.isFetching && "animate-spin")} />
