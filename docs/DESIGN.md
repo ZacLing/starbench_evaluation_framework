@@ -15,18 +15,19 @@
 
 ## Theme
 
-Light, instrument-panel calm. The mood phrase: "the front panel of a measuring
-instrument in a well-lit lab": pure white surface, one considered indigo, verdicts
-that read at arm's length. No dark-mode terminal cosplay, no dashboard neon.
+Light, calm, HSW-Eval-reference dashboard: a light-gray canvas under white cards,
+one considered indigo, verdicts that read at arm's length. No dark-mode terminal
+cosplay, no dashboard neon.
 
 ## Color
 
-All colors OKLCH. Body background is pure white; the brand mood lives in the indigo
-primary and the verdict chips, never in a tinted page background.
+All colors OKLCH. The page canvas is a near-white gray (`oklch(0.977 0.003 280)`)
+and cards/sidebar are pure white; the brand mood lives in the indigo primary and
+the status colors.
 
 ```css
 :root {
-  --bg:            oklch(1 0 0);                 /* page */
+  --bg:            oklch(0.977 0.003 280);       /* page canvas (cards stay white) */
   --surface:       oklch(0.977 0.003 280);       /* panels, table headers */
   --surface-2:     oklch(0.958 0.005 280);       /* toolbar wells, code blocks */
   --border:        oklch(0.906 0.007 280);
@@ -101,11 +102,33 @@ numeric table columns and timers. Prose panes capped at 72ch.
 
 ## Layout
 
-App shell: sticky top bar (wordmark, runs-dir path in mono, "New run" primary button)
-over a full-width content region (max-width 1480px, 24px gutters). No side nav; the
-object hierarchy is shallow (runs → run → task run) and breadcrumbs in the top bar
-carry location. Tables are the primary surface: sticky header rows, row hover,
-generous first column, right-aligned numerics.
+App shell: collapsible sidebar (primary destinations + Setup group) beside a sticky
+top bar (breadcrumbs in mono, "New experiment" primary button) over a content region
+capped at 1400px with 24px gutters. Breadcrumbs carry location within the shallow
+object hierarchy (runs → run → task run). Tables are the primary surface: sticky
+header rows, row hover, generous first column, right-aligned numerics.
+
+The console's navigation principle: the Overview reads progress, the Run matrix
+finds differences, the run/task detail pages explain causes. The matrix
+(`/coverage`, nav label "Run matrix") is Task × Agent × Model with two-level
+headers and a metric switcher — one lens at a time (HSW coverage, rubric %,
+pass rate, stability σ, duration, run status), so color never carries two
+meanings at once. Clicking a cell opens a run-group rail (aggregates + recent
+task runs); clicking a column header opens the combination rollup. The Overview
+(`/`) is a KPI strip (planned coverage cells, run states, pass rate, runtime),
+progress-over-time and status-donut charts, an Agent × Model heatmap, top and
+bottom tasks by rubric mean, and a side rail of running runs and recent
+failures — all computed from `runs/` plus the task library.
+
+Runs follows the HSW Eval reference layout: page header with freshness controls
+("Last updated" + working auto-refresh switch), a KPI stat strip (all figures
+computed from disk), a filter row (search + status/runtime selects), the ledger
+table (dot status chips, progress bars with percent labels, pass-rate column,
+relative "Updated", per-row ⋯ menu, pagination footer), and at ≥1280px a sticky
+21rem inspector rail of stacked cards for the selected row (auto-selected to the
+newest run). While the rail is open the ledger drops columns the rail already
+carries; closing it (Esc or ✕) restores the full ledger. Below 1280px rows
+navigate directly and the rail disappears — no overlay drawer.
 
 ## Components
 
@@ -120,6 +143,15 @@ generous first column, right-aligned numerics.
 - **Empty states**: teach the CLI (`starbench-run ...` snippet) or point to New run.
 - **Command preview**: the launch form always renders the exact `starbench-run` argv
   it will execute, copyable; the GUI never hides the CLI truth.
+- **Status dot chip** (`RunStatusChip`): colored dot + word, no pill background —
+  the reference chip. The word carries meaning; color is never alone.
+- **KPI stat card**: tinted round icon chip + muted label, ink-colored number,
+  muted sub-line. Numbers wear text tokens, never status colors.
+- **Inspector rail** (`features/run-inspector/RunRail.tsx`): stacked cards for the
+  selected run — summary (title, dot chip, 2×2 metrics grid), Configuration facts,
+  Tasks activity list (colored outcome icons), Quick actions (icon + chevron rows).
+  Shows only facts read from the run's artifacts; null facts are omitted, never
+  padded. Shares the `["run", id]` query key so opening the detail page lands warm.
 
 ## Motion
 

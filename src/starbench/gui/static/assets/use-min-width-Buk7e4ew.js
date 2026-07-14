@@ -1,0 +1,1 @@
+import{V as e,W as t}from"./skeleton-BOodris7.js";var n=t(e(),1);function r(e){let t=`(min-width: ${e}px)`,[r,i]=n.useState(()=>window.matchMedia(t).matches);return n.useEffect(()=>{let e=window.matchMedia(t),n=()=>i(e.matches);return e.addEventListener(`change`,n),i(e.matches),()=>e.removeEventListener(`change`,n)},[t]),r}export{r as t};

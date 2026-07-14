@@ -308,6 +308,27 @@ export interface CoverageCell {
   inconclusive: number
   last_tested: string | null
   recent_refs: CoverageRunRef[]
+  rubric_samples: number
+  rubric_ratio_mean: number | null
+  rubric_ratio_std: number | null
+  duration_mean_seconds: number | null
+  duration_p95_seconds: number | null
+  exec_success: number
+  exec_failed: number
+  exec_timeout: number
+  exec_pending: number
+}
+
+export interface CoverageComboStats {
+  tasks_tested: number
+  judged: number
+  passed: number
+  exec_pending: number
+  rubric_samples: number
+  rubric_ratio_mean: number | null
+  rubric_ratio_std: number | null
+  duration_p95_seconds: number | null
+  last_tested: string | null
 }
 
 export interface CoverageColumn {
@@ -316,6 +337,7 @@ export interface CoverageColumn {
   model: string | null
   run_count: number
   rostered: boolean
+  stats: CoverageComboStats
 }
 
 export interface CoverageRow {
