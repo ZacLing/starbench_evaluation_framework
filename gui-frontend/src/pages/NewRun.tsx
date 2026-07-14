@@ -246,6 +246,26 @@ export default function NewRun() {
       draft.model.trim() === String(shared.evaluator_model ?? "").trim(),
   )
 
+  /* Hard launch blockers, surfaced at the step where the user can fix them.
+     A contender bound to an api_key provider whose key is absent cannot
+     authenticate at launch (the console can only inject values its own
+     environment holds), and a contender without a provider would be silently
+     dropped from the launch — both stop Next instead of failing later. */
+  const contenderBlockers = contenders.filter((draft) => {
+    const custom = customByRuntime[draft.runtime]
+    if (custom && (custom.protocol ?? "none") === "none") return false
+    const provider = providers.find((item) => item.id === draft.provider_id)
+    if (!provider) return true
+    return provider.auth === "api_key" && !provider.key_present
+  })
+  const judgeProvider = providers.find(
+    (item) => item.id === String(shared.evaluator_provider_id ?? ""),
+  )
+  const judgeKeyMissing =
+    judgeProvider !== undefined &&
+    judgeProvider.auth === "api_key" &&
+    !judgeProvider.key_present
+
   /* Step gates. Mode (0) needs a resolvable choice; the original task/contender
      gates move one step later. */
   const canNext =
@@ -254,8 +274,16 @@ export default function NewRun() {
       : step === 1
         ? selectedTaskObjs.length > 0
         : step === 2
-          ? contenders.length > 0
-          : true
+          ? contenders.length > 0 && contenderBlockers.length === 0
+          : step === 3
+            ? !judgeKeyMissing
+            : true
+  const nextBlockedReason =
+    step === 2 && contenders.length > 0 && contenderBlockers.length > 0
+      ? `${contenderBlockers.length} agent${contenderBlockers.length > 1 ? "s" : ""} cannot launch — fix the flagged credentials above.`
+      : step === 3 && judgeKeyMissing
+        ? `The judge cannot launch: ${judgeProvider?.api_key_env || "its API key"} is not set in the console's environment.`
+        : null
 
   /* Profile deviation is backend-owned and arrives with the dry-run plan. */
   const deviation = mode === "profile" ? plan.profileModifiedFields : []
@@ -480,6 +508,9 @@ export default function NewRun() {
           <span className="text-right text-xs text-fail-ink">
             Launch is disabled until the readiness checks below pass.
           </span>
+        )}
+        {nextBlockedReason && (
+          <span className="text-right text-xs text-fail-ink">{nextBlockedReason}</span>
         )}
         {step < NEW_RUN_STEPS.length - 1 ? (
           <Button disabled={!canNext} onClick={() => setStep(step + 1)}>

@@ -438,11 +438,15 @@ def _auth_check(
     present = [key for key in keys if os.environ.get(key)]
     if present:
         return _check(f"{role}_auth", label, "ok", f"{present[0]} is set.")
+    # env auth with a known key list and nothing set is not a maybe: the
+    # console can only inject values its own environment holds, so the launch
+    # is guaranteed to fail authentication. Fail closed here instead.
     return _check(
         f"{role}_auth",
         label,
-        "warn",
-        f"None of {', '.join(keys)} is set in the console's environment.",
+        "fail",
+        f"None of {', '.join(keys)} is set in the console's environment. "
+        "Export the key and restart the console.",
     )
 
 

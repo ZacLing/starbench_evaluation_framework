@@ -297,6 +297,9 @@ function ContenderCard({
   const ownLogin = custom ? (custom.protocol ?? "none") === "none" : false
   const hasCompatibleProvider =
     compatibleProviders(providerFilter, providers, draft.runtime).length > 0
+  const keyMissing =
+    !ownLogin && provider !== undefined && provider.auth === "api_key" && !provider.key_present
+  const providerUnset = !ownLogin && !provider && hasCompatibleProvider
   const { efforts, catalog } = effortOptions(provider, draft.model, thinkingEfforts)
   const effortValue = canonicalEffort(draft.thinking_effort)
   const effortStale = !efforts.includes(effortValue)
@@ -370,6 +373,18 @@ function ContenderCard({
             </span>
           )}
         </div>
+        {keyMissing && (
+          <p className="text-xs text-fail-ink">
+            {provider?.api_key_env || "This provider's API key variable"} is not set in the
+            console's environment, so this agent cannot authenticate at launch. Export the key
+            and restart the console, or pick a provider whose key is present.
+          </p>
+        )}
+        {providerUnset && (
+          <p className="text-xs text-fail-ink">
+            Pick a provider for this agent — without one it would be dropped from the launch.
+          </p>
+        )}
         {custom && !ownLogin && !custom.model_flag && (
           <p className="text-xs text-muted-foreground">
             This runtime has no model flag; the provider's endpoint and key are injected via $
@@ -381,13 +396,14 @@ function ContenderCard({
             Routed through {provider.name}; the endpoint must support the OpenAI Responses API.
           </p>
         )}
-        <div className="flex flex-wrap items-center gap-2">
-          <Label className="text-xs text-muted-foreground">Thinking effort</Label>
-          <RadioGroup
-            value={effortValue}
-            onValueChange={(value) => onUpdate({ thinking_effort: value })}
-            className="flex flex-wrap gap-1.5"
-          >
+        <div className="grid gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Label className="text-xs text-muted-foreground">Thinking effort</Label>
+            <RadioGroup
+              value={effortValue}
+              onValueChange={(value) => onUpdate({ thinking_effort: value })}
+              className="flex flex-wrap gap-1.5"
+            >
             {efforts.map((effort) => (
               <label
                 key={effort}
@@ -411,31 +427,35 @@ function ContenderCard({
                   : effort}
               </label>
             ))}
-          </RadioGroup>
-          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-            {catalog ? "levels from the model catalog" : "runtime-declared levels"}
-            {" · "}
-            {thinkingChannel === "native_config" ? "native reasoning setting" : "prompt-level request"}
-            <Hint>
-              {catalog
-                ? `This level table is published by ${draft.model || "the model"} itself in its runtime's model catalog; "default" runs the model's own default${
-                    catalog.default_level ? ` (${catalog.default_level})` : ""
-                  }. ${
-                    thinkingChannel === "native_config"
-                      ? "Applied through the CLI's own reasoning switch."
-                      : "Requested in the prompt."
-                  }`
-                : `${
-                    draft.model
-                      ? "This model publishes no level table, so the list falls back to the runtime's declared set; the CLI coerces a level the model does not support to the nearest accepted one."
-                      : "Pick a model to narrow this to its published level table; until then the list is the runtime's declared set."
-                  } ${
-                    thinkingChannel === "native_config"
-                      ? "Applied through the CLI's own reasoning switch (Claude Code --effort, Codex model_reasoning_effort, OpenCode --variant)."
-                      : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."
-                  }`}
-            </Hint>
-          </span>
+            </RadioGroup>
+          </div>
+          {/* Always its own line, left-aligned with the labels above: the source
+             note never trails the pills, so the reader's scan line stays put
+             regardless of how many levels a model offers. */}
+          <p className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+          {catalog ? "levels from the model catalog" : "runtime-declared levels"}
+          {" · "}
+          {thinkingChannel === "native_config" ? "native reasoning setting" : "prompt-level request"}
+          <Hint>
+            {catalog
+              ? `This level table is published by ${draft.model || "the model"} itself in its runtime's model catalog; "default" runs the model's own default${
+                  catalog.default_level ? ` (${catalog.default_level})` : ""
+                }. ${
+                  thinkingChannel === "native_config"
+                    ? "Applied through the CLI's own reasoning switch."
+                    : "Requested in the prompt."
+                }`
+              : `${
+                  draft.model
+                    ? "This model publishes no level table, so the list falls back to the runtime's declared set; the CLI coerces a level the model does not support to the nearest accepted one."
+                    : "Pick a model to narrow this to its published level table; until then the list is the runtime's declared set."
+                } ${
+                  thinkingChannel === "native_config"
+                    ? "Applied through the CLI's own reasoning switch (Claude Code --effort, Codex model_reasoning_effort, OpenCode --variant)."
+                    : "This runtime has no reasoning switch the runner controls; the effort is requested in the prompt."
+                }`}
+          </Hint>
+          </p>
         </div>
         {effortStale && (
           <p className="text-xs text-warn-ink">

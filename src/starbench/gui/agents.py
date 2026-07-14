@@ -270,16 +270,22 @@ def _cached_local_status(agent_id: str, bin_name: str) -> Dict[str, Any]:
 
 
 def _cached_npm_latest(agent_id: str, bin_name: str, package_name: str) -> Dict[str, Any]:
-    key = (agent_id, bin_name)
-    now = time.monotonic()
-    with _STATUS_CACHE_LOCK:
-        cached = _NPM_LATEST_CACHE.get(key)
-        if cached and now - cached[0] < NPM_LATEST_TTL_SECONDS:
-            return dict(cached[1])
+    cached = _npm_latest_from_cache(agent_id, bin_name)
+    if cached is not None:
+        return cached
     latest = _latest_npm_version(package_name)
     with _STATUS_CACHE_LOCK:
-        _NPM_LATEST_CACHE[key] = (time.monotonic(), dict(latest))
+        _NPM_LATEST_CACHE[(agent_id, bin_name)] = (time.monotonic(), dict(latest))
     return latest
+
+
+def _npm_latest_from_cache(agent_id: str, bin_name: str) -> Optional[Dict[str, Any]]:
+    """A still-fresh npm answer, or None. Never touches the network."""
+    with _STATUS_CACHE_LOCK:
+        cached = _NPM_LATEST_CACHE.get((agent_id, bin_name))
+        if cached and time.monotonic() - cached[0] < NPM_LATEST_TTL_SECONDS:
+            return dict(cached[1])
+    return None
 
 
 def agent_statuses(
@@ -290,15 +296,23 @@ def agent_statuses(
     Probes run in parallel (a serial pass over ~8 runtimes at multi-second
     timeouts kept the page hostage), and npm — the only network hop — runs
     only when the caller explicitly asks for an update check. When it did not
-    ask, the three `latest_*` fields and `update_available` stay None, which
-    the UI renders as "not checked", distinct from a failed check.
+    ask, a still-fresh cached npm answer is served anyway (the console already
+    knows it; hiding it just made pages forget updates on reload), and only
+    with a cold cache do the `latest_*` fields stay None, which the UI renders
+    as "not checked", distinct from a failed check.
     """
 
     def probe(target: Dict[str, str]) -> Dict[str, Any]:
         local = _cached_local_status(target["id"], target["bin"])
         package = INSTALL_SPECS.get(target["id"])
-        if check_updates and package and package.get("manager") == "npm":
-            latest = _cached_npm_latest(target["id"], target["bin"], package["name"])
+        if package and package.get("manager") == "npm":
+            if check_updates:
+                latest = _cached_npm_latest(target["id"], target["bin"], package["name"])
+            else:
+                latest = (
+                    _npm_latest_from_cache(target["id"], target["bin"])
+                    or dict(_LATEST_NOT_CHECKED)
+                )
         else:
             latest = dict(_LATEST_NOT_CHECKED)
         return {
