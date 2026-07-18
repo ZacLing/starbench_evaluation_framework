@@ -76,7 +76,7 @@ export default function Dashboard() {
           {coverageQuery.data && <TopBottomTasks coverage={coverageQuery.data} />}
         </div>
 
-        <aside className="sticky top-[4.5rem] hidden w-[21rem] shrink-0 flex-col gap-3 xl:flex">
+        <aside className="sticky top-[4.5rem] hidden w-[21rem] shrink-0 flex-col gap-3 2xl:flex">
           <RunningNow runs={runs} />
           <RecentFailures runs={runs} />
         </aside>
@@ -127,65 +127,66 @@ function KpiStrip({ runs, coverage }: { runs: RunOverview[]; coverage?: Coverage
   const pct = (value: number) => (total ? `${Math.round((value / total) * 100)}%` : "–")
 
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 min-[1700px]:grid-cols-8">
-      {planned && (
+    <div className="grid gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Kpi
-          icon={Grid3X3}
-          tint="bg-accent text-accent-foreground"
-          label="Planned cells"
-          value={String(planned.total)}
-          sub={`${planned.tested} tested`}
+          icon={TrendingUp}
+          tint="bg-pass-soft text-pass-ink"
+          label="Task pass rate"
+          value={judgedTotal ? `${((judgedPassed / judgedTotal) * 100).toFixed(1)}%` : "–"}
+          sub={judgedTotal ? `${judgedPassed} of ${judgedTotal} judged tasks` : "No judged tasks"}
         />
-      )}
-      <Kpi
-        icon={ListChecks}
-        tint="bg-accent text-accent-foreground"
-        label="Total runs"
-        value={String(total)}
-        sub={last7d > 0 ? `+${last7d} last 7d` : "none in last 7d"}
-      />
-      <Kpi
-        icon={Loader2}
-        tint="bg-live-soft text-live-ink"
-        label="Running"
-        value={String(running)}
-        sub={pct(running)}
-      />
-      <Kpi
-        icon={CheckCircle2}
-        tint="bg-pass-soft text-pass-ink"
-        label="Completed"
-        value={String(complete)}
-        sub={pct(complete)}
-      />
-      <Kpi
-        icon={XCircle}
-        tint="bg-warn-soft text-warn-ink"
-        label="Interrupted"
-        value={String(interrupted)}
-        sub={pct(interrupted)}
-      />
-      <Kpi
-        icon={TrendingUp}
-        tint="bg-pass-soft text-pass-ink"
-        label="Pass rate"
-        value={judgedTotal ? `${((judgedPassed / judgedTotal) * 100).toFixed(1)}%` : "–"}
-        sub={judgedTotal ? `${judgedPassed}/${judgedTotal} judged tasks` : "no judged tasks"}
-      />
-      <Kpi
-        icon={Timer}
-        tint="bg-accent text-accent-foreground"
-        label="Total runtime"
-        value={totalRuntime > 0 ? fmtDuration(totalRuntime) : "–"}
-        sub={`across ${spans.length} finished runs`}
-      />
-      <Kpi
-        icon={Clock}
-        tint="bg-accent text-accent-foreground"
-        label="P95 run duration"
-        value={p95 !== null ? fmtDuration(p95) : "–"}
-        sub="finished runs"
-      />
+        <Kpi
+          icon={CheckCircle2}
+          tint="bg-pass-soft text-pass-ink"
+          label="Completed runs"
+          value={String(complete)}
+          sub={`${pct(complete)} of ${total} total`}
+        />
+        <Kpi
+          icon={Loader2}
+          tint="bg-live-soft text-live-ink"
+          label="Running now"
+          value={String(running)}
+          sub={running ? `${pct(running)} of all runs` : "Nothing in flight"}
+        />
+        <Kpi
+          icon={XCircle}
+          tint="bg-warn-soft text-warn-ink"
+          label="Needs attention"
+          value={String(interrupted)}
+          sub={interrupted ? `${pct(interrupted)} interrupted` : "No interruptions"}
+        />
+      </div>
+
+      <Card className="grid gap-0 overflow-hidden rounded-xl py-0 sm:grid-cols-2 xl:grid-cols-4">
+        {planned && (
+          <CompactKpi
+            icon={Grid3X3}
+            label="Coverage"
+            value={`${planned.tested}/${planned.total}`}
+            sub="cells tested"
+          />
+        )}
+        <CompactKpi
+          icon={ListChecks}
+          label="Run volume"
+          value={String(total)}
+          sub={last7d > 0 ? `${last7d} in last 7 days` : "none in last 7 days"}
+        />
+        <CompactKpi
+          icon={Timer}
+          label="Total runtime"
+          value={totalRuntime > 0 ? fmtDuration(totalRuntime) : "–"}
+          sub={`${spans.length} finished runs`}
+        />
+        <CompactKpi
+          icon={Clock}
+          label="P95 duration"
+          value={p95 !== null ? fmtDuration(p95) : "–"}
+          sub="finished runs"
+        />
+      </Card>
     </div>
   )
 }
@@ -204,18 +205,49 @@ function Kpi({
   sub: string
 }) {
   return (
-    <Card className="gap-2 rounded-xl px-4 py-4">
+    <Card className="gap-3 rounded-xl px-4 py-4 shadow-none">
       <div className="flex items-center gap-2.5">
         <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-full", tint)}>
           <Icon className="size-4" />
         </span>
         <span className="truncate text-sm text-muted-foreground">{label}</span>
       </div>
-      <div className="text-2xl font-semibold tabular-nums tracking-tight">{value}</div>
+      <div className="text-[1.75rem] font-semibold leading-none tabular-nums tracking-tight">
+        {value}
+      </div>
       <div className="truncate text-xs text-muted-foreground" title={sub}>
         {sub}
       </div>
     </Card>
+  )
+}
+
+function CompactKpi({
+  icon: Icon,
+  label,
+  value,
+  sub,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  value: string
+  sub: string
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3 border-b px-4 py-3 last:border-b-0 sm:[&:nth-child(odd)]:border-r sm:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 xl:border-r xl:last:border-r-0">
+      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <Icon className="size-4" />
+      </span>
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="truncate text-xs font-medium text-muted-foreground">{label}</span>
+          <span className="font-mono text-sm font-semibold tabular-nums">{value}</span>
+        </div>
+        <p className="truncate text-xs text-muted-foreground" title={sub}>
+          {sub}
+        </p>
+      </div>
+    </div>
   )
 }
 
@@ -336,20 +368,20 @@ function RunsByStatus({ runs, className }: { runs: RunOverview[]; className?: st
   })).filter((slice) => slice.value > 0)
 
   return (
-    <Card className={cn("gap-3 rounded-xl py-4", className)}>
+    <Card className={cn("gap-3 rounded-xl py-4 shadow-none", className)}>
       <div className="px-4">
         <h2 className="text-sm font-semibold">Runs by status</h2>
       </div>
-      <CardContent className="flex items-center gap-4 px-4">
-        <div className="relative h-40 w-40 shrink-0">
+      <CardContent className="grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] items-center justify-items-center gap-3 px-4">
+        <div className="relative size-36 shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
                 data={counts}
                 dataKey="value"
                 nameKey="label"
-                innerRadius={52}
-                outerRadius={72}
+                innerRadius={45}
+                outerRadius={64}
                 paddingAngle={2}
                 isAnimationActive={false}
               >
@@ -364,16 +396,16 @@ function RunsByStatus({ runs, className }: { runs: RunOverview[]; className?: st
             <span className="text-xs text-muted-foreground">runs</span>
           </div>
         </div>
-        <ul className="grid gap-2 text-sm">
+        <ul className="grid w-full min-w-0 gap-2 self-center text-sm">
           {counts.map((slice) => (
-            <li key={slice.key} className="flex items-center gap-2">
+            <li key={slice.key} className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
               <span
                 className="size-2.5 shrink-0 rounded-sm"
                 style={{ background: slice.color }}
                 aria-hidden
               />
-              <span className="text-muted-foreground">{slice.label}</span>
-              <span className="ml-auto font-medium tabular-nums">
+              <span className="min-w-0 truncate text-muted-foreground">{slice.label}</span>
+              <span className="whitespace-nowrap font-medium tabular-nums">
                 {slice.value}{" "}
                 <span className="font-normal text-muted-foreground">
                   ({Math.round((slice.value / runs.length) * 100)}%)

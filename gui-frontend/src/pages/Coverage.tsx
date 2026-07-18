@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { ArrowRight, Plus, TriangleAlert, X } from "lucide-react"
+import { ArrowRight, Info, Plus, TriangleAlert, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -58,39 +58,43 @@ export default function Coverage() {
   const runLabel = `${runs_scanned} run${runs_scanned === 1 ? "" : "s"}`
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="max-w-3xl">
-        <h1 className="text-2xl font-semibold tracking-tight">Run matrix</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          Task performance across Agent × Model combinations, aggregated over every repeat
-          on disk.
-        </p>
-        {profile ? (
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Roster from profile{" "}
-            <span className="font-medium text-foreground">{profile.name}</span>
-            <span className="mx-1.5 text-border">·</span>
-            <span className="font-mono text-xs tabular-nums">rev {profile.rev}</span>
-            <span className="mx-1.5 text-border">·</span>
-            columns also include configs seen across the {runLabel} on disk
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="max-w-3xl">
+          <h1 className="text-2xl font-semibold tracking-tight">Run matrix</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Compare task resilience across every Agent × Model combination on disk.
           </p>
-        ) : (
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            Columns are derived from the {runLabel} on disk (no roster configured).
-          </p>
-        )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {profile && (
+            <span className="rounded-md border bg-card px-2.5 py-1.5">
+              Profile <strong className="font-medium text-foreground">{profile.name}</strong>
+              <span className="ml-1.5 font-mono tabular-nums">rev {profile.rev}</span>
+            </span>
+          )}
+          <span className="rounded-md border bg-card px-2.5 py-1.5 font-mono tabular-nums">
+            {runLabel} scanned
+          </span>
+        </div>
       </div>
 
       {/* Metric switcher: same matrix, one lens at a time — color never
           carries two meanings at once. */}
-      <div className="flex flex-wrap items-center gap-1 rounded-lg border bg-card p-1 self-start">
+      <div
+        className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg border bg-card p-1"
+        role="tablist"
+        aria-label="Matrix metric"
+      >
         {METRICS.map((entry) => (
           <button
             key={entry.key}
             type="button"
             onClick={() => setMetric(entry.key)}
             data-active={metric === entry.key}
-            className="rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-accent data-[active=true]:font-medium data-[active=true]:text-accent-foreground"
+            role="tab"
+            aria-selected={metric === entry.key}
+            className="shrink-0 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-accent data-[active=true]:font-medium data-[active=true]:text-accent-foreground"
           >
             {entry.label}
           </button>
@@ -99,7 +103,7 @@ export default function Coverage() {
 
       {rows.length ? (
         <div className="flex min-w-0 items-start gap-4">
-          <Card className="min-w-0 flex-1 gap-0 overflow-hidden py-0">
+          <Card className="min-w-0 flex-1 gap-0 overflow-hidden py-0 shadow-none">
             <LegendBar metric={metric} taskCount={rows.length} configCount={columns.length} />
             <Table>
               <TableHeader>
@@ -234,8 +238,8 @@ function LegendBar({
   configCount: number
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b px-4 py-2.5">
-      <span className="text-sm text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b bg-muted/25 px-4 py-2.5">
+      <span className="text-xs text-muted-foreground">
         <span className="font-mono tabular-nums text-foreground">{taskCount}</span> task
         {taskCount === 1 ? "" : "s"} ·{" "}
         <span className="font-mono tabular-nums text-foreground">{configCount}</span> config
@@ -243,9 +247,9 @@ function LegendBar({
       </span>
       {metric === "hsw" && (
         <>
-          <span className="text-sm text-muted-foreground">
-            HSW reads <span className="font-medium text-foreground">inverted</span>: an agent
-            pass breaches the task.
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Info className="size-3.5" aria-hidden />
+            HSW is inverted: an agent pass means the task is breached.
           </span>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
             <HswVerdict state="untested" />
