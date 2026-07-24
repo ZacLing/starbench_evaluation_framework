@@ -30,17 +30,9 @@ THINKING_EFFORT_INSTRUCTIONS = {
 }
 # Back-compat name; prefer THINKING_EFFORT_INSTRUCTIONS.
 CLAUDE_THINKING_EFFORT_INSTRUCTIONS = THINKING_EFFORT_INSTRUCTIONS
-CLAUDE_EXECUTOR_BASE_TOOLS = "Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS"
-CLAUDE_EXECUTOR_WEB_TOOLS = "WebSearch,WebFetch"
 # Judges must be read-only across runtimes; OpenCode's built-in plan agent
 # matches the read-only sandboxes used for Codex/Grok/Gemini judges.
 OPENCODE_JUDGE_AGENT = "plan"
-
-
-def claude_executor_allowed_tools(allow_web_search: bool) -> str:
-    if allow_web_search:
-        return f"{CLAUDE_EXECUTOR_BASE_TOOLS},{CLAUDE_EXECUTOR_WEB_TOOLS}"
-    return CLAUDE_EXECUTOR_BASE_TOOLS
 
 
 def build_augmented_prompt_text(task_run: TaskRunSpec) -> str:

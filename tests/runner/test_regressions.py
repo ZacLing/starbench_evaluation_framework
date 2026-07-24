@@ -259,7 +259,7 @@ class RegressionFixTests(unittest.TestCase):
             self.assertIn("--verbose", command)
 
     def test_claude_executor_allowed_tools_follow_task_web_search(self) -> None:
-        from starbench.runner.run_benchmark import claude_executor_allowed_tools
+        from starbench.adapters.claude import claude_executor_allowed_tools
 
         without_web = claude_executor_allowed_tools(False)
         with_web = claude_executor_allowed_tools(True)

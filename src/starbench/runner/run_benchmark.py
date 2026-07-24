@@ -69,7 +69,6 @@ from .prompts import (  # noqa: F401
     build_executor_prompt,
     build_parallel_judge_prompt,
     build_single_judge_prompt,
-    claude_executor_allowed_tools,
     opencode_model_name,
 )
 
@@ -83,6 +82,10 @@ from ..adapters import (  # noqa: F401
     get_builtin,
     resolve,
 )
+
+# ``claude_executor_allowed_tools`` now lives in the Claude adapter; re-exported
+# here so callers that historically imported it from this module keep working.
+from ..adapters.claude import claude_executor_allowed_tools  # noqa: F401
 
 
 if __name__ == "__main__":

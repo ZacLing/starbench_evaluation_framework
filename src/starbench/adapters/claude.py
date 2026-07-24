@@ -33,7 +33,6 @@ from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
     append_thinking_instruction,
     build_executor_prompt,
-    claude_executor_allowed_tools,
 )
 from .base import (
     ExecutorContext,
@@ -49,6 +48,15 @@ from .base import (
 CLAUDE_DOCKER_ENV_WHITELIST = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
 
 CLAUDE_JUDGE_ALLOWED_TOOLS = "Read,Glob,Grep,Bash,LS"
+
+CLAUDE_EXECUTOR_BASE_TOOLS = "Read,Write,Edit,MultiEdit,Bash,Glob,Grep,LS"
+CLAUDE_EXECUTOR_WEB_TOOLS = "WebSearch,WebFetch"
+
+
+def claude_executor_allowed_tools(allow_web_search: bool) -> str:
+    if allow_web_search:
+        return f"{CLAUDE_EXECUTOR_BASE_TOOLS},{CLAUDE_EXECUTOR_WEB_TOOLS}"
+    return CLAUDE_EXECUTOR_BASE_TOOLS
 
 
 def prepare_claude_env(
