@@ -112,6 +112,7 @@ def _builtin_row(info: RuntimeInfo) -> Dict[str, Any]:
         "provider_filter": _provider_filter_dict(info.provider_filter),
         "thinking_channel": info.thinking_channel,
         "thinking_efforts": list(info.thinking_efforts),
+        "enforces_web_search": info.enforces_web_search,
     }
 
 
@@ -408,6 +409,7 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
             "provider_filter": agent["provider_filter"],
             "thinking_channel": agent["thinking_channel"],
             "thinking_efforts": agent["thinking_efforts"],
+            "enforces_web_search": agent["enforces_web_search"],
         }
         for agent in BUILTIN_AGENTS
     ]
@@ -458,6 +460,7 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
                     # about; thinking effort reaches them as a prompt instruction.
                     "thinking_channel": "prompt",
                     "thinking_efforts": ["none", "low", "medium", "high"],
+                    "enforces_web_search": False,
                     "cli": _cli_probe(spec.command),
                     "source_path": str(path),
                     "error": None,

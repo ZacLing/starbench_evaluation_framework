@@ -87,6 +87,7 @@ export interface BuiltinRuntime {
   provider_filter: ProviderFilter
   thinking_channel: "native_config" | "prompt"
   thinking_efforts: string[]
+  enforces_web_search: boolean
 }
 
 export interface CustomRuntime {
@@ -116,6 +117,7 @@ export interface CustomRuntime {
   docker_capable?: boolean
   thinking_channel?: "native_config" | "prompt"
   thinking_efforts?: string[]
+  enforces_web_search?: boolean
   cli?: RuntimeCli
 }
 

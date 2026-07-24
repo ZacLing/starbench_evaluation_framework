@@ -259,6 +259,7 @@ class CodexAdapter(RuntimeAdapter):
         # models cache (surfaced per-model by the console).
         thinking_channel="native_config",
         thinking_efforts=("default", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"),
+        enforces_web_search=True,
     )
 
     def executor_skill_prompt_location(self) -> str:

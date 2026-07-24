@@ -131,6 +131,11 @@ class RuntimeInfo:
     # three instruction tiers. The orchestrator rejects a level outside this
     # set instead of quietly passing it on.
     thinking_efforts: Tuple[str, ...] = ("default", "low", "medium", "high")
+    # Whether the runner can actually enforce the run-level --web-search
+    # override for this runtime (Claude Code's tool allowlist, Codex's
+    # --search flag). Runtimes without an enforcement hook leave web access
+    # to their own tooling; planning warns instead of pretending.
+    enforces_web_search: bool = False
 
     @property
     def docker_capable(self) -> bool:

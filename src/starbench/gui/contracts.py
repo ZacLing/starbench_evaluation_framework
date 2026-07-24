@@ -117,6 +117,9 @@ class BuiltinRuntime(TypedDict):
     thinking_channel: ThinkingChannel
     # The effort levels this runtime's CLI actually accepts ("none" first).
     thinking_efforts: List[str]
+    # Whether the runner can enforce the run-level web-search override for this
+    # runtime (registry fact: RuntimeInfo.enforces_web_search).
+    enforces_web_search: bool
 
 
 class _CustomRuntimeBase(TypedDict):
@@ -149,6 +152,7 @@ class CustomRuntime(_CustomRuntimeBase, total=False):
     docker_capable: bool
     thinking_channel: ThinkingChannel
     thinking_efforts: List[str]
+    enforces_web_search: bool
     cli: RuntimeCli
 
 

@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ...adapters import DEFAULT_DOCKER_IMAGES
+from ...adapters import DEFAULT_DOCKER_IMAGES, list_builtin
 from ...contracts import ContractValidationError, validate_payload
 from ...runner.task_loader import discover_tasks
 from .. import providers as providers_module, skills as skills_module
@@ -455,14 +455,20 @@ def plan_experiment(
         # an advisory warning surfaced in the plan.
         warnings: List[str] = []
         # The web-search override is only enforceable where the runner controls
-        # web access (Claude's tool allowlist, Codex's --search flag). Say so
-        # instead of letting the override look global.
+        # web access; which runtimes those are is a registry fact
+        # (RuntimeInfo.enforces_web_search), not a name list kept here.
         web_search_mode = str(shared.get("web_search_mode") or "task")
-        if web_search_mode != "task" and agent not in ("claude", "codex"):
+        enforcer_labels = sorted(
+            adapter.info.label for adapter in list_builtin() if adapter.info.enforces_web_search
+        )
+        enforcer_ids = {
+            adapter.info.id for adapter in list_builtin() if adapter.info.enforces_web_search
+        }
+        if web_search_mode != "task" and agent not in enforcer_ids:
             warnings.append(
                 f"Contender {label}: the web-search override ({web_search_mode}) is not "
                 f"enforceable for {agent} — its own tooling decides web access. Only "
-                "Claude Code and Codex enforce it."
+                f"{' and '.join(enforcer_labels)} enforce it."
             )
         for key in executor_env_spec:
             if key in judge_sensitive and judge_env.get(key) != executor_env_spec[key]:

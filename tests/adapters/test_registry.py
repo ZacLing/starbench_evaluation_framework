@@ -120,6 +120,11 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve("bogus")
 
+    def test_web_search_enforcement_is_a_registry_fact(self) -> None:
+        by_id = {adapter.info.id: adapter.info for adapter in list_builtin()}
+        enforcing = {agent_id for agent_id, info in by_id.items() if info.enforces_web_search}
+        self.assertEqual(enforcing, {"claude", "codex"})
+
 
 if __name__ == "__main__":
     unittest.main()

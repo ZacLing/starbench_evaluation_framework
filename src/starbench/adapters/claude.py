@@ -208,6 +208,7 @@ class ClaudeAdapter(RuntimeAdapter):
         # levels are the CLI's real set, verified against `claude --help`.
         thinking_channel="native_config",
         thinking_efforts=("default", "low", "medium", "high", "xhigh", "max"),
+        enforces_web_search=True,
     )
 
     def executor_skill_prompt_location(self) -> str:
