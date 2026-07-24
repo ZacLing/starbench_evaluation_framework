@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from ..adapters import BUILTIN_AGENTS, DEFAULT_DOCKER_IMAGES, resolve
+from ..adapters import BUILTIN_AGENTS, DEFAULT_DOCKER_IMAGES, list_builtin, resolve
 from ..contracts import ContractValidationError, validate_payload
 from ..domain import (
     INSTRUCTION_MODES,
@@ -127,12 +127,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run StarBench benchmark tasks and rubric judges.",
         epilog=(
-            "Runtime convention: use Claude Code (`--*-agent claude`) for Claude-family models, "
-            "Codex (`--*-agent codex`) for GPT/OpenAI-family models, and OpenCode "
-            "(`--*-agent opencode`) for other OpenAI-compatible models such as Doubao or Qwen. "
-            "Use Grok Build (`--*-agent grok`) or Gemini CLI (`--*-agent gemini`) when those "
-            "host CLIs are installed and authenticated. "
-            "When mixing runtimes, split auth with --executor-auth-mode and --evaluator-auth-mode."
+            "Built-in runtimes: "
+            + ", ".join(f"{a.info.id} ({a.info.label})" for a in list_builtin())
+            + "; or custom:<id> for a runtime defined in --runtimes-dir. "
+            "When mixing runtimes, split auth with --executor-auth-mode and "
+            "--evaluator-auth-mode."
         ),
     )
     parser.add_argument("--seed", type=int, default=123)
@@ -144,31 +143,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
     parser.add_argument("--task", action="append", help="Task id or task directory name to include. Repeatable.")
     parser.add_argument("--repeat", type=int, default=1, help="Repeat the selected task list N times.")
-    parser.add_argument(
-        "--codex-bin",
-        default="codex",
-        help="Codex executable, or a shell-like command prefix. Use for GPT/OpenAI-family models.",
-    )
-    parser.add_argument(
-        "--claude-bin",
-        default="claude",
-        help="Claude Code executable, or a shell-like command prefix. Use for Claude-family models.",
-    )
-    parser.add_argument(
-        "--grok-bin",
-        default="grok",
-        help="Grok Build executable, or a shell-like command prefix. Use for xAI Grok Build models.",
-    )
-    parser.add_argument(
-        "--gemini-bin",
-        default="gemini",
-        help="Gemini CLI executable, or a shell-like command prefix. Use for Gemini CLI models.",
-    )
-    parser.add_argument(
-        "--opencode-bin",
-        default="opencode",
-        help="OpenCode executable, or a shell-like command prefix. Use for other OpenAI-compatible models.",
-    )
+    # One --<id>-bin flag per built-in runtime, derived from the adapter
+    # registry so a new adapter gets its flag without touching this file.
+    for adapter in list_builtin():
+        info = adapter.info
+        parser.add_argument(
+            f"--{info.id}-bin",
+            default=info.bin,
+            help=(
+                f"{info.label} executable, or a shell-like command prefix "
+                f"({info.description})."
+            ),
+        )
     parser.add_argument(
         "--executor-bin",
         help="Role-specific executable override for the selected executor runtime.",
@@ -181,18 +167,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--executor-agent",
         default="codex",
         help=(
-            "Executor runtime: codex for GPT/OpenAI-family, claude for Claude-family, "
-            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI, "
-            "or custom:<id> for a runtime defined in --runtimes-dir."
+            "Executor runtime: one of "
+            + ", ".join(sorted(BUILTIN_AGENTS))
+            + ", or custom:<id> for a runtime defined in --runtimes-dir."
         ),
     )
     parser.add_argument(
         "--evaluator-agent",
         default="codex",
         help=(
-            "Evaluator runtime: codex for GPT/OpenAI-family, claude for Claude-family, "
-            "opencode for other OpenAI-compatible models, grok for Grok Build, gemini for Gemini CLI, "
-            "or custom:<id> for a runtime defined in --runtimes-dir."
+            "Evaluator runtime: one of "
+            + ", ".join(sorted(BUILTIN_AGENTS))
+            + ", or custom:<id> for a runtime defined in --runtimes-dir."
         ),
     )
     parser.add_argument(
@@ -298,9 +284,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help=(
             "Image used when --executor-backend docker is selected. Defaults to the "
-            "runtime's own image (starbench-codex:latest, starbench-claude-code:latest, "
-            "starbench-gemini-cli:latest, starbench-grok:latest, starbench-opencode:latest); "
-            "custom runtimes take theirs from the spec's docker section."
+            "runtime's own image ("
+            + ", ".join(DEFAULT_DOCKER_IMAGES[a.info.id] for a in list_builtin())
+            + "); custom runtimes take theirs from the spec's docker section."
         ),
     )
     parser.add_argument("--evaluator-timeout-seconds", type=int, default=900)

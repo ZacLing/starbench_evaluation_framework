@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
-from ..adapters import ExecutorContext, JudgeContext, resolve
+from ..adapters import ExecutorContext, JudgeContext, list_builtin, resolve
 from ..contracts import ARTIFACT_SCHEMA_VERSION
 from ..domain import (
     ACTIVE_RUN_STATES,
@@ -284,11 +284,10 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "executor_skill_order": "executor_skills",
         "instruction_variants": instruction_variants,
         "task_order": run_task_ids,
-        "codex_bin": args.codex_bin,
-        "claude_bin": args.claude_bin,
-        "grok_bin": args.grok_bin,
-        "gemini_bin": args.gemini_bin,
-        "opencode_bin": args.opencode_bin,
+        **{
+            f"{adapter.info.id}_bin": getattr(args, f"{adapter.info.id}_bin")
+            for adapter in list_builtin()
+        },
     }
     json_dump(run_root / "run_config.json", run_config)
 
@@ -308,11 +307,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
             f"{args.executor_agent} (supported: {', '.join(supported_efforts)})."
         )
     runtime_bins = {
-        "codex": args.codex_bin,
-        "claude": args.claude_bin,
-        "grok": args.grok_bin,
-        "gemini": args.gemini_bin,
-        "opencode": args.opencode_bin,
+        adapter.info.id: getattr(args, f"{adapter.info.id}_bin") for adapter in list_builtin()
     }
     executor_bins = dict(runtime_bins)
     judge_bins = dict(runtime_bins)
