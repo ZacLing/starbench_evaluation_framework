@@ -159,7 +159,7 @@ def build_docker_codex_command(
     )
 
 
-async def run_codex_in_docker(
+async def run_codex_process_in_docker(
     *,
     codex_bin: str,
     docker_bin: str,
@@ -305,7 +305,7 @@ class CodexAdapter(RuntimeAdapter):
                 timeout_seconds=task.timeout_seconds,
             )
         if ctx.executor_backend == "docker":
-            return await run_codex_in_docker(
+            return await run_codex_process_in_docker(
                 codex_bin=codex_bin,
                 docker_bin=ctx.docker_bin,
                 docker_image=ctx.docker_image,

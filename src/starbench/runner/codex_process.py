@@ -60,7 +60,7 @@ from ..adapters.codex import (  # noqa: F401
     build_docker_codex_command,
     prepare_auth_home,
     prepare_isolated_auth_home,
-    run_codex_in_docker,
+    run_codex_process_in_docker,
 )
 from ..adapters.claude import (  # noqa: F401
     CLAUDE_DOCKER_ENV_WHITELIST,
@@ -102,9 +102,7 @@ from ..adapters.spec import (  # noqa: F401
 # -- derived tables ---------------------------------------------------------
 from ..adapters.registry import DEFAULT_DOCKER_IMAGES  # noqa: F401
 
-# -- historical process-runner aliases --------------------------------------
-# The generic process runner was renamed ``run_codex_process`` -> ``run_cli_process``
-# and the codex docker wrapper ``run_codex_process_in_docker`` -> ``run_codex_in_docker``.
-# Keep the old names importable from this shim so existing callers stay unaffected.
-run_codex_process = run_cli_process  # noqa: F401
-run_codex_process_in_docker = run_codex_in_docker  # noqa: F401
+# -- historical process-runner alias ----------------------------------------
+# The generic process runner was renamed ``run_codex_process`` -> ``run_cli_process``.
+# Keep the old name importable from this shim so existing callers stay unaffected.
+run_codex_process = run_cli_process

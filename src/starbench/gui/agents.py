@@ -25,7 +25,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Collection, Dict, List, Optional, Sequence, Tuple
 
 from ..adapters import list_builtin, provider_filter_for_protocol
 from ..adapters.base import ProviderFilter, RuntimeInfo
@@ -122,7 +122,7 @@ _PREFERRED_DISPLAY_ORDER = ("claude", "codex", "gemini", "grok", "opencode")
 _BUILTIN_INFO = {adapter.info.id: adapter.info for adapter in list_builtin()}
 
 
-def _display_order(ids) -> List[str]:
+def _display_order(ids: Collection[str]) -> List[str]:
     known = [agent_id for agent_id in _PREFERRED_DISPLAY_ORDER if agent_id in ids]
     rest = sorted(set(ids) - set(_PREFERRED_DISPLAY_ORDER))
     return [*known, *rest]

@@ -29,11 +29,6 @@ export function useAgentCatalog() {
     return map
   }, [builtin, custom])
   const agentLabel = useCallback((id: string) => byId[id]?.label ?? id, [byId])
-  const agentNote = useCallback((id: string) => byId[id]?.note ?? "", [byId])
-  const dockerCapableFor = useCallback(
-    (id: string) => byId[id]?.dockerCapable ?? !id.startsWith("custom:"),
-    [byId],
-  )
   const builtinIds = useMemo(() => builtin.map((agent) => agent.id), [builtin])
-  return { query, builtin, custom, agentLabel, agentNote, dockerCapableFor, builtinIds }
+  return { query, builtin, custom, agentLabel, builtinIds }
 }
