@@ -340,6 +340,14 @@ class AgentRegistryTest(unittest.TestCase):
                 runs_dir=runs_dir,
             )
 
+    def test_display_order_appends_unknown_ids_alphabetically(self) -> None:
+        from starbench.gui.agents import _display_order
+
+        self.assertEqual(
+            _display_order(["opencode", "zeta-agent", "claude", "alpha-agent"]),
+            ["claude", "opencode", "alpha-agent", "zeta-agent"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

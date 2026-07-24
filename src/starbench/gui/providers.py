@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..adapters import list_builtin
 from ..execution.probe import run_probe
 from . import contracts
 from .data import SAFE_ID, _read_json
@@ -38,6 +39,8 @@ from .data import SAFE_ID, _read_json
 PROVIDER_KINDS = ("anthropic", "openai", "google", "xai", "openai-compatible")
 PROVIDER_AUTHS = ("api_key", "cli_login")
 
+# A policy choice (which runtime drives a provider kind by default), not a copy
+# of a registry fact; kept as a literal.
 KIND_TO_CLI_AGENT = {
     "anthropic": "claude",
     "openai": "codex",
@@ -46,21 +49,9 @@ KIND_TO_CLI_AGENT = {
     "openai-compatible": "opencode",
 }
 
-AGENT_LABELS = {
-    "claude": "Claude Code",
-    "codex": "Codex",
-    "gemini": "Gemini CLI",
-    "grok": "Grok Build",
-    "opencode": "OpenCode",
-}
-
-AGENT_BINS = {
-    "claude": "claude",
-    "codex": "codex",
-    "gemini": "gemini",
-    "grok": "grok",
-    "opencode": "opencode",
-}
+# Presentation facts owned by the adapter registry (single source of truth).
+AGENT_LABELS = {adapter.info.id: adapter.info.label for adapter in list_builtin()}
+AGENT_BINS = {adapter.info.id: adapter.info.bin for adapter in list_builtin()}
 
 CLI_STATUS_COMMANDS = {
     "claude": ("claude", "auth", "status"),

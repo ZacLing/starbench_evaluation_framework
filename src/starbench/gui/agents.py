@@ -115,13 +115,20 @@ def _builtin_row(info: RuntimeInfo) -> Dict[str, Any]:
     }
 
 
-# Derived from the adapter registry; this list only fixes the console's
-# historical display order (adapters iterate codex-first for docker-image order).
-_BUILTIN_DISPLAY_ORDER = ("claude", "codex", "gemini", "grok", "opencode")
+# The console's historical display order. Registry entries not named here are
+# appended alphabetically, so a newly registered adapter appears without edits.
+_PREFERRED_DISPLAY_ORDER = ("claude", "codex", "gemini", "grok", "opencode")
 _BUILTIN_INFO = {adapter.info.id: adapter.info for adapter in list_builtin()}
 
+
+def _display_order(ids) -> List[str]:
+    known = [agent_id for agent_id in _PREFERRED_DISPLAY_ORDER if agent_id in ids]
+    rest = sorted(set(ids) - set(_PREFERRED_DISPLAY_ORDER))
+    return [*known, *rest]
+
+
 BUILTIN_AGENTS: List[Dict[str, Any]] = [
-    _builtin_row(_BUILTIN_INFO[agent_id]) for agent_id in _BUILTIN_DISPLAY_ORDER
+    _builtin_row(_BUILTIN_INFO[agent_id]) for agent_id in _display_order(_BUILTIN_INFO)
 ]
 
 BUILTIN_IDS = {agent["id"] for agent in BUILTIN_AGENTS}
