@@ -40,6 +40,7 @@ from .base import (
     ProviderFilter,
     RuntimeAdapter,
     RuntimeInfo,
+    RuntimeOption,
     finalize_success,
 )
 
@@ -255,6 +256,11 @@ class OpenCodeAdapter(RuntimeAdapter):
         # here is the union of the built-ins.
         thinking_channel="native_config",
         thinking_efforts=("default", "minimal", "low", "medium", "high", "xhigh", "max"),
+        options=(
+            RuntimeOption(name="provider", type="string", role="both", surface="wiring"),
+            RuntimeOption(name="base_url", type="string", role="both", surface="wiring"),
+            RuntimeOption(name="api_key_env", type="string", role="both", surface="wiring"),
+        ),
     )
 
     def executor_skill_prompt_location(self) -> str:

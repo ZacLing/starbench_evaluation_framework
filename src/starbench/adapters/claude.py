@@ -41,6 +41,7 @@ from .base import (
     ProviderFilter,
     RuntimeAdapter,
     RuntimeInfo,
+    RuntimeOption,
     effective_web_search,
     finalize_success,
 )
@@ -217,6 +218,16 @@ class ClaudeAdapter(RuntimeAdapter):
         thinking_channel="native_config",
         thinking_efforts=("default", "low", "medium", "high", "xhigh", "max"),
         enforces_web_search=True,
+        options=(
+            RuntimeOption(
+                name="max_turns",
+                type="integer",
+                role="executor",
+                surface="user",
+                label="Max turns",
+                help="Agentic turn cap for the executor. Blank means no cap.",
+            ),
+        ),
     )
 
     def executor_skill_prompt_location(self) -> str:

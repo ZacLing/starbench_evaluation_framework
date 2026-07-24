@@ -27,12 +27,38 @@ To add a per-runtime fact, add a field here and populate it in each adapter.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, Mapping, Tuple
 
 from ..execution.process import mark_failed
 from ..runner.models import ProcessResult, TaskRunSpec
+
+
+OPTION_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class RuntimeOption:
+    """One runtime-specific knob, declared by the adapter that owns it.
+
+    ``surface`` constrains the GUI only: "user" knobs are auto-rendered as
+    form controls; "wiring" knobs are transport values the console computes
+    from the selected AI provider and never renders. CLI/plan input treats
+    both alike (a standalone CLI user has no console to fill wiring for
+    them). ``default=None`` means "not set": the knob is omitted and the
+    runtime CLI keeps its own default behaviour.
+    """
+
+    name: str
+    type: str  # "integer" | "string" | "boolean" | "enum"
+    role: str = "executor"  # "executor" | "evaluator" | "both"
+    surface: str = "user"  # "user" | "wiring"
+    label: str = ""
+    help: str = ""
+    default: object = None
+    choices: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -94,6 +120,69 @@ def provider_filter_for_protocol(protocol: str) -> ProviderFilter:
     return ProviderFilter()  # "none": the CLI uses its own login/config
 
 
+def _describe_options(options) -> str:
+    return ", ".join(f"{o.name} ({o.type})" for o in options)
+
+
+def resolve_runtime_options(
+    adapter: "RuntimeAdapter", role: str, raw: Mapping[str, object]
+) -> Dict[str, object]:
+    """Validate and coerce one role's option box against the adapter's declarations.
+
+    The single implementation both transports share: CLI ``--<role>-option``
+    pairs and run_plan v2 boxes funnel through here, so the two entries cannot
+    drift. Raises ValueError with the messages the design spec fixes verbatim.
+    """
+    agent_id = adapter.info.id
+    declared = {o.name: o for o in adapter.info.options if o.role in (role, "both")}
+    resolved: Dict[str, object] = {}
+    for key, value in dict(raw).items():
+        option = declared.get(key)
+        if option is None:
+            available = (
+                f"its declared {role}-side options: {_describe_options(declared.values())}"
+                if declared
+                else f"it declares no {role}-side options"
+            )
+            raise ValueError(f'{agent_id} has no option named "{key}" ({available}).')
+        resolved[key] = _coerce_option(agent_id, option, value)
+    for option in declared.values():
+        if option.name not in resolved and option.default is not None:
+            resolved[option.name] = option.default
+    return resolved
+
+
+def _coerce_option(agent_id: str, option: "RuntimeOption", value: object) -> object:
+    if option.type == "integer":
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            raise ValueError(
+                f'{agent_id} option {option.name} expects an integer, got "{value}".'
+            )
+        try:
+            return int(value)
+        except ValueError:
+            raise ValueError(
+                f'{agent_id} option {option.name} expects an integer, got "{value}".'
+            )
+    if option.type == "boolean":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str) and value.lower() in ("true", "false"):
+            return value.lower() == "true"
+        raise ValueError(
+            f'{agent_id} option {option.name} expects true or false, got "{value}".'
+        )
+    if option.type == "enum":
+        text = str(value)
+        if text not in option.choices:
+            raise ValueError(
+                f'{agent_id} option {option.name} must be one of '
+                f'{", ".join(option.choices)}; got "{value}".'
+            )
+        return text
+    return str(value)
+
+
 @dataclass(frozen=True)
 class RuntimeInfo:
     """Static facts about a runtime — the single source of truth.
@@ -136,6 +225,8 @@ class RuntimeInfo:
     # --search flag). Runtimes without an enforcement hook leave web access
     # to their own tooling; planning warns instead of pretending.
     enforces_web_search: bool = False
+    # Runtime-specific knobs (see RuntimeOption). Empty for runtimes with none.
+    options: Tuple["RuntimeOption", ...] = ()
 
     @property
     def docker_capable(self) -> bool:
