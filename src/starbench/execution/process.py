@@ -1,9 +1,9 @@
 """Subprocess spawning, stream pumping, and timeout handling.
 
 Runtime-agnostic: every runtime (built-in or custom, local or docker) ends up
-calling :func:`run_codex_process` with an already-built argv, env, and prompt.
-The name keeps the historical `codex_process` spelling for compatibility; the
-function drives any coding-agent CLI, not just Codex.
+calling :func:`run_cli_process` with an already-built argv, env, and prompt.
+The historical ``codex_process`` module still re-exports it under the old name
+for compatibility; the function drives any coding-agent CLI, not just Codex.
 
 Invariants:
 - stdin receives ``prompt`` (empty string when the runtime takes its prompt on
@@ -60,7 +60,7 @@ async def _pump_stream(stream: asyncio.StreamReader, path: Path) -> None:
             handle.flush()
 
 
-async def run_codex_process(
+async def run_cli_process(
     command: Iterable[str],
     *,
     cwd: Path,

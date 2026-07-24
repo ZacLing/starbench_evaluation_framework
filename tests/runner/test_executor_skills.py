@@ -94,9 +94,9 @@ class ExecutorSkillTests(unittest.TestCase):
                 "demo_python_cli__skill_demo-executor-skill",
                 executor_backend="docker",
             )
-            installed_skill = paths["codex_home"] / "docker" / "skills" / "demo-executor-skill" / "SKILL.md"
+            installed_skill = paths["agent_home"] / "docker" / "skills" / "demo-executor-skill" / "SKILL.md"
             self.assertTrue(installed_skill.exists())
-            self.assertTrue((paths["codex_home"] / "docker" / "skills" / "demo-executor-skill" / "final_self_check.md").exists())
+            self.assertTrue((paths["agent_home"] / "docker" / "skills" / "demo-executor-skill" / "final_self_check.md").exists())
             self.assertNotIn(
                 "demo-executor-skill",
                 (paths["workspace"] / "inputs" / "prompt.md").read_text(encoding="utf-8"),
@@ -331,7 +331,7 @@ class ExecutorSkillTests(unittest.TestCase):
                 "demo_python_cli__skill_shared-demo-skill",
                 executor_backend="local",
             )
-            self.assertTrue((paths["codex_home"] / "skills" / "shared-demo-skill" / "SKILL.md").exists())
+            self.assertTrue((paths["agent_home"] / "skills" / "shared-demo-skill" / "SKILL.md").exists())
 
             args = parse_args(
                 [

@@ -28,7 +28,7 @@ from ..execution.parsers import (
     write_claude_final_output,
     write_claude_stream_final_output,
 )
-from ..execution.process import run_codex_process, split_command
+from ..execution.process import run_cli_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
     append_thinking_instruction,
@@ -178,7 +178,7 @@ async def run_claude_process_in_docker(
         container_name=container_name,
         effort=effort,
     )
-    result = await run_codex_process(
+    result = await run_cli_process(
         command,
         cwd=workspace,
         prompt=prompt,
@@ -267,9 +267,9 @@ class ClaudeAdapter(RuntimeAdapter):
                 effort=ctx.thinking_effort,
             )
             env = prepare_claude_env(
-                paths["codex_home"] / "claude_executor", ctx.auth_mode, base_env=ctx.base_env
+                paths["agent_home"] / "claude_executor", ctx.auth_mode, base_env=ctx.base_env
             )
-            result = await run_codex_process(
+            result = await run_cli_process(
                 command,
                 cwd=paths["workspace"],
                 prompt=claude_prompt,
@@ -311,7 +311,7 @@ class ClaudeAdapter(RuntimeAdapter):
             ctx.auth_mode,
             base_env=ctx.base_env,
         )
-        result = await run_codex_process(
+        result = await run_cli_process(
             command,
             cwd=judge_workspace,
             prompt=append_thinking_instruction(base_prompt, ctx.thinking_effort),

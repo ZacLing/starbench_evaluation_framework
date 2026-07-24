@@ -90,7 +90,7 @@ runs/<run_id>/<task_run_id>/task_summary.json
 For Codex Docker executors, StarBench installs selected skills on the host at:
 
 ```text
-runs/<run_id>/<task_run_id>/codex_home/docker/skills/<skill_id>/
+runs/<run_id>/<task_run_id>/agent_home/docker/skills/<skill_id>/
 ```
 
 The container sees the same skill at:
@@ -102,14 +102,14 @@ The container sees the same skill at:
 because the Docker command mounts:
 
 ```text
-host codex_home/docker -> /codex-home
+host agent_home/docker -> /codex-home
 CODEX_HOME=/codex-home
 ```
 
 For local executors, selected skills are installed at:
 
 ```text
-runs/<run_id>/<task_run_id>/codex_home/skills/<skill_id>/
+runs/<run_id>/<task_run_id>/agent_home/skills/<skill_id>/
 ```
 
 Other local runtimes use task-workspace paths:

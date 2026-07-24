@@ -25,7 +25,7 @@ from typing import Dict, List
 
 from ..execution.docker import build_docker_agent_command
 from ..execution.parsers import normalize_custom_events, write_custom_final_output
-from ..execution.process import run_codex_process, split_command
+from ..execution.process import run_cli_process, split_command
 from ..runner.custom_runtime import CustomRuntimeSpec
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
@@ -118,7 +118,7 @@ async def run_custom_process_in_docker(
         auth_env=auth_env,
         container_name=container_name,
     )
-    result = await run_codex_process(
+    result = await run_cli_process(
         command,
         cwd=workspace,
         prompt=prompt if spec.prompt_via == "stdin" else "",
@@ -212,7 +212,7 @@ class SpecAdapter(RuntimeAdapter):
             command = build_custom_command(spec, role="executor", model=ctx.model, prompt=prompt_text)
             env = dict(ctx.base_env)
             env.update(spec.env)
-            result = await run_codex_process(
+            result = await run_cli_process(
                 command,
                 cwd=paths["workspace"],
                 prompt=prompt_text if spec.prompt_via == "stdin" else "",
@@ -248,7 +248,7 @@ class SpecAdapter(RuntimeAdapter):
         env = dict(ctx.base_env)
         env.update(spec.env)
         prompt_over_stdin = spec.prompt_via != "arg"
-        result = await run_codex_process(
+        result = await run_cli_process(
             command,
             cwd=judge_workspace,
             prompt=prompt if prompt_over_stdin else "",

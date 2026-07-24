@@ -42,7 +42,7 @@ runs/<run_id>/<task_run_id>/
   workspace/
     inputs/
     outputs/
-  codex_home/
+  agent_home/
   logs/
 ```
 

@@ -355,7 +355,7 @@ class ProviderTest(unittest.TestCase):
         self.assertEqual(loaded["providers"][0]["models"], ["deepseek/deepseek-r1"])
 
     def test_codex_cli_models_use_local_cache(self) -> None:
-        codex_home = self.tmp / "codex_home"
+        codex_home = self.tmp / "codex"
         codex_home.mkdir()
         (codex_home / "models_cache.json").write_text(
             json.dumps(
@@ -399,7 +399,7 @@ class ProviderTest(unittest.TestCase):
         self.assertEqual(provider["models_fetched_at"], "2026-07-07T03:00:00Z")
 
     def test_codex_cli_models_surface_per_model_reasoning_tables(self) -> None:
-        codex_home = self.tmp / "codex_home"
+        codex_home = self.tmp / "codex"
         codex_home.mkdir()
         (codex_home / "models_cache.json").write_text(
             json.dumps(

@@ -20,7 +20,7 @@ from typing import Dict, List
 
 from ..execution.docker import build_docker_agent_command, kill_container_on_timeout
 from ..execution.parsers import normalize_headless_events, write_headless_final_output
-from ..execution.process import run_codex_process, split_command
+from ..execution.process import run_cli_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
     append_json_schema_instruction,
@@ -141,7 +141,7 @@ async def run_grok_process_in_docker(
         container_name=container_name,
     )
     # Grok takes the prompt on the command line; stdin stays empty.
-    result = await run_codex_process(
+    result = await run_cli_process(
         command,
         cwd=workspace,
         prompt="",
@@ -217,9 +217,9 @@ class GrokAdapter(RuntimeAdapter):
                 sandbox="workspace",
             )
             env = prepare_grok_env(
-                paths["codex_home"] / "grok_executor", ctx.auth_mode, base_env=ctx.base_env
+                paths["agent_home"] / "grok_executor", ctx.auth_mode, base_env=ctx.base_env
             )
-            result = await run_codex_process(
+            result = await run_cli_process(
                 command,
                 cwd=paths["workspace"],
                 prompt="",
@@ -264,7 +264,7 @@ class GrokAdapter(RuntimeAdapter):
             base_env=ctx.base_env,
         )
         # Grok takes the prompt on argv; stdin stays empty.
-        result = await run_codex_process(
+        result = await run_cli_process(
             command,
             cwd=judge_workspace,
             prompt="",

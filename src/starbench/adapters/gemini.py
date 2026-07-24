@@ -21,7 +21,7 @@ from typing import Dict, List
 
 from ..execution.docker import build_docker_agent_command, kill_container_on_timeout
 from ..execution.parsers import normalize_headless_events, write_headless_final_output
-from ..execution.process import run_codex_process, split_command
+from ..execution.process import run_cli_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
     append_json_schema_instruction,
@@ -121,7 +121,7 @@ async def run_gemini_process_in_docker(
         auth_env=auth_env,
         container_name=container_name,
     )
-    result = await run_codex_process(
+    result = await run_cli_process(
         command,
         cwd=workspace,
         prompt=prompt,
@@ -199,9 +199,9 @@ class GeminiAdapter(RuntimeAdapter):
                 approval_mode="yolo",
             )
             env = prepare_gemini_env(
-                paths["codex_home"] / "gemini_executor", ctx.auth_mode, base_env=ctx.base_env
+                paths["agent_home"] / "gemini_executor", ctx.auth_mode, base_env=ctx.base_env
             )
-            result = await run_codex_process(
+            result = await run_cli_process(
                 command,
                 cwd=paths["workspace"],
                 prompt=gemini_prompt,
@@ -242,7 +242,7 @@ class GeminiAdapter(RuntimeAdapter):
             base_env=ctx.base_env,
         )
         prompt = append_json_schema_instruction(base_prompt, schema_path)
-        result = await run_codex_process(
+        result = await run_cli_process(
             command,
             cwd=judge_workspace,
             prompt=prompt,

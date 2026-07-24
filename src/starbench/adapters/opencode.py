@@ -25,7 +25,7 @@ from typing import Any, Dict, List
 
 from ..execution.docker import build_docker_agent_command, kill_container_on_timeout
 from ..execution.parsers import append_opencode_compat_events, write_opencode_final_output
-from ..execution.process import run_codex_process, split_command
+from ..execution.process import run_cli_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import (
     OPENCODE_JUDGE_AGENT,
@@ -220,7 +220,7 @@ async def run_opencode_process_in_docker(
         container_name=container_name,
         variant=variant,
     )
-    result = await run_codex_process(
+    result = await run_cli_process(
         command,
         cwd=workspace,
         prompt=prompt,
@@ -305,7 +305,7 @@ class OpenCodeAdapter(RuntimeAdapter):
                 variant=ctx.thinking_effort,
             )
             env = prepare_opencode_env(
-                paths["codex_home"] / "opencode_executor",
+                paths["agent_home"] / "opencode_executor",
                 ctx.auth_mode,
                 provider=ctx.opencode_provider,
                 base_url=ctx.opencode_base_url,
@@ -313,7 +313,7 @@ class OpenCodeAdapter(RuntimeAdapter):
                 api_key_env=ctx.opencode_api_key_env,
                 base_env=ctx.base_env,
             )
-            result = await run_codex_process(
+            result = await run_cli_process(
                 command,
                 cwd=paths["workspace"],
                 prompt=opencode_prompt,
@@ -366,7 +366,7 @@ class OpenCodeAdapter(RuntimeAdapter):
             base_env=ctx.base_env,
         )
         prompt = append_json_schema_instruction(base_prompt, schema_path)
-        result = await run_codex_process(
+        result = await run_cli_process(
             command,
             cwd=judge_workspace,
             prompt=prompt,

@@ -161,13 +161,13 @@ def materialize_task(
     outputs = workspace / "outputs"
     logs = task_root / "logs"
     judges = task_root / "judges"
-    codex_home = task_root / "codex_home"
+    agent_home = task_root / "agent_home"
 
     inputs.mkdir(parents=True, exist_ok=True)
     outputs.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
     judges.mkdir(parents=True, exist_ok=True)
-    codex_home.mkdir(parents=True, exist_ok=True)
+    agent_home.mkdir(parents=True, exist_ok=True)
 
     (inputs / "prompt.md").write_text(build_augmented_prompt_text(task_run), encoding="utf-8")
     if task.files_dir is not None:
@@ -192,7 +192,7 @@ def materialize_task(
         "outputs": outputs,
         "logs": logs,
         "judges": judges,
-        "codex_home": codex_home,
+        "agent_home": agent_home,
     }
     installed_executor_skills = install_executor_skills(
         task_run,

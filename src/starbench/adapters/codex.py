@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from ..execution.docker import build_docker_agent_command
-from ..execution.process import run_codex_process, split_command
+from ..execution.process import run_cli_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
 from ..runner.prompts import append_thinking_instruction, build_executor_prompt
 from .base import (
@@ -159,7 +159,7 @@ def build_docker_codex_command(
     )
 
 
-async def run_codex_process_in_docker(
+async def run_codex_in_docker(
     *,
     codex_bin: str,
     docker_bin: str,
@@ -210,7 +210,7 @@ async def run_codex_process_in_docker(
         auth_env=auth_env,
         container_name=container_name,
     )
-    result = await run_codex_process(
+    result = await run_cli_process(
         command,
         cwd=workspace,
         prompt=prompt,
@@ -267,9 +267,9 @@ class CodexAdapter(RuntimeAdapter):
 
     def executor_skill_install_root(self, paths: Dict[str, Path], executor_backend: str) -> Path:
         if executor_backend == "docker":
-            return paths["codex_home"] / "docker" / "skills"
+            return paths["agent_home"] / "docker" / "skills"
         if executor_backend == "local":
-            return paths["codex_home"] / "skills"
+            return paths["agent_home"] / "skills"
         raise ValueError(f"Unknown executor backend: {executor_backend}")
 
     async def run_executor(
@@ -294,8 +294,8 @@ class CodexAdapter(RuntimeAdapter):
                 include_trace_config=True,
                 reasoning_effort=ctx.thinking_effort,
             )
-            env = prepare_auth_home(paths["codex_home"], ctx.auth_mode, base_env=ctx.base_env)
-            return await run_codex_process(
+            env = prepare_auth_home(paths["agent_home"], ctx.auth_mode, base_env=ctx.base_env)
+            return await run_cli_process(
                 command,
                 cwd=paths["workspace"],
                 prompt=build_executor_prompt(task_run),
@@ -305,12 +305,12 @@ class CodexAdapter(RuntimeAdapter):
                 timeout_seconds=task.timeout_seconds,
             )
         if ctx.executor_backend == "docker":
-            return await run_codex_process_in_docker(
+            return await run_codex_in_docker(
                 codex_bin=codex_bin,
                 docker_bin=ctx.docker_bin,
                 docker_image=ctx.docker_image,
                 workspace=paths["workspace"],
-                codex_home=paths["codex_home"],
+                codex_home=paths["agent_home"],
                 prompt=build_executor_prompt(task_run),
                 auth_mode=ctx.auth_mode,
                 stdout_path=logs / "events.jsonl",
@@ -350,7 +350,7 @@ class CodexAdapter(RuntimeAdapter):
             include_trace_config=False,
         )
         env = prepare_auth_home(judge_home_base, ctx.auth_mode, base_env=ctx.base_env)
-        return await run_codex_process(
+        return await run_cli_process(
             command,
             cwd=judge_workspace,
             prompt=append_thinking_instruction(base_prompt, "default"),

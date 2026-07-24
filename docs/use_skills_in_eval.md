@@ -116,7 +116,7 @@ The full skill body is not appended to `workspace/inputs/prompt.md`.
 Codex Docker executor:
 
 ```text
-runs/<run_id>/<task_run_id>/codex_home/docker/skills/<skill-id>/
+runs/<run_id>/<task_run_id>/agent_home/docker/skills/<skill-id>/
 ```
 
 Inside the container:
@@ -128,7 +128,7 @@ Inside the container:
 Codex local executor:
 
 ```text
-runs/<run_id>/<task_run_id>/codex_home/skills/<skill-id>/
+runs/<run_id>/<task_run_id>/agent_home/skills/<skill-id>/
 ```
 
 Other local runtime paths:
