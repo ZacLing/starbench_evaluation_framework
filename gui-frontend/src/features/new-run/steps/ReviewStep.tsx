@@ -1,5 +1,6 @@
 import { AlertTriangle, ChevronDown, Loader2, PencilLine, Plus, Save } from "lucide-react"
-import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { AgentIcon } from "@/components/brand"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -57,6 +58,7 @@ export function StepReview({
   onSaveAsNewLaunch: () => void
   onSaveConfigAsProfile: () => void
 }) {
+  const { agentLabel } = useAgentCatalog()
   const busy = launching || savingProfile
   const nextRev = profileRev !== null ? profileRev + 1 : null
   const repeat = Number(shared.repeat) || 1
@@ -222,7 +224,7 @@ export function StepReview({
                 <div className="flex flex-wrap items-center gap-2">
                   <AgentIcon agent={item.agent} size={18} />
                   <span className="text-sm font-medium">
-                    {AGENT_LABELS[item.agent] ?? item.agent}
+                    {agentLabel(item.agent)}
                   </span>
                   <span className="font-mono text-xs text-muted-foreground">
                     {item.model || "runtime default"}

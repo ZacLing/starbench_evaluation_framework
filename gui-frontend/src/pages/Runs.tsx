@@ -57,9 +57,10 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { RunStatusChip } from "@/components/verdict"
-import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { AgentIcon } from "@/components/brand"
 import { ErrorNote } from "@/components/error-note"
 import { RunRail } from "@/features/run-inspector/RunRail"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import { useMinWidth } from "@/hooks/use-min-width"
 import { api, type RunOverview, type RunProfileRef } from "@/lib/api"
 import { fmtDuration, fmtRelative, shortDir } from "@/lib/format"
@@ -83,6 +84,7 @@ export default function Runs() {
   /* Once the operator dismisses the rail, don't re-open it on the next poll. */
   const dismissed = useRef(false)
   const railVisible = useMinWidth(RAIL_BREAKPOINT)
+  const { agentLabel } = useAgentCatalog()
   /* Re-render every 30s so "Last updated" relative text stays honest. */
   const [, tick] = useReducer((x: number) => x + 1, 0)
   useEffect(() => {
@@ -395,7 +397,7 @@ export default function Runs() {
                   <SelectItem value="all">Runtime · All</SelectItem>
                   {runtimeOptions.map((agent) => (
                     <SelectItem key={agent} value={agent}>
-                      {AGENT_LABELS[agent] ?? agent}
+                      {agentLabel(agent)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -803,12 +805,13 @@ function SortButton({
 }
 
 function ModelCell({ agent, model }: { agent: string | null; model: string | null }) {
+  const { agentLabel } = useAgentCatalog()
   if (!agent) return <span className="text-muted-foreground">–</span>
   return (
     <div className="flex min-w-0 max-w-[12rem] items-center gap-2">
       <AgentIcon agent={agent} size={18} />
       <div className="min-w-0">
-        <div className="truncate text-sm">{AGENT_LABELS[agent] ?? agent}</div>
+        <div className="truncate text-sm">{agentLabel(agent)}</div>
         {model && (
           <div className="truncate font-mono text-xs text-muted-foreground" title={model}>
             {model}

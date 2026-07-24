@@ -41,13 +41,13 @@ import {
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  AGENT_LABELS,
   AgentIcon,
   AllAgentsIcon,
   compatibleProviders,
   ProviderIcon,
 } from "@/components/brand"
 import { ErrorNote } from "@/components/error-note"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import {
   api,
   type AiProvider,
@@ -76,9 +76,9 @@ function isVendorApi(provider: AiProvider): boolean {
   return VENDOR_HINTS.some((hint) => id.includes(hint))
 }
 
-function providerDescription(provider: AiProvider): string {
+function providerDescription(provider: AiProvider, agentAccountLabel: string): string {
   if (provider.auth === "cli_login") {
-    return `Local ${AGENT_LABELS[provider.agent] ?? provider.agent} account`
+    return `Local ${agentAccountLabel} account`
   }
   if (provider.kind !== "openai-compatible") {
     return `Official ${KIND_LABELS[provider.kind].replace(" API", "")} API`
@@ -335,6 +335,7 @@ function ProviderCard({
   onShowModels: () => void
   onEdit: () => void
 }) {
+  const { agentLabel } = useAgentCatalog()
   const modelCount = provider.models.length
   const fromCatalog = provider.models_source === "catalog"
   const fromCliCache = provider.models_source === "cli_cache"
@@ -349,7 +350,7 @@ function ProviderCard({
           <span className="min-w-0 flex-1 truncate text-sm font-semibold">{provider.name}</span>
           <ProviderAuthBadge provider={provider} />
         </div>
-        <p className="text-xs text-muted-foreground">{providerDescription(provider)}</p>
+        <p className="text-xs text-muted-foreground">{providerDescription(provider, agentLabel(provider.agent))}</p>
         <CapabilityLine provider={provider} />
         <CoverageLine
           provider={provider}

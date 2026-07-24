@@ -1,11 +1,6 @@
 import { ArrowRight, DownloadCloud, Loader2, Plus, Trash2 } from "lucide-react"
 import { Link } from "react-router-dom"
-import {
-  AGENT_LABELS,
-  AGENT_NOTES,
-  AgentIcon,
-  compatibleProviders,
-} from "@/components/brand"
+import { AgentIcon, compatibleProviders } from "@/components/brand"
 import { Hint } from "@/components/hint"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { Badge } from "@/components/ui/badge"
@@ -13,14 +8,15 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import type {
   AgentRuntimeStatus,
   AiProvider,
+  BuiltinRuntime,
   CustomRuntime,
   ProviderFilter,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { BUILTIN_RUNTIMES } from "../constants"
 import { DEFAULT_EFFORT, canonicalEffort, effortOptions } from "../helpers"
 import type { ContenderDraft, RuntimeOption } from "../types"
 
@@ -83,7 +79,7 @@ export function StepContenders({
   providers,
   customRuntimes,
   customByRuntime,
-  builtinCliPresent,
+  builtinRuntimes,
   agentStatuses,
   statusLoading,
   installingAgentId,
@@ -102,7 +98,7 @@ export function StepContenders({
   providers: AiProvider[]
   customRuntimes: CustomRuntime[]
   customByRuntime: Record<string, CustomRuntime>
-  builtinCliPresent: Record<string, boolean>
+  builtinRuntimes: BuiltinRuntime[]
   agentStatuses: Record<string, AgentRuntimeStatus>
   statusLoading: boolean
   installingAgentId: string | null
@@ -119,11 +115,11 @@ export function StepContenders({
   onRemove: (key: string) => void
 }) {
   const options: RuntimeOption[] = [
-    ...BUILTIN_RUNTIMES.map((runtime) => ({
-      id: runtime,
-      label: AGENT_LABELS[runtime],
-      note: AGENT_NOTES[runtime],
-      cliMissing: builtinCliPresent[runtime] === false,
+    ...builtinRuntimes.map((agent) => ({
+      id: agent.id,
+      label: agent.label,
+      note: agent.note,
+      cliMissing: agent.cli.present === false,
     })),
     ...customRuntimes.map((agent) => ({
       id: agent.id,
@@ -292,6 +288,7 @@ function ContenderCard({
   onUpdate: (patch: Partial<ContenderDraft>) => void
   onRemove: () => void
 }) {
+  const { agentLabel } = useAgentCatalog()
   const provider = providers.find((item) => item.id === draft.provider_id)
   const dockerDowngraded = backend === "docker" && !dockerCapable
   const ownLogin = custom ? (custom.protocol ?? "none") === "none" : false
@@ -311,7 +308,7 @@ function ContenderCard({
           <span className="flex items-center gap-2">
             <AgentIcon agent={draft.runtime} icon={custom?.icon} size={22} />
             <span className="text-sm font-semibold">
-              {custom ? (custom.label ?? custom.spec_id) : AGENT_LABELS[draft.runtime]}
+              {custom ? (custom.label ?? custom.spec_id) : agentLabel(draft.runtime)}
             </span>
           </span>
           {custom?.cli && !custom.cli.present && (

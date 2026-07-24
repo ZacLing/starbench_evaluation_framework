@@ -6,10 +6,11 @@ import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DirectoryPickerDialog } from "@/components/task-import"
-import { AGENT_LABELS, runtimeFilters } from "@/components/brand"
+import { runtimeFilters } from "@/components/brand"
 import { ErrorNote } from "@/components/error-note"
 import {
   api,
+  type BuiltinRuntime,
   type CreateExperimentPayload,
   type CustomRuntime,
   type ProviderFilter,
@@ -57,9 +58,10 @@ export default function NewRun() {
     () => (agentsQuery.data?.custom ?? []).filter((agent) => !agent.error),
     [agentsQuery.data],
   )
-  const builtinCliPresent = useMemo(() => {
-    const map: Record<string, boolean> = {}
-    for (const agent of agentsQuery.data?.builtin ?? []) map[agent.id] = agent.cli.present
+  const builtinRuntimes = agentsQuery.data?.builtin ?? []
+  const builtinById = useMemo(() => {
+    const map: Record<string, BuiltinRuntime> = {}
+    for (const agent of agentsQuery.data?.builtin ?? []) map[agent.id] = agent
     return map
   }, [agentsQuery.data])
   const customByRuntime = useMemo(() => {
@@ -71,16 +73,16 @@ export default function NewRun() {
     (runtime: string) =>
       customByRuntime[runtime]?.label ??
       customByRuntime[runtime]?.spec_id ??
-      AGENT_LABELS[runtime] ??
+      builtinById[runtime]?.label ??
       runtime,
-    [customByRuntime],
+    [customByRuntime, builtinById],
   )
   const dockerCapable = useCallback(
     (runtime: string) =>
       runtime.startsWith("custom:")
         ? Boolean(customByRuntime[runtime]?.docker_capable)
-        : true,
-    [customByRuntime],
+        : (builtinById[runtime]?.docker_capable ?? true),
+    [customByRuntime, builtinById],
   )
   /* Provider-compatibility filters, keyed by runtime id, from /api/agents. */
   const filterByRuntime = useMemo(() => runtimeFilters(agentsQuery.data), [agentsQuery.data])
@@ -420,7 +422,7 @@ export default function NewRun() {
           providers={providers}
           customRuntimes={customRuntimes}
           customByRuntime={customByRuntime}
-          builtinCliPresent={builtinCliPresent}
+          builtinRuntimes={builtinRuntimes}
           agentStatuses={agentStatuses}
           statusLoading={agentStatusQuery.isPending || agentStatusQuery.isFetching}
           installingAgentId={installingAgentId}
@@ -455,6 +457,7 @@ export default function NewRun() {
           }}
           providers={providers}
           skills={skillsQuery.data}
+          builtinRuntimes={builtinRuntimes}
           tasksDir={tasksDir}
           selectedTasks={selectedTaskObjs}
           shared={shared}

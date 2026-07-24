@@ -14,9 +14,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { AgentIcon } from "@/components/brand"
 import { HswVerdict } from "@/components/verdict"
 import { ErrorNote } from "@/components/error-note"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import { useMinWidth } from "@/hooks/use-min-width"
 import { cn } from "@/lib/utils"
 import { api, type CoverageCell, type CoverageColumn, type CoverageRow } from "@/lib/api"
@@ -50,6 +51,7 @@ export default function Coverage() {
   const [metric, setMetric] = useState<Metric>("hsw")
   const [selection, setSelection] = useState<Selection | null>(null)
   const railVisible = useMinWidth(RAIL_BREAKPOINT)
+  const { agentLabel } = useAgentCatalog()
 
   if (coverageQuery.isPending) return <MatrixSkeleton />
   if (coverageQuery.isError) return <ErrorNote message={(coverageQuery.error as Error).message} />
@@ -125,7 +127,7 @@ export default function Coverage() {
                     >
                       <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground">
                         <AgentIcon agent={group.agent} size={16} />
-                        {AGENT_LABELS[group.agent] ?? group.agent}
+                        {agentLabel(group.agent)}
                       </span>
                     </TableHead>
                   ))}
@@ -346,6 +348,7 @@ function ColumnHeader({
   hasRoster: boolean
   onSelect: () => void
 }) {
+  const { agentLabel } = useAgentCatalog()
   const neverRun = column.run_count === 0
   const unrostered = hasRoster && !column.rostered
   return (
@@ -353,7 +356,7 @@ function ColumnHeader({
       type="button"
       onClick={onSelect}
       className="-mx-1 grid w-[calc(100%+0.5rem)] gap-1 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      aria-label={`Open combination details for ${AGENT_LABELS[column.agent] ?? column.agent} ${column.model ?? ""}`}
+      aria-label={`Open combination details for ${agentLabel(column.agent)} ${column.model ?? ""}`}
     >
       <span
         className="truncate font-mono text-xs font-medium text-foreground"
@@ -563,6 +566,7 @@ function DrillDownRail({
   rows: CoverageRow[]
   onClose: () => void
 }) {
+  const { agentLabel } = useAgentCatalog()
   const column = columns.find((entry) => entry.key === selection.columnKey)
   if (!column) return null
   const cell =
@@ -597,7 +601,7 @@ function DrillDownRail({
         )}
         <span className="flex items-center gap-2 text-sm">
           <AgentIcon agent={column.agent} size={16} />
-          <span className="font-medium">{AGENT_LABELS[column.agent] ?? column.agent}</span>
+          <span className="font-medium">{agentLabel(column.agent)}</span>
           {column.model && (
             <span className="truncate font-mono text-xs text-muted-foreground" title={column.model}>
               {column.model}

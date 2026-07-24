@@ -29,7 +29,8 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react"
-import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { AgentIcon } from "@/components/brand"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -908,8 +909,6 @@ function DeltaCell({ value }: { value: number | null | undefined }) {
    "Other", so a future launcher flag can never be silently mis-filed. The
    complete raw dump stays one click away: the file system is still the truth. */
 
-const RUNTIME_KEY_PREFIXES = Object.keys(AGENT_LABELS)
-
 /* The launch wizard's plain-language credential vocabulary, reused verbatim. */
 const AUTH_PHRASES: Record<string, string> = {
   env: "API key from env",
@@ -942,6 +941,7 @@ interface ProtocolView {
 function buildProtocolView(
   config: Record<string, unknown>,
   taskCountProp: number | null,
+  builtinIds: string[],
 ): ProtocolView {
   const consumed = new Set<string>()
   const raw = (key: string): unknown => {
@@ -1082,7 +1082,7 @@ function buildProtocolView(
     .filter(
       ([key]) =>
         !consumed.has(key) &&
-        !RUNTIME_KEY_PREFIXES.some((agent) => key.startsWith(`${agent}_`)),
+        !builtinIds.some((agent) => key.startsWith(`${agent}_`)),
     )
     .sort(([a], [b]) => a.localeCompare(b))
 
@@ -1230,6 +1230,7 @@ function PartyPanel({
   gloss: string
   party: ProtoParty | null
 }) {
+  const { agentLabel } = useAgentCatalog()
   return (
     <section className="min-w-0">
       <PanelCaption caption={caption} gloss={gloss} />
@@ -1239,7 +1240,7 @@ function PartyPanel({
             <AgentIcon agent={party.agent} size={22} />
             <div className="min-w-0">
               <div className="text-sm font-semibold leading-5 text-foreground">
-                {AGENT_LABELS[party.agent] ?? party.agent}
+                {agentLabel(party.agent)}
               </div>
               {party.model ? (
                 <div
@@ -1561,8 +1562,12 @@ function ConfigCard({
 }) {
   const [open, setOpen] = useState(true)
   const [showRaw, setShowRaw] = useState(false)
+  const { builtinIds } = useAgentCatalog()
 
-  const configView = useMemo(() => buildProtocolView(config, taskCount), [config, taskCount])
+  const configView = useMemo(
+    () => buildProtocolView(config, taskCount, builtinIds),
+    [config, taskCount, builtinIds],
+  )
   const snapView = useMemo(
     () => (snapshot ? buildSnapshotView(snapshot, taskCount) : null),
     [snapshot, taskCount],

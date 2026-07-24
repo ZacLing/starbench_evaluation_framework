@@ -11,7 +11,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { AgentIcon } from "@/components/brand"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import { StatusBadge, PassSummaryBadge } from "@/components/verdict"
 import { ErrorNote } from "@/components/error-note"
 import { api, type CompareRunRow, type MatrixCell } from "@/lib/api"
@@ -37,8 +38,7 @@ export default function Compare() {
   })
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
   const customs = agentsQuery.data?.custom ?? []
-  const agentLabel = (agent: string) =>
-    AGENT_LABELS[agent] ?? customs.find((item) => item.id === agent)?.label ?? agent
+  const { agentLabel } = useAgentCatalog()
   const agentIconHint = (agent: string) => customs.find((item) => item.id === agent)?.icon
 
   if (runIds.length === 0) {

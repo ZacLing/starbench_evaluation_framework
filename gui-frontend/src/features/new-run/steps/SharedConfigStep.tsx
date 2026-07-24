@@ -2,7 +2,7 @@ import { useState, type Dispatch, type SetStateAction } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, ChevronDown, Save, Scale, SlidersHorizontal, Sparkles } from "lucide-react"
 import { toast } from "sonner"
-import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { AgentIcon } from "@/components/brand"
 import { CredentialStatus } from "@/components/credential-status"
 import { ProviderModelPicker } from "@/components/model-picker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -27,6 +27,7 @@ import {
 import {
   api,
   type AiProvider,
+  type BuiltinRuntime,
   type CustomRuntime,
   type Profile,
   type ProviderFilter,
@@ -35,7 +36,7 @@ import {
   type TaskPackage,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
-import { BUILTIN_RUNTIMES, JUDGE_MODES, PER_FIELD_OPTIONS } from "../constants"
+import { JUDGE_MODES, PER_FIELD_OPTIONS } from "../constants"
 import { ExecutorSkillsBlock } from "./ExecutorSkillsBlock"
 import { PromptAssistanceBlock } from "./PromptAssistanceBlock"
 
@@ -68,6 +69,7 @@ export function StepShared({
   onSelectProfile,
   providers,
   skills,
+  builtinRuntimes,
   tasksDir,
   selectedTasks,
   shared,
@@ -89,6 +91,7 @@ export function StepShared({
   onSelectProfile: (id: string) => void
   providers: AiProvider[]
   skills?: SkillsPayload
+  builtinRuntimes: BuiltinRuntime[]
   tasksDir: string
   selectedTasks: TaskPackage[]
   shared: Partial<SharedConfig>
@@ -210,11 +213,11 @@ export function StepShared({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {BUILTIN_RUNTIMES.map((runtime) => (
-                        <SelectItem key={runtime} value={runtime}>
+                      {builtinRuntimes.map((agent) => (
+                        <SelectItem key={agent.id} value={agent.id}>
                           <span className="flex items-center gap-2">
-                            <AgentIcon agent={runtime} size={14} />
-                            {AGENT_LABELS[runtime]}
+                            <AgentIcon agent={agent.id} size={14} />
+                            {agent.label}
                           </span>
                         </SelectItem>
                       ))}

@@ -18,8 +18,9 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { RunStatusChip } from "@/components/verdict"
-import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { AgentIcon } from "@/components/brand"
 import { ErrorNote } from "@/components/error-note"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import { api, type RunDetail, type TaskRow } from "@/lib/api"
 import { fmtDuration, fmtRelative, fmtTime, spanBetween } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -86,6 +87,7 @@ export function RunRail({
 /* Title + status chip, context line, then a 2×2 metrics grid. Numbers wear
    ink, not status colors. */
 function SummaryBlock({ run }: { run: RunDetail }) {
+  const { agentLabel } = useAgentCatalog()
   const judged = run.judge_totals.single ?? 0
   const passed = run.judge_passes.single ?? 0
   const stats = run.executor_stats
@@ -102,7 +104,7 @@ function SummaryBlock({ run }: { run: RunDetail }) {
           </span>
         </div>
         <span className="text-xs text-muted-foreground">
-          {run.executor_agent ? (AGENT_LABELS[run.executor_agent] ?? run.executor_agent) : "–"}
+          {run.executor_agent ? agentLabel(run.executor_agent) : "–"}
           {run.executor_model ? ` · ${run.executor_model}` : ""} · {run.task_count} tasks
         </span>
       </div>
@@ -154,6 +156,7 @@ function Metric({ label, value, title }: { label: string; value: string; title?:
 
 /* Configuration facts straight from run_state; null facts are omitted. */
 function ConfigCard({ run }: { run: RunDetail }) {
+  const { agentLabel } = useAgentCatalog()
   return (
     <Card className="gap-0 rounded-xl py-0">
       <h3 className="border-b px-4 py-3 text-sm font-semibold">Configuration</h3>
@@ -163,7 +166,7 @@ function ConfigCard({ run }: { run: RunDetail }) {
             <span className="flex min-w-0 items-center justify-end gap-1.5">
               <AgentIcon agent={run.evaluator_agent} size={14} />
               <span className="truncate" title={run.evaluator_model ?? undefined}>
-                {run.evaluator_model ?? AGENT_LABELS[run.evaluator_agent] ?? run.evaluator_agent}
+                {run.evaluator_model ?? agentLabel(run.evaluator_agent)}
               </span>
             </span>
           </ConfigRow>

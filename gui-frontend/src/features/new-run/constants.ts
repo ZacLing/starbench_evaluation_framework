@@ -11,5 +11,3 @@ export const JUDGE_MODES = [
 export const PER_FIELD_OPTIONS = [{ id: "model", label: "Model", locked: true }]
 
 export const NEW_RUN_STEPS = ["Mode", "Tasks", "Agents", "Shared config", "Review & launch"]
-
-export const BUILTIN_RUNTIMES = ["claude", "codex", "gemini", "grok", "opencode"] as const

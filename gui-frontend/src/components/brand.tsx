@@ -64,24 +64,6 @@ export function FamilyIcon({
   }
 }
 
-/* The contenders of every experiment are agent runtimes: full coding-agent
-   CLIs (harness + tools + prompts + model), not bare models. */
-export const AGENT_LABELS: Record<string, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  gemini: "Gemini CLI",
-  grok: "Grok Build",
-  opencode: "OpenCode",
-}
-
-export const AGENT_NOTES: Record<string, string> = {
-  claude: "Anthropic's coding agent",
-  codex: "OpenAI's coding agent",
-  gemini: "Google's coding agent",
-  grok: "xAI's coding agent",
-  opencode: "Open-source agent for OpenAI-compatible models",
-}
-
 /* Icon hints a custom runtime can declare in its spec file (`icon` field). */
 const CUSTOM_ICONS: Record<string, (size: number) => React.ReactNode> = {
   qwen: (size) => <Qwen.Avatar size={size} />,
@@ -171,6 +153,9 @@ export function runtimeFilters(agents?: AgentsPayload): Record<string, ProviderF
   return map
 }
 
+/* Icon/visual mappings are the frontend's only per-runtime tables — everything
+   else (labels, notes, capability facts, the runtime list itself) comes from
+   /api/agents via useAgentCatalog. */
 export const AGENT_TO_FAMILY: Record<string, FamilyId> = {
   claude: "claude",
   codex: "gpt",

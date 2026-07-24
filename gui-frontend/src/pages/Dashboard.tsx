@@ -29,7 +29,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { RunStatusChip } from "@/components/verdict"
-import { AGENT_LABELS, AgentIcon } from "@/components/brand"
+import { AgentIcon } from "@/components/brand"
+import { useAgentCatalog } from "@/hooks/useAgentCatalog"
 import { api, type CoveragePayload, type RunOverview } from "@/lib/api"
 import { fmtDuration, fmtRelative, shortDir, spanBetween } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -424,6 +425,7 @@ function RunsByStatus({ runs, className }: { runs: RunOverview[]; className?: st
 /* Agent rows × model columns; cell = rubric mean + pass rate from the
    combination rollup. A dash is a combination never run — a visible gap. */
 function PerformanceHeatmap({ coverage }: { coverage: CoveragePayload }) {
+  const { agentLabel } = useAgentCatalog()
   const agents = [...new Set(coverage.columns.map((column) => column.agent))]
   const models = [...new Set(coverage.columns.map((column) => column.model ?? "unknown"))]
   const byKey = new Map(coverage.columns.map((column) => [column.key, column]))
@@ -467,7 +469,7 @@ function PerformanceHeatmap({ coverage }: { coverage: CoveragePayload }) {
                 <td className="pr-2">
                   <span className="inline-flex items-center gap-1.5 text-sm">
                     <AgentIcon agent={agent} size={16} />
-                    {AGENT_LABELS[agent] ?? agent}
+                    {agentLabel(agent)}
                   </span>
                 </td>
                 {models.map((model) => {
