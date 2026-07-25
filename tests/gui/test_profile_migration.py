@@ -22,6 +22,7 @@ from starbench.gui.services.profiles import (
     load_profiles,
     migrate_profiles_document,
     profiles_path,
+    save_profiles,
 )
 
 
@@ -363,6 +364,70 @@ class MigrateLoaderHookTest(unittest.TestCase):
         self.assertEqual(self._backup_path().read_bytes(), pristine)
         on_disk = json.loads(profiles_path(self.runs_dir).read_text(encoding="utf-8"))
         self.assertEqual(on_disk["schema_version"], 2)
+
+
+class SaveLoadRosterOptionsTest(unittest.TestCase):
+    """Per-contender option boxes must survive save_profiles -> load_profiles.
+
+    Without ``options`` in the roster contract a saved profile silently drops
+    each contender's knobs, and a migrated claude profile (whose max_turns the
+    loader folded into an option box) cannot round-trip through save.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_profile_options_"))
+        self.runs_dir = self.tmp / "runs"
+        self.runs_dir.mkdir()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_roster_entry_options_survive_save_then_load(self) -> None:
+        save_profiles(
+            self.runs_dir,
+            {
+                "default_profile_id": "p1",
+                "profiles": [
+                    {
+                        "id": "p1",
+                        "name": "P1",
+                        "shared": {"evaluator_agent": "codex"},
+                        "per_contender_fields": ["model"],
+                        "roster": [
+                            {
+                                "agent": "claude",
+                                "model": "claude-opus-4-8",
+                                "options": {"max_turns": 30},
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+        loaded = load_profiles(self.runs_dir)
+        entry = loaded["profiles"][0]["roster"][0]
+        self.assertEqual(entry["options"], {"max_turns": 30})
+
+    def test_migrated_claude_profile_round_trips_through_save(self) -> None:
+        # The loader folds a v1 shared claude_max_turns into the claude
+        # contender's option box; saving that migrated profile back must be
+        # accepted (options is a known roster field) and preserve the cap.
+        profiles_path(self.runs_dir).write_text(
+            json.dumps(_v1_document(), indent=2), encoding="utf-8"
+        )
+        loaded = load_profiles(self.runs_dir)
+        save_profiles(
+            self.runs_dir,
+            {
+                "default_profile_id": loaded.get("default_profile_id"),
+                "profiles": loaded["profiles"],
+            },
+        )
+        reloaded = load_profiles(self.runs_dir)
+        claude = next(
+            c for c in reloaded["profiles"][0]["roster"] if c["agent"] == "claude"
+        )
+        self.assertEqual(claude["options"], {"max_turns": 30})
 
 
 if __name__ == "__main__":  # pragma: no cover

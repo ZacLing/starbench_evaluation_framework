@@ -1262,6 +1262,9 @@ class RosterEntry(_RosterEntryBase, total=False):
     label: str
     provider_id: str
     thinking_effort: str
+    # Per-contender runtime option box (e.g. {"max_turns": 30}); persisted with
+    # the profile so saved/migrated contenders keep their knobs.
+    options: Dict[str, Union[int, str, bool]]
 
 
 class ProfileTaskSet(TypedDict):

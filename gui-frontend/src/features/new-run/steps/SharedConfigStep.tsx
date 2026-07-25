@@ -5,6 +5,7 @@ import { toast } from "sonner"
 import { AgentIcon } from "@/components/brand"
 import { CredentialStatus } from "@/components/credential-status"
 import { ProviderModelPicker } from "@/components/model-picker"
+import { RuntimeOptionFields } from "@/components/RuntimeOptionFields"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -114,6 +115,13 @@ export function StepShared({
   const judgeRuntime = String(shared.evaluator_agent ?? "codex")
   const judgeCustom = customByRuntime[judgeRuntime]
   const judgeOwnLogin = judgeCustom ? (judgeCustom.protocol ?? "none") === "none" : false
+  /* The judge runtime's declared option knobs, from /api/agents. Only
+     user-surface evaluator knobs render; today no runtime declares one, so the
+     control is present but empty until an adapter does. */
+  const judgeOptionDeclarations =
+    builtinRuntimes.find((agent) => agent.id === judgeRuntime)?.options ??
+    judgeCustom?.options ??
+    []
 
   const saveToProfile = async () => {
     if (!profileId) return
@@ -501,22 +509,20 @@ export function StepShared({
                         More parallel judges finish sooner but may hit provider rate limits.
                       </p>
                     </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="claude-max-turns">Claude max turns</Label>
-                      <Input
-                        id="claude-max-turns"
-                        type="number"
-                        min={1}
-                        placeholder="unlimited"
-                        value={String(shared.claude_max_turns ?? "")}
-                        onChange={(event) =>
-                          setSharedField("claude_max_turns", event.target.value)
-                        }
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Only affects Claude Code agents. Blank means no cap.
-                      </p>
-                    </div>
+                    <RuntimeOptionFields
+                      declarations={judgeOptionDeclarations}
+                      role="evaluator"
+                      values={shared.evaluator_options ?? {}}
+                      onChange={(name, value) =>
+                        setShared((current) => ({
+                          ...current,
+                          evaluator_options: {
+                            ...(current.evaluator_options ?? {}),
+                            [name]: value,
+                          },
+                        }))
+                      }
+                    />
                   </div>
                   <div className="grid gap-1.5">
                     <Label htmlFor="extra-flags">Extra CLI flags</Label>

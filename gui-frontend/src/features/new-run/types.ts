@@ -12,6 +12,9 @@ export interface ContenderDraft {
   provider_id: string
   model: string
   thinking_effort: string
+  /* Per-contender runtime knob box (e.g. { max_turns: "30" }); edited as strings,
+     empty string means unset (planning's cleaner drops it). */
+  options?: Record<string, string>
 }
 
 export type LibraryRef = Pick<TaskLibrary, "dir" | "tasks">

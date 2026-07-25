@@ -31,21 +31,19 @@ from .profile_snapshots import (
 from .profiles import load_profiles
 
 
-def _contender_user_options(entry: Dict[str, Any], shared_max_turns: Any) -> Dict[str, Any]:
+def _contender_user_options(entry: Dict[str, Any]) -> Dict[str, Any]:
     """User-level executor options declared for one contender, blanks dropped.
 
     This is the measurement-relevant knob set (e.g. max_turns), NOT the
     provider-derived gateway wiring, which is transport rather than declared
-    configuration. TRANSITional: a claude contender inherits the shared
-    max-turns until the frontend posts its option box directly."""
-    options = {
+    configuration. The frontend posts each contender's option box directly, so
+    the box travels verbatim (empty values pruned) into the snapshot and the
+    launch payload."""
+    return {
         str(name): value
         for name, value in (entry.get("options") or {}).items()
         if value is not None and str(value).strip() != ""
     }
-    if str(entry.get("agent") or "") == "claude" and shared_max_turns not in (None, ""):
-        options.setdefault("max_turns", shared_max_turns)
-    return options
 
 
 def plan_experiment(
@@ -230,12 +228,6 @@ def plan_experiment(
             )
     judge_sensitive = _judge_sensitive_vars(evaluator_agent, runtimes_dir)
 
-    # TRANSITional: removed in the frontend task. The GUI form still posts a
-    # shared claude_max_turns; it feeds each claude contender's executor option
-    # box AND that contender's snapshot entry, so a capped run is recorded as
-    # capped instead of looking like a default run.
-    shared_max_turns = shared.get("claude_max_turns")
-
     # Ad-hoc deviation record: diff the payload's effective configuration
     # against the profile baseline (computed HERE, never trusted from the
     # client). One list serves every contender — the deviating dimensions are
@@ -272,7 +264,7 @@ def plan_experiment(
                         "label": entry.get("label"),
                         "thinking_effort": entry.get("thinking_effort"),
                         "provider_id": entry.get("provider_id"),
-                        "options": _contender_user_options(entry, shared_max_turns),
+                        "options": _contender_user_options(entry),
                     },
                     provider_by_id,
                     context=f"Contender {entry_label}",
@@ -333,9 +325,8 @@ def plan_experiment(
         evaluator_gateway = evaluator_gateway or {}
 
         # Contender user options merge under the wiring. Read from the requested
-        # (pre-resolution) contender so reference-shaped options survive; the
-        # transitional shared max-turns joins them for a claude contender.
-        contender_options = _contender_user_options(requested_contender, shared_max_turns)
+        # (pre-resolution) contender so reference-shaped options survive.
+        contender_options = _contender_user_options(requested_contender)
 
         launch_payload = {
             "run_id": run_id,

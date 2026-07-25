@@ -319,7 +319,7 @@ class RegressionFixTests(unittest.TestCase):
             format_index = command.index("--output-format")
             self.assertEqual(command[format_index + 1], "stream-json")
 
-    def test_parse_args_claude_max_turns_defaults_to_unlimited(self) -> None:
+    def test_parse_args_max_turns_option_defaults_to_unlimited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = parse_args(
                 ["--tasks-dir", tmp, "--runs-dir", tmp, "--executor-agent", "claude"]

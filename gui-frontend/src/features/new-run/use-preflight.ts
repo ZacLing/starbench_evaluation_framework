@@ -22,8 +22,8 @@ export function usePreflight(plans: ExperimentPlanItem[] | null) {
         evaluator_auth_mode: item.evaluator_auth_mode ?? "env",
         executor_bin: item.executor_bin ?? "",
         evaluator_bin: item.evaluator_bin ?? "",
-        executor_opencode_api_key_env: item.executor_opencode_api_key_env ?? "",
-        evaluator_opencode_api_key_env: item.evaluator_opencode_api_key_env ?? "",
+        // Gateway credentials ride the role env-key lists (planning folds each
+        // role's api_key_env into them); the POST carries no flat knob names.
         executor_env_keys: (item.executor_credential_env_keys ?? []).join(","),
         evaluator_env_keys: (item.evaluator_credential_env_keys ?? []).join(","),
       }

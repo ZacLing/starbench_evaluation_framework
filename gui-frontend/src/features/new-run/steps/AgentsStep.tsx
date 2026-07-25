@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { AgentIcon, compatibleProviders } from "@/components/brand"
 import { Hint } from "@/components/hint"
 import { ProviderModelPicker } from "@/components/model-picker"
+import { RuntimeOptionFields } from "@/components/RuntimeOptionFields"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -288,7 +289,14 @@ function ContenderCard({
   onUpdate: (patch: Partial<ContenderDraft>) => void
   onRemove: () => void
 }) {
-  const { agentLabel } = useAgentCatalog()
+  const { agentLabel, builtin, custom: customCatalog } = useAgentCatalog()
+  /* This runtime's declared option knobs, resolved from /api/agents the same
+     way thinkingEffortsFor resolves its levels. RuntimeOptionFields renders
+     only the user-surface executor knobs (wiring stays hidden). */
+  const optionDeclarations =
+    builtin.find((agent) => agent.id === draft.runtime)?.options ??
+    customCatalog.find((agent) => agent.id === draft.runtime)?.options ??
+    []
   const provider = providers.find((item) => item.id === draft.provider_id)
   const dockerDowngraded = backend === "docker" && !dockerCapable
   const ownLogin = custom ? (custom.protocol ?? "none") === "none" : false
@@ -459,6 +467,14 @@ function ContenderCard({
             Saved level "{effortValue}" is not offered by this model — pick a level above.
           </p>
         )}
+        <RuntimeOptionFields
+          declarations={optionDeclarations}
+          role="executor"
+          values={draft.options ?? {}}
+          onChange={(name, value) =>
+            onUpdate({ options: { ...draft.options, [name]: value } })
+          }
+        />
       </CardContent>
     </Card>
   )

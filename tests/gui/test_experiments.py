@@ -87,16 +87,27 @@ class ExperimentTest(unittest.TestCase):
             self.assertIn("--evaluator-auth-mode global", joined)
 
     def test_shared_advanced_knobs_forward_to_every_contender(self) -> None:
-        payload = self.experiment_payload()
+        payload = self.experiment_payload(
+            contenders=[
+                {"label": "GPT gpt-5.5", "agent": "codex", "model": "gpt-5.5", "auth_mode": "env"},
+                {
+                    "label": "Claude opus",
+                    "agent": "claude",
+                    "model": "claude-opus-4-8",
+                    "auth_mode": "global",
+                    "options": {"max_turns": 30},
+                },
+            ]
+        )
         payload["shared"]["max_evaluator_parallel"] = 8
-        payload["shared"]["claude_max_turns"] = 30
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         self.assertEqual(len(plan["plans"]), 2)
         by_agent = {item["agent"]: item for item in plan["plans"]}
+        # A shared knob forwards to every contender...
         for item in plan["plans"]:
             self.assertIn("--max-evaluator-parallel 8", launch_flags(item))
-        # Transitional: the shared max-turns lands in the claude contender's
-        # executor option box; a non-claude contender never receives it.
+        # ...while a per-contender option box lands only on the contender that
+        # posts it; a contender without one never receives it.
         self.assertIn("--executor-option max_turns=30", launch_flags(by_agent["claude"]))
         self.assertNotIn("max_turns", launch_flags(by_agent["codex"]))
 
@@ -1138,10 +1149,10 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         self.assertNotIn("base_url", codex["contender"])
         self.assertEqual(codex["contender"]["api_key_env"], "OPENAI_API_KEY")
 
-    def test_transitional_claude_max_turns_is_recorded_per_contender(self) -> None:
-        # The shared (transitional) claude_max_turns must reach the measurement
-        # record, not just the launch box: a capped claude run is recorded as
-        # capped, and only the claude contender carries the option.
+    def test_contender_max_turns_option_is_recorded_per_contender(self) -> None:
+        # A per-contender max_turns option must reach the measurement record,
+        # not just the launch box: a capped claude run is recorded as capped,
+        # and only the claude contender carries the option.
         write_json(
             self.runs_dir / "providers.json",
             {
@@ -1170,11 +1181,16 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         self.save_profile()
         payload = self.payload(
             contenders=[
-                {"label": "Claude Opus", "agent": "claude", "provider_id": "anthropic", "model": "claude-opus-4-8"},
+                {
+                    "label": "Claude Opus",
+                    "agent": "claude",
+                    "provider_id": "anthropic",
+                    "model": "claude-opus-4-8",
+                    "options": {"max_turns": 30},
+                },
                 {"label": "Gemini", "agent": "gemini", "provider_id": "google", "model": "gemini-2.5-pro"},
             ]
         )
-        payload["shared"]["claude_max_turns"] = 30
         by_agent = {
             item["agent"]: self.snapshot_from(item)
             for item in experiments.plan_experiment(payload, runs_dir=self.runs_dir)["plans"]
@@ -1196,7 +1212,7 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
 
         # Representation-insensitive: a string "30" is recorded identically to
         # int 30, so relaunching with either never reads as a deviation.
-        payload["shared"]["claude_max_turns"] = "30"
+        payload["contenders"][0]["options"] = {"max_turns": "30"}
         string_plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         string_claude = next(
             self.snapshot_from(item) for item in string_plan["plans"] if item["agent"] == "claude"

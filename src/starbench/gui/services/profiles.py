@@ -21,7 +21,7 @@ from .errors import ExperimentError
 PROFILE_SCHEMA_VERSION = 2
 
 PER_CONTENDER_FIELD_CHOICES = ["model", "credentials", "gateway", "thinking_effort"]
-ROSTER_ENTRY_FIELDS = {"agent", "model", "label", "provider_id", "thinking_effort"}
+ROSTER_ENTRY_FIELDS = {"agent", "model", "label", "provider_id", "thinking_effort", "options"}
 TASK_SET_FIELDS = {"tasks_dir", "task_ids"}
 BUILTIN_PROFILE = {
     "id": "standard",
@@ -284,6 +284,13 @@ def _validate_profile_roster(profile_id: str, roster: Any) -> None:
                 raise ExperimentError(
                     f"Profile {profile_id} roster[{index}].{field} must be a string."
                 )
+        # Per-contender runtime option box (e.g. {"max_turns": 30}); persisted so
+        # a saved profile keeps each contender's knobs and a migrated claude
+        # profile round-trips through save without dropping them.
+        if "options" in entry and not isinstance(entry["options"], dict):
+            raise ExperimentError(
+                f"Profile {profile_id} roster[{index}].options must be an object."
+            )
 
 
 def _validate_profile_task_set(profile_id: str, task_set: Any) -> None:

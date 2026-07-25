@@ -418,7 +418,6 @@ def _auth_check(
     role: str,
     agent: str,
     auth_mode: str,
-    api_key_env: Optional[str],
     env_keys_override: Optional[List[str]] = None,
 ) -> Dict[str, str]:
     label = f"{role.capitalize()} credentials ({auth_mode})"
@@ -429,10 +428,10 @@ def _auth_check(
             "warn",
             "Uses the CLI's own login. Make sure you are logged in; the console cannot verify this.",
         )
-    if env_keys_override:
-        keys = env_keys_override
-    else:
-        keys = [api_key_env] if agent == "opencode" and api_key_env else AGENT_ENV_KEYS.get(agent, [])
+    # The env-key list is authoritative: planning folds each role's gateway
+    # api_key_env (opencode's included, default-filled) into it, so no runtime
+    # gets a special-cased key here.
+    keys = env_keys_override or AGENT_ENV_KEYS.get(agent, [])
     if not keys:
         return _check(f"{role}_auth", label, "warn", "No known environment variable to check.")
     present = [key for key in keys if os.environ.get(key)]
@@ -499,31 +498,22 @@ def preflight(
     docker_image: str,
     executor_auth_mode: str,
     evaluator_auth_mode: str,
-    opencode_api_key_env: Optional[str] = None,
-    executor_opencode_api_key_env: Optional[str] = None,
-    evaluator_opencode_api_key_env: Optional[str] = None,
     executor_bin: Optional[str] = None,
     evaluator_bin: Optional[str] = None,
     executor_env_keys: Optional[List[str]] = None,
     evaluator_env_keys: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
-    executor_key_env = executor_opencode_api_key_env or opencode_api_key_env
-    evaluator_key_env = evaluator_opencode_api_key_env or opencode_api_key_env
     checks: List[Dict[str, str]] = []
     if executor_backend == "docker":
         checks.extend(_docker_checks(docker_image))
     else:
         checks.append(_cli_check("executor", executor_agent, executor_bin))
     checks.append(
-        _auth_check(
-            "executor", executor_agent, executor_auth_mode, executor_key_env, executor_env_keys
-        )
+        _auth_check("executor", executor_agent, executor_auth_mode, executor_env_keys)
     )
     checks.append(_cli_check("evaluator", evaluator_agent, evaluator_bin))
     checks.append(
-        _auth_check(
-            "evaluator", evaluator_agent, evaluator_auth_mode, evaluator_key_env, evaluator_env_keys
-        )
+        _auth_check("evaluator", evaluator_agent, evaluator_auth_mode, evaluator_env_keys)
     )
 
     deduped: List[Dict[str, str]] = []

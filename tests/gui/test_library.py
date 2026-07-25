@@ -344,7 +344,10 @@ class PreflightTest(unittest.TestCase):
         # failure, not a maybe — the check must block, not advise.
         self.assertEqual(by_id["executor_auth"]["status"], "fail")
 
-    def test_preflight_checks_role_specific_opencode_keys(self) -> None:
+    def test_preflight_checks_role_specific_gateway_keys(self) -> None:
+        # Each role's gateway credential rides its own env-key list (planning
+        # folds the opencode api_key_env into it); preflight checks them
+        # independently, with no shared or runtime-named knob field.
         with mock.patch.dict(
             os.environ,
             {"EXECUTOR_GATEWAY_KEY": "set"},
@@ -357,8 +360,8 @@ class PreflightTest(unittest.TestCase):
                 docker_image="",
                 executor_auth_mode="env",
                 evaluator_auth_mode="env",
-                executor_opencode_api_key_env="EXECUTOR_GATEWAY_KEY",
-                evaluator_opencode_api_key_env="JUDGE_GATEWAY_KEY",
+                executor_env_keys=["EXECUTOR_GATEWAY_KEY"],
+                evaluator_env_keys=["JUDGE_GATEWAY_KEY"],
             )
         by_id = {check["id"]: check for check in checks}
         self.assertEqual(by_id["executor_auth"]["status"], "ok")

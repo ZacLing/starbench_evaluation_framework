@@ -75,7 +75,6 @@ export function deviationLabel(dimension: string): string {
     batch_size: "batch size",
     max_evaluator_parallel: "judge parallelism",
     web_search_mode: "web search",
-    claude_max_turns: "max turns",
   }
   return labels[dimension] ?? dimension.replace(/_/g, " ")
 }

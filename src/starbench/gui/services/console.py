@@ -140,7 +140,9 @@ class ConsoleApplication:
         def env_keys(name: str) -> List[str]:
             return [item for item in value(name).split(",") if item]
 
-        legacy_opencode_key = value("opencode_api_key_env") or None
+        # Gateway credentials ride the role env-key lists (executor_env_keys /
+        # evaluator_env_keys) that planning derives from each role's option box;
+        # the preflight POST carries no runtime-named knob fields of its own.
         checks = library.preflight(
             executor_agent=executor_agent,
             evaluator_agent=evaluator_agent,
@@ -148,12 +150,6 @@ class ConsoleApplication:
             docker_image=docker_image,
             executor_auth_mode=value("executor_auth_mode", "env"),
             evaluator_auth_mode=value("evaluator_auth_mode", "env"),
-            executor_opencode_api_key_env=(
-                value("executor_opencode_api_key_env") or legacy_opencode_key
-            ),
-            evaluator_opencode_api_key_env=(
-                value("evaluator_opencode_api_key_env") or legacy_opencode_key
-            ),
             executor_bin=(executor_meta or {}).get("cli", {}).get("bin")
             or value("executor_bin")
             or None,

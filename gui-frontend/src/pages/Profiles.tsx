@@ -46,6 +46,7 @@ import { CredentialStatus } from "@/components/credential-status"
 import { canonicalEffort, effortOptions } from "@/features/new-run/helpers"
 import { Hint } from "@/components/hint"
 import { ProviderModelPicker } from "@/components/model-picker"
+import { RuntimeOptionFields } from "@/components/RuntimeOptionFields"
 import { ErrorNote } from "@/components/error-note"
 import {
   api,
@@ -54,6 +55,7 @@ import {
   type Meta,
   type Profile,
   type RosterEntry,
+  type RuntimeOptionRow,
   type SharedConfig,
   type TaskLibrary,
 } from "@/lib/api"
@@ -81,7 +83,6 @@ const NUMERIC_SHARED: (keyof SharedConfig)[] = [
   "repeat",
   "evaluator_timeout_seconds",
   "max_evaluator_parallel",
-  "claude_max_turns",
 ]
 
 /* Runtimes that can be judge or executor: built-ins plus custom specs that
@@ -92,6 +93,7 @@ interface RuntimeRef {
   icon?: string | null
   thinking_channel?: "native_config" | "prompt"
   thinking_efforts?: string[]
+  options?: RuntimeOptionRow[]
 }
 
 function runtimeRefs(agents?: AgentsPayload): RuntimeRef[] {
@@ -101,6 +103,7 @@ function runtimeRefs(agents?: AgentsPayload): RuntimeRef[] {
       label: r.label,
       thinking_channel: r.thinking_channel,
       thinking_efforts: r.thinking_efforts,
+      options: r.options,
     })),
     ...(agents?.custom ?? [])
       .filter((r) => !r.error)
@@ -110,6 +113,7 @@ function runtimeRefs(agents?: AgentsPayload): RuntimeRef[] {
         icon: r.icon,
         thinking_channel: r.thinking_channel,
         thinking_efforts: r.thinking_efforts,
+        options: r.options,
       })),
   ]
 }
@@ -286,6 +290,12 @@ function fromDraft(draft: Draft): Profile {
     if (entry.label) out.label = entry.label
     if (canonicalEffort(entry.thinking_effort) !== THINKING_DEFAULT)
       out.thinking_effort = entry.thinking_effort
+    // Keep per-contender option knobs (blanks dropped) so a saved or migrated
+    // profile round-trips its box instead of silently losing it.
+    const options = Object.fromEntries(
+      Object.entries(entry.options ?? {}).filter(([, value]) => String(value).trim() !== ""),
+    )
+    if (Object.keys(options).length) out.options = options
     return out
   })
   const profile: Profile = {
@@ -885,6 +895,8 @@ function ProfileEditor({
                     const thinkingValue = thinkingEfforts.includes(canonicalValue)
                       ? canonicalValue
                       : THINKING_DEFAULT
+                    const optionDeclarations =
+                      refs.find((ref) => ref.id === entry.agent)?.options ?? []
                     return (
                       <div
                         key={index}
@@ -960,6 +972,16 @@ function ProfileEditor({
                                 ...(keep ? {} : { thinking_effort: THINKING_DEFAULT }),
                               })
                             }}
+                          />
+                          <RuntimeOptionFields
+                            declarations={optionDeclarations}
+                            role="executor"
+                            values={entry.options ?? {}}
+                            onChange={(name, optionValue) =>
+                              updateRoster(index, {
+                                options: { ...(entry.options ?? {}), [name]: optionValue },
+                              })
+                            }
                           />
                         </Field>
 

@@ -949,6 +949,7 @@ export interface RosterEntry {
   label?: string
   provider_id?: string
   thinking_effort?: string
+  options?: Record<string, number | string | boolean>
 }
 
 export interface ProfileTaskSet {

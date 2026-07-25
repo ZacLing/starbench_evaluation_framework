@@ -27,6 +27,24 @@ export interface RunPreset {
   taskIds?: string[]
 }
 
+/* Drop blank knob values (empty string = unset) so a launch/profile never
+   carries an option the user cleared; undefined when nothing survives. */
+function cleanedOptions(options?: Record<string, string>): Record<string, string> | undefined {
+  const entries = Object.entries(options ?? {}).filter(([, value]) => String(value).trim() !== "")
+  return entries.length ? Object.fromEntries(entries) : undefined
+}
+
+/* A stored option box (int/str/bool values) becomes the draft's string-edited
+   form so the same input controls round-trip a saved/migrated profile. */
+function draftOptions(
+  options?: Record<string, number | string | boolean>,
+): Record<string, string> | undefined {
+  const entries = Object.entries(options ?? {})
+  return entries.length
+    ? Object.fromEntries(entries.map(([key, value]) => [key, String(value)]))
+    : undefined
+}
+
 interface UseRunDraftOptions {
   preset: RunPreset
   ready: boolean
@@ -91,12 +109,14 @@ export function useRunDraft({
             : compatibleProviders(filterFor(entry.agent), providers, entry.agent)[0]?.id ??
               entry.provider_id ??
               ""
+          const options = draftOptions(entry.options)
           return {
             key: nextContenderKey(),
             runtime: entry.agent,
             provider_id: providerId,
             model: entry.model ?? "",
             thinking_effort: canonicalEffort(entry.thinking_effort),
+            ...(options ? { options } : {}),
           }
         }),
       )
@@ -210,6 +230,7 @@ export function useRunDraft({
       const providerless = custom && (custom.protocol ?? "none") === "none"
       if (!provider && !providerless) return []
       const model = custom && !custom.model_flag ? "" : draft.model.trim()
+      const options = cleanedOptions(draft.options)
       return [
         {
           label: `${runtimeLabel(draft.runtime)} ${model || "default"}`.trim(),
@@ -217,6 +238,7 @@ export function useRunDraft({
           provider_id: draft.provider_id,
           model,
           thinking_effort: draft.thinking_effort,
+          ...(options ? { options } : {}),
         },
       ]
     })
@@ -224,14 +246,18 @@ export function useRunDraft({
 
   const profileFromDraft = useCallback(
     (id: string, name: string): Profile => {
-      const roster: RosterEntry[] = contenders.map((draft) => ({
-        agent: draft.runtime,
-        ...(draft.model.trim() ? { model: draft.model.trim() } : {}),
-        ...(draft.provider_id ? { provider_id: draft.provider_id } : {}),
-        ...(canonicalEffort(draft.thinking_effort) !== DEFAULT_EFFORT
-          ? { thinking_effort: draft.thinking_effort }
-          : {}),
-      }))
+      const roster: RosterEntry[] = contenders.map((draft) => {
+        const options = cleanedOptions(draft.options)
+        return {
+          agent: draft.runtime,
+          ...(draft.model.trim() ? { model: draft.model.trim() } : {}),
+          ...(draft.provider_id ? { provider_id: draft.provider_id } : {}),
+          ...(canonicalEffort(draft.thinking_effort) !== DEFAULT_EFFORT
+            ? { thinking_effort: draft.thinking_effort }
+            : {}),
+          ...(options ? { options } : {}),
+        }
+      })
       const profile: Profile = {
         id,
         name,
