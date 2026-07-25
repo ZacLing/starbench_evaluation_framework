@@ -609,6 +609,17 @@ export interface AblationPayload {
   groups: AblationGroup[]
 }
 
+export interface SupervisionRecord {
+  state: string | null
+  heartbeat_at: string | null
+}
+
+export interface RunInterruption {
+  last_event_at: string | null
+  progress_finished: boolean
+  supervision: SupervisionRecord | null
+}
+
 export interface RunDetail {
   run_id: string
   status: "complete" | "running" | "interrupted"
@@ -634,6 +645,7 @@ export interface RunDetail {
   tasks: TaskRow[]
   progress: ProgressSnapshot | null
   ablation: AblationPayload | null
+  interruption: RunInterruption | null
 }
 
 export interface RubricResult {

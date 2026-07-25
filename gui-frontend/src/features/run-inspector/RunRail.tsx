@@ -105,7 +105,10 @@ function SummaryBlock({ run }: { run: RunDetail }) {
         </div>
         <span className="text-xs text-muted-foreground">
           {run.executor_agent ? agentLabel(run.executor_agent) : "–"}
-          {run.executor_model ? ` · ${run.executor_model}` : ""} · {run.task_count} tasks
+          {run.executor_model ? ` · ${run.executor_model}` : ""} ·{" "}
+          {run.status === "interrupted" && done < run.task_count
+            ? `${done} of ${run.task_count} tasks executed`
+            : `${run.task_count} tasks`}
         </span>
       </div>
 

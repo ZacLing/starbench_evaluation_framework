@@ -508,6 +508,27 @@ def run_detail(runs_dir: Path, run_id: str, active_run_ids: Optional[set] = None
     # The measurement contract this run was launched under (written by the
     # runner from --profile-snapshot). Absent for bare runs — null, honestly.
     profile_snapshot = _read_json(run_root / "profile_snapshot.json")
+    interruption = None
+    if overview.get("status") == "interrupted":
+        # The honest story of how the run stopped: the last progress event,
+        # whether the run ever marked itself finished, and whatever the
+        # supervisor's run_state.json still says (usually nothing — the file
+        # rarely survives the exit that interrupted the run).
+        _, last_event_at, progress_finished = _progress_bounds(run_root)
+        run_state = _read_json(run_root / RUN_STATE_FILENAME)
+        supervision = None
+        if isinstance(run_state, dict):
+            state = run_state.get("state")
+            heartbeat = run_state.get("heartbeat_at") or run_state.get("updated_at")
+            supervision = {
+                "state": state if isinstance(state, str) else None,
+                "heartbeat_at": heartbeat if isinstance(heartbeat, str) else None,
+            }
+        interruption = {
+            "last_event_at": last_event_at,
+            "progress_finished": progress_finished,
+            "supervision": supervision,
+        }
     detail = {
         **overview,
         "config": config or None,
@@ -515,5 +536,6 @@ def run_detail(runs_dir: Path, run_id: str, active_run_ids: Optional[set] = None
         "tasks": [_task_row(run_root, task_run_id) for task_run_id in task_ids],
         "progress": progress_snapshot(run_root),
         "ablation": _read_json(run_root / "instruction_ablation_summary.json"),
+        "interruption": interruption,
     }
     return detail

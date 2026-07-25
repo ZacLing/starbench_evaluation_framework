@@ -918,11 +918,27 @@ class AblationPayload(TypedDict):
     groups: List[AblationGroup]
 
 
+class SupervisionRecord(TypedDict):
+    state: Optional[str]
+    heartbeat_at: Optional[str]
+
+
+# The honest story of how an interrupted run stopped: last progress event,
+# whether the run ever marked itself finished, and whatever run_state.json
+# still says (usually nothing — the supervisor's file rarely survives exits).
+class RunInterruption(TypedDict):
+    last_event_at: Optional[str]
+    progress_finished: bool
+    supervision: Optional[SupervisionRecord]
+
+
 class RunDetail(RunOverview):
     config: Optional[Dict[str, Any]]
     tasks: List[TaskRow]
     progress: Optional[ProgressSnapshot]
     ablation: Optional[AblationPayload]
+    # Present only when status == "interrupted".
+    interruption: Optional[RunInterruption]
 
 
 class RubricResult(TypedDict):
@@ -1490,6 +1506,8 @@ GENERATED_TYPES = [
     "AblationDelta",
     "AblationGroup",
     "AblationPayload",
+    "SupervisionRecord",
+    "RunInterruption",
     "RunDetail",
     "RubricResult",
     "JudgeAggregate",

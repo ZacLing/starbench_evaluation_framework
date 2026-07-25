@@ -75,7 +75,7 @@ import {
 } from "@/lib/api"
 import type { ProfileSnapshot } from "@/lib/api-types"
 import { cn } from "@/lib/utils"
-import { fmtDelta, fmtDuration, fmtRate, fmtTime, percent, spanBetween } from "@/lib/format"
+import { fmtDelta, fmtDuration, fmtRate, fmtRelative, fmtTime, percent, spanBetween } from "@/lib/format"
 
 export default function RunDetail() {
   const { runId = "" } = useParams()
@@ -178,6 +178,15 @@ export default function RunDetail() {
           )}
         </div>
       </div>
+
+      {run.status === "interrupted" && (
+        <InterruptionCard
+          run={run}
+          executed={execDone}
+          judged={singleJudged.length}
+          passed={singlePassed.length}
+        />
+      )}
 
       {run.status === "running" && liveQuery.data?.status === "running" && (
         <LiveProgressCard runId={runId} live={liveQuery.data} />
@@ -829,6 +838,53 @@ function ExecutingNow({ runId, current }: { runId: string; current: RunLiveCurre
   )
 }
 
+/* The instrument narrates its own failure: when a run is interrupted, say
+   what is known from disk (progress bounds, surviving run_state.json), how far
+   the measurement got, and how to reproduce it. A status chip alone reads as
+   the console shrugging. */
+function InterruptionCard({
+  run,
+  executed,
+  judged,
+  passed,
+}: {
+  run: RunDetailData
+  executed: number
+  judged: number
+  passed: number
+}) {
+  const info = run.interruption
+  const supervision = info?.supervision ?? null
+  const pending = run.executor_stats.pending
+  const story = supervision?.heartbeat_at
+    ? `The supervisor's last heartbeat was ${fmtTime(supervision.heartbeat_at)} (${fmtRelative(supervision.heartbeat_at)})${supervision.state ? ` in state "${supervision.state}"` : ""}; it never recorded completion.`
+    : info?.last_event_at
+      ? `The last progress event was written ${fmtTime(info.last_event_at)} (${fmtRelative(info.last_event_at)}); no supervision record survives on disk.`
+      : "No progress events or supervision record survive on disk."
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-warn/40 bg-warn-soft px-4 py-3 text-sm text-warn-ink">
+      <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+      <div className="grid gap-1">
+        <p className="font-medium">
+          Interrupted — the run stopped before a summary was written.
+          {info?.progress_finished
+            ? " Its final progress event exists, but summarization never completed."
+            : ""}
+        </p>
+        <p>{story}</p>
+        <p>
+          {executed} of {run.task_count} task{run.task_count === 1 ? "" : "s"} executed
+          {pending ? ` (${pending} never started)` : ""} · {judged} judged · {passed} passed.
+        </p>
+        <p>
+          A rerun reproduces this measurement exactly — the seed and roster are pinned under Run
+          configuration below.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function AblationCard({
   groups,
 }: {
@@ -1463,7 +1519,7 @@ function fmtCaptured(iso: string | null | undefined): string | null {
   if (!iso) return null
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return null
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
 }
 
 function DriftChip({ drift }: { drift: Drift | null }) {
