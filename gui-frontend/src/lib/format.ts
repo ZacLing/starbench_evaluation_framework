@@ -11,7 +11,9 @@ export function fmtTime(iso: string | null | undefined): string {
   if (!iso) return "–"
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return "–"
-  return date.toLocaleString(undefined, {
+  // Pinned locale: the console chrome is English, so dates must not switch
+  // script with the OS locale mid-sentence ("Started 7月4日 13:12").
+  return date.toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     hour: "2-digit",

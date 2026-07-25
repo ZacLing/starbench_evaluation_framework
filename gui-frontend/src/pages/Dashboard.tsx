@@ -281,7 +281,7 @@ function ProgressOverTime({ runs, className }: { runs: RunOverview[]; className?
         index += 1
       }
       points.push({
-        day: new Date(day).toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        day: new Date(day).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
         completed,
         interrupted,
       })
@@ -651,8 +651,11 @@ function RunningNow({ runs }: { runs: RunOverview[] }) {
   )
 }
 
-/* Recent failures: runs whose executors failed or timed out, or whose judges
-   came back inconclusive — the honest failure taxonomy we have on disk. */
+/* Needs attention: runs whose executors failed or timed out, whose judges came
+   back inconclusive, or that were interrupted — the honest attention taxonomy
+   on disk. (Named to match the KPI card: a "Completed" run with a timeout
+   belongs here, and under a "failures" title that chip read as a
+   contradiction.) */
 function RecentFailures({ runs }: { runs: RunOverview[] }) {
   const failures = runs
     .map((run) => {
@@ -671,13 +674,13 @@ function RecentFailures({ runs }: { runs: RunOverview[] }) {
   return (
     <Card className="gap-0 rounded-xl py-0">
       <div className="flex items-center justify-between border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">Recent failures</h2>
+        <h2 className="text-sm font-semibold">Needs attention</h2>
         <Link to="/runs" className="text-xs font-medium text-primary hover:underline">
           View all
         </Link>
       </div>
       {failures.length === 0 ? (
-        <p className="px-4 py-4 text-sm text-muted-foreground">No failures on disk.</p>
+        <p className="px-4 py-4 text-sm text-muted-foreground">Nothing needs attention.</p>
       ) : (
         <ul className="px-2 py-1.5">
           {failures.map(({ run, parts }) => (

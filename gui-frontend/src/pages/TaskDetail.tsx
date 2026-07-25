@@ -276,7 +276,7 @@ function TracePane({
           <StatChip label="duration" value={fmtDuration(detail.executor.duration_seconds)} />
         )}
         {usageEntries.map(([key, value]) => (
-          <StatChip key={key} label={key.replace(/_/g, " ")} value={value.toLocaleString()} />
+          <StatChip key={key} label={key.replace(/_/g, " ")} value={value.toLocaleString("en-US")} />
         ))}
       </div>
 

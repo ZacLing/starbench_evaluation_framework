@@ -648,8 +648,11 @@ function RunIdCell({
   compact?: boolean
 }) {
   const tags = (run.profile?.modified ? 1 : 0) + (run.batch ? 1 : 0)
+  // Wide enough for the exp_compare_0704__<model> naming shape: sibling runs
+  // differ only in their suffix, so clipping it makes them indistinguishable
+  // while the card still has free width.
   return (
-    <div className={cn("min-w-0", compact ? "max-w-[13rem]" : "max-w-[22rem]")}>
+    <div className={cn("min-w-0", compact ? "max-w-[18rem]" : "max-w-[26rem]")}>
       <div className="truncate font-mono text-sm font-medium text-foreground" title={run.run_id}>
         {run.run_id}
       </div>
@@ -808,7 +811,7 @@ function ModelCell({ agent, model }: { agent: string | null; model: string | nul
   const { agentLabel } = useAgentCatalog()
   if (!agent) return <span className="text-muted-foreground">–</span>
   return (
-    <div className="flex min-w-0 max-w-[12rem] items-center gap-2">
+    <div className="flex min-w-0 max-w-[14rem] items-center gap-2">
       <AgentIcon agent={agent} size={18} />
       <div className="min-w-0">
         <div className="truncate text-sm">{agentLabel(agent)}</div>
