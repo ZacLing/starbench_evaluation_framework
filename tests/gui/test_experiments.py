@@ -1138,6 +1138,71 @@ class ExperimentProfileSnapshotTest(unittest.TestCase):
         self.assertNotIn("base_url", codex["contender"])
         self.assertEqual(codex["contender"]["api_key_env"], "OPENAI_API_KEY")
 
+    def test_transitional_claude_max_turns_is_recorded_per_contender(self) -> None:
+        # The shared (transitional) claude_max_turns must reach the measurement
+        # record, not just the launch box: a capped claude run is recorded as
+        # capped, and only the claude contender carries the option.
+        write_json(
+            self.runs_dir / "providers.json",
+            {
+                "providers": [
+                    {
+                        "id": "anthropic",
+                        "name": "Anthropic",
+                        "kind": "anthropic",
+                        "auth": "api_key",
+                        "base_url": "https://api.anthropic.com",
+                        "api_key_env": "ANTHROPIC_API_KEY",
+                        "models": ["claude-opus-4-8"],
+                    },
+                    {
+                        "id": "google",
+                        "name": "Google",
+                        "kind": "google",
+                        "auth": "api_key",
+                        "base_url": "",
+                        "api_key_env": "GEMINI_API_KEY",
+                        "models": ["gemini-2.5-pro"],
+                    },
+                ]
+            },
+        )
+        self.save_profile()
+        payload = self.payload(
+            contenders=[
+                {"label": "Claude Opus", "agent": "claude", "provider_id": "anthropic", "model": "claude-opus-4-8"},
+                {"label": "Gemini", "agent": "gemini", "provider_id": "google", "model": "gemini-2.5-pro"},
+            ]
+        )
+        payload["shared"]["claude_max_turns"] = 30
+        by_agent = {
+            item["agent"]: self.snapshot_from(item)
+            for item in experiments.plan_experiment(payload, runs_dir=self.runs_dir)["plans"]
+        }
+
+        # The claude contender records the cap, on its own entry and in the roster.
+        self.assertEqual(by_agent["claude"]["contender"]["options"], {"max_turns": 30})
+        claude_entry = next(e for e in by_agent["claude"]["roster"] if e["agent"] == "claude")
+        self.assertEqual(claude_entry["options"], {"max_turns": 30})
+        # A non-claude contender carries no options key at all.
+        self.assertNotIn("options", by_agent["gemini"]["contender"])
+        gemini_entry = next(e for e in by_agent["gemini"]["roster"] if e["agent"] == "gemini")
+        self.assertNotIn("options", gemini_entry)
+        # The judge side is untouched: a codex judge contributes no evaluator_options.
+        self.assertNotIn("evaluator_options", by_agent["claude"]["execution"])
+        # Every transported snapshot still honours the public contract.
+        for snapshot in by_agent.values():
+            validate_payload("profile_snapshot.schema.json", snapshot)
+
+        # Representation-insensitive: a string "30" is recorded identically to
+        # int 30, so relaunching with either never reads as a deviation.
+        payload["shared"]["claude_max_turns"] = "30"
+        string_plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        string_claude = next(
+            self.snapshot_from(item) for item in string_plan["plans"] if item["agent"] == "claude"
+        )
+        self.assertEqual(string_claude["contender"]["options"], {"max_turns": 30})
+
     def test_snapshot_cites_the_current_profile_rev(self) -> None:
         self.save_profile()
         self.save_profile(name="HSW sweep v2")  # rev 2

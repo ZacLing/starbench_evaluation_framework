@@ -30,6 +30,24 @@ from .profile_snapshots import (
 )
 from .profiles import load_profiles
 
+
+def _contender_user_options(entry: Dict[str, Any], shared_max_turns: Any) -> Dict[str, Any]:
+    """User-level executor options declared for one contender, blanks dropped.
+
+    This is the measurement-relevant knob set (e.g. max_turns), NOT the
+    provider-derived gateway wiring, which is transport rather than declared
+    configuration. TRANSITional: a claude contender inherits the shared
+    max-turns until the frontend posts its option box directly."""
+    options = {
+        str(name): value
+        for name, value in (entry.get("options") or {}).items()
+        if value is not None and str(value).strip() != ""
+    }
+    if str(entry.get("agent") or "") == "claude" and shared_max_turns not in (None, ""):
+        options.setdefault("max_turns", shared_max_turns)
+    return options
+
+
 def plan_experiment(
     payload: Dict[str, Any],
     *,
@@ -212,6 +230,12 @@ def plan_experiment(
             )
     judge_sensitive = _judge_sensitive_vars(evaluator_agent, runtimes_dir)
 
+    # TRANSITional: removed in the frontend task. The GUI form still posts a
+    # shared claude_max_turns; it feeds each claude contender's executor option
+    # box AND that contender's snapshot entry, so a capped run is recorded as
+    # capped instead of looking like a default run.
+    shared_max_turns = shared.get("claude_max_turns")
+
     # Ad-hoc deviation record: diff the payload's effective configuration
     # against the profile baseline (computed HERE, never trusted from the
     # client). One list serves every contender — the deviating dimensions are
@@ -248,15 +272,12 @@ def plan_experiment(
                         "label": entry.get("label"),
                         "thinking_effort": entry.get("thinking_effort"),
                         "provider_id": entry.get("provider_id"),
+                        "options": _contender_user_options(entry, shared_max_turns),
                     },
                     provider_by_id,
                     context=f"Contender {entry_label}",
                 )
             )
-    # TRANSITional: removed in the frontend task. The GUI form still posts a
-    # shared claude_max_turns; map it into each claude contender's executor
-    # option box so max-turns keeps working until the frontend posts the box.
-    shared_max_turns = shared.get("claude_max_turns")
 
     plans: List[Dict[str, Any]] = []
     used_run_ids = set()
@@ -311,11 +332,10 @@ def plan_experiment(
         }
         evaluator_gateway = evaluator_gateway or {}
 
-        # Contender user options merge under the wiring. For a claude contender,
-        # the transitional shared max-turns joins them (see shared_max_turns).
-        contender_options = dict(contender.get("options") or {})
-        if agent == "claude" and shared_max_turns not in (None, ""):
-            contender_options.setdefault("max_turns", shared_max_turns)
+        # Contender user options merge under the wiring. Read from the requested
+        # (pre-resolution) contender so reference-shaped options survive; the
+        # transitional shared max-turns joins them for a claude contender.
+        contender_options = _contender_user_options(requested_contender, shared_max_turns)
 
         launch_payload = {
             "run_id": run_id,
@@ -391,6 +411,7 @@ def plan_experiment(
                     "thinking_effort": launch_payload["thinking_effort"],
                     "auth_mode": launch_payload["auth_mode"],
                     "provider_id": str(requested_contender.get("provider_id") or ""),
+                    "options": contender_options,
                 },
                 provider_by_id,
                 context=f"Contender {label}",

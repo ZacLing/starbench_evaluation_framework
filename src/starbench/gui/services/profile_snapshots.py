@@ -160,6 +160,18 @@ def _snapshot_contender_spec(
         api_key_env = str(provider.get("api_key_env") or "")
         if api_key_env:
             spec["api_key_env"] = api_key_env
+    # Per-contender user options (e.g. max_turns) ride the entry. Values are
+    # normalized (\"30\" -> 30) so a representation difference never reads as a
+    # measurement deviation; wiring stays out (it is inline base_url/api_key_env).
+    options = entry.get("options")
+    if isinstance(options, dict):
+        normalized = {
+            str(name): _normalized_shared_value(value, None)
+            for name, value in options.items()
+            if value is not None and str(value).strip() != ""
+        }
+        if normalized:
+            spec["options"] = normalized
     return spec
 
 
