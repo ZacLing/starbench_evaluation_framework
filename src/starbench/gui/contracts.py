@@ -104,6 +104,26 @@ class ProviderFilter(TypedDict):
     accepts_gemini_endpoint: bool
 
 
+class RuntimeOptionRow(TypedDict):
+    """One runtime-specific knob declaration, serialized for /api/agents.
+
+    Mirrors adapters.base.RuntimeOption verbatim so the frontend can
+    auto-render controls: ``surface`` "user" knobs become form controls while
+    "wiring" knobs are provider-derived transport values the console never
+    renders. ``default`` is null when the knob is unset (the runtime CLI keeps
+    its own default); ``choices`` is non-empty only for ``type`` "enum".
+    """
+
+    name: str
+    type: str
+    role: str
+    surface: str
+    label: str
+    help: str
+    default: Optional[Union[int, str, bool]]
+    choices: List[str]
+
+
 class BuiltinRuntime(TypedDict):
     id: str
     label: str
@@ -120,6 +140,9 @@ class BuiltinRuntime(TypedDict):
     # Whether the runner can enforce the run-level web-search override for this
     # runtime (registry fact: RuntimeInfo.enforces_web_search).
     enforces_web_search: bool
+    # Runtime-specific knobs (adapters.base.RuntimeOption), serialized for the
+    # frontend to auto-render. Empty for runtimes that declare none.
+    options: List[RuntimeOptionRow]
 
 
 class _CustomRuntimeBase(TypedDict):
@@ -154,6 +177,7 @@ class CustomRuntime(_CustomRuntimeBase, total=False):
     thinking_efforts: List[str]
     enforces_web_search: bool
     cli: RuntimeCli
+    options: List[RuntimeOptionRow]
 
 
 class AgentsPayload(TypedDict):
@@ -1405,6 +1429,7 @@ GENERATED_TYPES = [
     "AgentStatusPayload",
     "AgentInstallResult",
     "ProviderFilter",
+    "RuntimeOptionRow",
     "BuiltinRuntime",
     "CustomRuntime",
     "AgentsPayload",

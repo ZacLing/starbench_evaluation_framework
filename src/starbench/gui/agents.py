@@ -113,6 +113,19 @@ def _builtin_row(info: RuntimeInfo) -> Dict[str, Any]:
         "thinking_channel": info.thinking_channel,
         "thinking_efforts": list(info.thinking_efforts),
         "enforces_web_search": info.enforces_web_search,
+        "options": [
+            {
+                "name": option.name,
+                "type": option.type,
+                "role": option.role,
+                "surface": option.surface,
+                "label": option.label,
+                "help": option.help,
+                "default": option.default,
+                "choices": list(option.choices),
+            }
+            for option in info.options
+        ],
     }
 
 
@@ -410,6 +423,7 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
             "thinking_channel": agent["thinking_channel"],
             "thinking_efforts": agent["thinking_efforts"],
             "enforces_web_search": agent["enforces_web_search"],
+            "options": agent["options"],
         }
         for agent in BUILTIN_AGENTS
     ]
@@ -461,6 +475,10 @@ def list_agents(runtimes_dir: Path) -> "contracts.AgentsPayload":
                     "thinking_channel": "prompt",
                     "thinking_efforts": ["none", "low", "medium", "high"],
                     "enforces_web_search": False,
+                    # Custom runtimes declare no runtime-specific knobs (the
+                    # spec has no option schema); the frontend renders an empty
+                    # option set, matching the builtin passthrough shape.
+                    "options": [],
                     "cli": _cli_probe(spec.command),
                     "source_path": str(path),
                     "error": None,

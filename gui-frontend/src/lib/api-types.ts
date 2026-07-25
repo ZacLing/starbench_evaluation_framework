@@ -75,6 +75,17 @@ export interface ProviderFilter {
   accepts_gemini_endpoint: boolean
 }
 
+export interface RuntimeOptionRow {
+  name: string
+  type: string
+  role: string
+  surface: string
+  label: string
+  help: string
+  default: number | string | boolean | null
+  choices: string[]
+}
+
 export interface BuiltinRuntime {
   id: string
   label: string
@@ -88,6 +99,7 @@ export interface BuiltinRuntime {
   thinking_channel: "native_config" | "prompt"
   thinking_efforts: string[]
   enforces_web_search: boolean
+  options: RuntimeOptionRow[]
 }
 
 export interface CustomRuntime {
@@ -119,6 +131,7 @@ export interface CustomRuntime {
   thinking_efforts?: string[]
   enforces_web_search?: boolean
   cli?: RuntimeCli
+  options?: RuntimeOptionRow[]
 }
 
 export interface AgentsPayload {

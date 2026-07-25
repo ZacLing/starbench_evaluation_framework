@@ -55,6 +55,18 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(by_id["gemini"]["docker_image"], "starbench-gemini-cli:latest")
         self.assertIn("bin", by_id["codex"]["cli"])
 
+    def test_builtin_rows_carry_option_declarations(self) -> None:
+        listing = agents.list_agents(self.runtimes_dir)
+        by_id = {agent["id"]: agent for agent in listing["builtin"]}
+        claude = by_id["claude"]["options"]
+        self.assertEqual(claude[0]["name"], "max_turns")
+        self.assertEqual(claude[0]["surface"], "user")
+        self.assertEqual(
+            [o["surface"] for o in by_id["opencode"]["options"]],
+            ["wiring", "wiring", "wiring"],
+        )
+        self.assertEqual(by_id["gemini"]["options"], [])
+
     def test_save_list_delete_roundtrip(self) -> None:
         saved = agents.save_custom_agent(self.runtimes_dir, self.qwen_payload())
         self.assertEqual(saved["id"], "custom:qwen-code")
