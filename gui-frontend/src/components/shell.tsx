@@ -1,5 +1,5 @@
 import { Link, NavLink, useLocation } from "react-router-dom"
-import { Bot, Boxes, Gauge, Grid3X3, Library, ListChecks, Plus, Puzzle, Ruler, Star, type LucideIcon } from "lucide-react"
+import { Bot, Boxes, Gauge, GitCompare, Grid3X3, Library, ListChecks, Plus, Puzzle, Ruler, Star, type LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Sidebar,
@@ -26,6 +26,7 @@ const PRIMARY_NAV: NavEntry[] = [
   { to: "/coverage", label: "Run matrix", icon: Grid3X3, end: true },
   { to: "/tasks", label: "Task library", icon: Library, end: true },
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
+  { to: "/compare", label: "Compare", icon: GitCompare, end: true },
 ]
 
 // Setup: the fixtures you configure once, then rarely touch mid-investigation.
@@ -133,10 +134,7 @@ function Crumbs({ pathname }: { pathname: string }) {
   else if (segments[0] === "agents") crumbs.push({ label: "Agents" })
   else if (segments[0] === "skills") crumbs.push({ label: "Skills" })
   else if (segments[0] === "providers") crumbs.push({ label: "AI providers" })
-  else if (segments[0] === "experiments") {
-    crumbs.push({ label: "Runs", to: "/runs" })
-    if (segments[1]) crumbs.push({ label: decodeURIComponent(segments[1]) })
-  }
+  else if (segments[0] === "compare") crumbs.push({ label: "Compare" })
   else if (segments[0] === "runs") {
     crumbs.push({ label: "Runs", to: segments.length > 1 ? "/runs" : undefined })
     if (segments[1]) {

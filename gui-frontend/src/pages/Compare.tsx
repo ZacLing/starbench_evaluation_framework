@@ -1,6 +1,9 @@
-import { Link, useSearchParams } from "react-router-dom"
+import { useState } from "react"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -13,10 +16,10 @@ import {
 } from "@/components/ui/table"
 import { AgentIcon } from "@/components/brand"
 import { useAgentCatalog } from "@/hooks/useAgentCatalog"
-import { StatusBadge, PassSummaryBadge } from "@/components/verdict"
+import { RunStatusChip, StatusBadge, PassSummaryBadge } from "@/components/verdict"
 import { ErrorNote } from "@/components/error-note"
 import { api, type CompareRunRow, type MatrixCell } from "@/lib/api"
-import { spanBetween } from "@/lib/format"
+import { fmtRelative, spanBetween } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 /* Stateless comparison over any set of runs, named entirely by the URL
@@ -42,14 +45,7 @@ export default function Compare() {
   const agentIconHint = (agent: string) => customs.find((item) => item.id === agent)?.icon
 
   if (runIds.length === 0) {
-    return (
-      <Card>
-        <CardContent className="py-10 text-center text-sm text-muted-foreground">
-          Nothing to compare — open this page from a run's batch chip on the
-          Runs page, or pass run ids as ?runs=a,b,c.
-        </CardContent>
-      </Card>
-    )
+    return <RunPicker />
   }
   if (compareQuery.isPending) return <Skeleton className="h-96" />
   if (compareQuery.isError) return <ErrorNote message={(compareQuery.error as Error).message} />
@@ -165,6 +161,85 @@ export default function Compare() {
           </Card>
         )}
       </section>
+    </div>
+  )
+}
+
+/* Entry when the URL names no runs: pick any set of runs to compare. The
+   comparison itself stays stateless and URL-named — the picker only builds
+   the ?runs= list, so batch siblings and hand-picked sets go through the
+   same door. */
+function RunPicker() {
+  const navigate = useNavigate()
+  const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs })
+  const { agentLabel, custom } = useAgentCatalog()
+  const [selected, setSelected] = useState<string[]>([])
+  if (runsQuery.isPending) return <Skeleton className="h-96" />
+  if (runsQuery.isError) return <ErrorNote message={(runsQuery.error as Error).message} />
+  const runs = [...runsQuery.data.runs].sort((a, b) =>
+    (b.started_at ?? "").localeCompare(a.started_at ?? ""),
+  )
+  const toggle = (runId: string, checked: boolean) =>
+    setSelected((current) =>
+      checked ? [...current, runId] : current.filter((id) => id !== runId),
+    )
+  return (
+    <div className="grid gap-6">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">Compare runs</h1>
+        <p className="text-sm text-muted-foreground">
+          Pick two or more runs to lay their rubric results side by side — computed from run
+          artifacts on disk, nothing is created or persisted.
+        </p>
+      </div>
+      <Card className="gap-0 overflow-hidden py-0">
+        {runs.length ? (
+          <ul className="divide-y">
+            {runs.map((run) => (
+              <li key={run.run_id}>
+                <label className="flex cursor-pointer items-center gap-3 px-4 py-2.5 hover:bg-muted/40">
+                  <Checkbox
+                    checked={selected.includes(run.run_id)}
+                    onCheckedChange={(checked) => toggle(run.run_id, checked === true)}
+                    aria-label={`Select ${run.run_id}`}
+                  />
+                  <AgentIcon
+                    agent={run.executor_agent ?? ""}
+                    icon={custom.find((item) => item.id === run.executor_agent)?.icon}
+                    size={16}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-mono text-sm">{run.run_id}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {agentLabel(run.executor_agent ?? "")}
+                      {run.executor_model ? ` · ${run.executor_model}` : ""}
+                    </span>
+                  </span>
+                  <span className="hidden text-xs text-muted-foreground sm:block">
+                    {fmtRelative(run.started_at)}
+                  </span>
+                  <RunStatusChip status={run.status} />
+                </label>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            No runs on disk yet — launch one first, then compare it against later runs.
+          </CardContent>
+        )}
+      </Card>
+      <div className="flex items-center gap-3">
+        <Button
+          disabled={selected.length < 2}
+          onClick={() => navigate(`/compare?runs=${selected.join(",")}`)}
+        >
+          Compare {selected.length >= 2 ? `${selected.length} runs` : "runs"}
+        </Button>
+        <span className="text-sm text-muted-foreground" aria-live="polite">
+          {selected.length < 2 ? "Select at least two runs." : `${selected.length} selected.`}
+        </span>
+      </div>
     </div>
   )
 }
