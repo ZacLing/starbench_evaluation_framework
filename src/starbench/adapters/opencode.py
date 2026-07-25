@@ -325,7 +325,7 @@ class OpenCodeAdapter(RuntimeAdapter):
                 provider=ctx.options.get("provider"),
                 base_url=ctx.options.get("base_url"),
                 model=model_name,
-                api_key_env=ctx.options.get("api_key_env") or "OPENAI_API_KEY",
+                api_key_env=ctx.options.get("api_key_env"),
                 base_env=ctx.base_env,
             )
             result = await run_cli_process(
@@ -377,7 +377,7 @@ class OpenCodeAdapter(RuntimeAdapter):
             provider=ctx.options.get("provider"),
             base_url=ctx.options.get("base_url"),
             model=model_name,
-            api_key_env=ctx.options.get("api_key_env") or "OPENAI_API_KEY",
+            api_key_env=ctx.options.get("api_key_env"),
             base_env=ctx.base_env,
         )
         prompt = append_json_schema_instruction(base_prompt, schema_path)

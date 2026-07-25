@@ -508,6 +508,8 @@ git commit -m "CLI: generic per-role option flags replace runtime-named knob fla
 - Modify: `tests/gui/test_launcher.py`, `tests/gui/test_equivalence.py`, `tests/gui/test_experiments.py`, `tests/contracts/` plan-contract tests
 - Test additions: v2 accepted / v1 rejected with the normative message; snapshot v2 shape
 
+> Boundary note: between this task's api-types regeneration and Task 7's frontend rewire, `npm run build` is red on intermediate commits (frontend still references removed fields) — a known bisect hazard, resolved at Task 7.
+
 **Interfaces:**
 - Consumes: `PLAN_OPTION_FLAGS`, `resolve_runtime_options` (Task 3), declarations (Task 1).
 - Produces: plan documents with `"schema_version": 2` and box keys; snapshot with per-contender `options` and `execution.evaluator_options`.

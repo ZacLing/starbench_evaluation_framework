@@ -976,6 +976,7 @@ function ProfileEditor({
                           <RuntimeOptionFields
                             declarations={optionDeclarations}
                             role="executor"
+                            idPrefix={String(index)}
                             values={entry.options ?? {}}
                             onChange={(name, optionValue) =>
                               updateRoster(index, {

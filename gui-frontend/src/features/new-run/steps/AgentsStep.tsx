@@ -470,6 +470,7 @@ function ContenderCard({
         <RuntimeOptionFields
           declarations={optionDeclarations}
           role="executor"
+          idPrefix={draft.key}
           values={draft.options ?? {}}
           onChange={(name, value) =>
             onUpdate({ options: { ...draft.options, [name]: value } })

@@ -4,7 +4,12 @@ from __future__ import annotations
 import unittest
 
 from starbench.adapters import get_builtin, list_builtin
-from starbench.adapters.base import OPTION_NAME_RE, resolve_runtime_options
+from starbench.adapters.base import (
+    OPTION_NAME_RE,
+    RuntimeOption,
+    _coerce_option,
+    resolve_runtime_options,
+)
 
 
 class DeclarationGuardTests(unittest.TestCase):
@@ -78,3 +83,54 @@ class ResolverTests(unittest.TestCase):
     def test_opencode_box_fills_default_api_key_name(self) -> None:
         resolved = resolve_runtime_options(get_builtin("opencode"), "executor", {})
         self.assertEqual(resolved, {"api_key_env": "OPENAI_API_KEY"})
+
+
+class CoerceOptionTests(unittest.TestCase):
+    """Direct coverage of _coerce_option's boolean and enum branches.
+
+    No adapter declares a boolean or enum knob yet, so the resolver tests above
+    only reach the integer/string paths through real adapters. These build a
+    throwaway RuntimeOption inline to exercise the untested branches — no adapter
+    changes.
+    """
+
+    def test_boolean_accepts_python_bools(self) -> None:
+        option = RuntimeOption(name="x", type="boolean")
+        self.assertIs(_coerce_option("claude", option, True), True)
+        self.assertIs(_coerce_option("claude", option, False), False)
+
+    def test_boolean_accepts_true_false_strings_case_insensitively(self) -> None:
+        option = RuntimeOption(name="x", type="boolean")
+        self.assertIs(_coerce_option("claude", option, "true"), True)
+        self.assertIs(_coerce_option("claude", option, "TRUE"), True)
+        self.assertIs(_coerce_option("claude", option, "false"), False)
+        self.assertIs(_coerce_option("claude", option, "False"), False)
+
+    def test_boolean_rejects_non_boolean_string(self) -> None:
+        option = RuntimeOption(name="x", type="boolean")
+        with self.assertRaises(ValueError) as ctx:
+            _coerce_option("claude", option, "yes")
+        self.assertIn(
+            'claude option x expects true or false, got "yes".', str(ctx.exception)
+        )
+
+    def test_enum_accepts_a_declared_choice(self) -> None:
+        option = RuntimeOption(name="x", type="enum", choices=("a", "b"))
+        self.assertEqual(_coerce_option("claude", option, "a"), "a")
+
+    def test_enum_rejects_an_undeclared_choice(self) -> None:
+        option = RuntimeOption(name="x", type="enum", choices=("a", "b"))
+        with self.assertRaises(ValueError) as ctx:
+            _coerce_option("claude", option, "c")
+        self.assertIn(
+            'claude option x must be one of a, b; got "c".', str(ctx.exception)
+        )
+
+    def test_integer_rejects_python_bool(self) -> None:
+        # The isinstance(value, bool) guard: True must not coerce to 1.
+        option = RuntimeOption(name="x", type="integer")
+        with self.assertRaises(ValueError) as ctx:
+            _coerce_option("claude", option, True)
+        self.assertIn(
+            'claude option x expects an integer, got "True".', str(ctx.exception)
+        )

@@ -17,11 +17,16 @@ export function RuntimeOptionFields({
   role,
   values,
   onChange,
+  idPrefix,
 }: {
   declarations: RuntimeOptionRow[]
   role: "executor" | "evaluator"
   values: Record<string, string | number | boolean>
   onChange: (name: string, value: string) => void
+  /* Disambiguates DOM ids when several instances render the same knob on one
+     page (two same-runtime contenders would otherwise share opt-<role>-<name>).
+     Defaults to role; callers pass the contender key / roster index. */
+  idPrefix?: string
 }) {
   const visible = declarations.filter(
     (option) => option.surface === "user" && (option.role === role || option.role === "both"),
@@ -29,20 +34,23 @@ export function RuntimeOptionFields({
   if (!visible.length) return null
   return (
     <>
-      {visible.map((option) => (
-        <div key={option.name} className="grid gap-1.5">
-          <Label htmlFor={`opt-${role}-${option.name}`}>{option.label || option.name}</Label>
-          <Input
-            id={`opt-${role}-${option.name}`}
-            type={option.type === "integer" ? "number" : "text"}
-            value={String(values[option.name] ?? "")}
-            onChange={(event) => onChange(option.name, event.target.value)}
-          />
-          {option.help ? (
-            <p className="text-xs text-muted-foreground">{option.help}</p>
-          ) : null}
-        </div>
-      ))}
+      {visible.map((option) => {
+        const fieldId = `opt-${idPrefix ?? role}-${option.name}`
+        return (
+          <div key={option.name} className="grid gap-1.5">
+            <Label htmlFor={fieldId}>{option.label || option.name}</Label>
+            <Input
+              id={fieldId}
+              type={option.type === "integer" ? "number" : "text"}
+              value={String(values[option.name] ?? "")}
+              onChange={(event) => onChange(option.name, event.target.value)}
+            />
+            {option.help ? (
+              <p className="text-xs text-muted-foreground">{option.help}</p>
+            ) : null}
+          </div>
+        )
+      })}
     </>
   )
 }
