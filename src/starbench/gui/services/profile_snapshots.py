@@ -23,17 +23,24 @@ _SHARED_CONTRACT_DEFAULTS: Dict[str, Any] = {
     "executor_auth_mode": "env",
     "max_evaluator_parallel": 4,
     "web_search_mode": "task",
-    "claude_max_turns": None,
+    "evaluator_options": {},
 }
 
 def _normalized_shared_value(value: Any, default: Any) -> Any:
     """One shared key's comparison value: unset -> the runner default, numeric
-    strings -> ints, other strings stripped. Representation differences
-    ("5" vs 5) must never read as measurement deviations."""
+    strings -> ints, other strings stripped, option boxes -> a sorted, value-
+    normalized tuple. Representation differences ("5" vs 5, or a box's key
+    order) must never read as measurement deviations."""
     if value is None or (isinstance(value, str) and not value.strip()):
-        return default
+        value = default
+    if isinstance(value, dict):
+        return tuple(
+            sorted((str(k), _normalized_shared_value(v, None)) for k, v in value.items())
+        )
     if isinstance(value, bool) or isinstance(value, (int, float)):
         return value
+    if value is None:
+        return None
     text = str(value).strip()
     try:
         return int(text)
@@ -197,9 +204,11 @@ def _assemble_profile_snapshot(
         "max_evaluator_parallel": _int_or_default(shared.get("max_evaluator_parallel"), 4),
         "web_search": str(launch_payload.get("web_search") or "task"),
     }
-    claude_max_turns = shared.get("claude_max_turns")
-    if claude_max_turns not in (None, ""):
-        execution["claude_max_turns"] = int(claude_max_turns)
+    # Judge-side option box (evaluator knobs plus gateway wiring) as it took
+    # effect for this run; omitted when empty. Names are enforced at parse time.
+    evaluator_options = launch_payload.get("evaluator_options") or {}
+    if evaluator_options:
+        execution["evaluator_options"] = dict(evaluator_options)
     snapshot = {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
         "captured_at": datetime.now(timezone.utc).isoformat(),

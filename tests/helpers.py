@@ -253,7 +253,7 @@ def launch_flags(item):
     run_plan document through the runner's own flag map, so assertions like
     "--seed 7" hold for both transports without caring which one is in play.
     """
-    from starbench.runner.cli import PLAN_LIST_FLAGS
+    from starbench.runner.cli import PLAN_LIST_FLAGS, PLAN_OPTION_FLAGS
 
     plan = item.get("run_plan")
     parts = list(item["argv"])
@@ -261,7 +261,11 @@ def launch_flags(item):
         for key, value in plan.items():
             if key in ("schema_version", "profile_snapshot"):
                 continue
-            if key in PLAN_LIST_FLAGS:
+            if key in PLAN_OPTION_FLAGS:
+                for name, entry in value.items():
+                    rendered = str(entry).lower() if isinstance(entry, bool) else entry
+                    parts += [PLAN_OPTION_FLAGS[key], f"{name}={rendered}"]
+            elif key in PLAN_LIST_FLAGS:
                 for entry in value:
                     parts += [PLAN_LIST_FLAGS[key], str(entry)]
             else:

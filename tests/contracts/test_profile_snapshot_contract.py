@@ -37,6 +37,7 @@ def valid_snapshot() -> dict:
             "provider_id": "anthropic",
             "base_url": "https://api.anthropic.com",
             "api_key_env": "ANTHROPIC_API_KEY",
+            "options": {"max_turns": 50},
         },
         "roster": [
             {
@@ -45,6 +46,7 @@ def valid_snapshot() -> dict:
                 "provider_id": "anthropic",
                 "base_url": "https://api.anthropic.com",
                 "api_key_env": "ANTHROPIC_API_KEY",
+                "options": {"max_turns": 50},
             },
             {"agent": "codex", "model": "gpt-5.5", "api_key_env": "OPENAI_API_KEY"},
         ],
@@ -63,6 +65,7 @@ def valid_snapshot() -> dict:
             "executor_auth_mode": "env",
             "max_evaluator_parallel": 4,
             "web_search": "task",
+            "evaluator_options": {"provider": "openrouter", "api_key_env": "OPENROUTER_API_KEY"},
         },
         "task_set": {"tasks_dir": "tasks", "task_ids": ["task_a", "task_b"]},
     }

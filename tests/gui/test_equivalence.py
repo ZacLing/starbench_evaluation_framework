@@ -324,9 +324,9 @@ class ReferenceShapeEquivalenceTest(unittest.TestCase):
                 "agent": "opencode",
                 "model": "openrouter/some-model",
                 "auth_mode": "env",
-                "opencode_provider": "openrouter",
-                "opencode_base_url": "https://openrouter.ai/api/v1",
-                "opencode_api_key_env": "OPENROUTER_API_KEY",
+                "provider": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
             },
             ref_shared={
                 "evaluator_agent": "codex",
@@ -451,9 +451,9 @@ class ReferenceShapeEquivalenceTest(unittest.TestCase):
                 "evaluator_model": "judge-model",
                 "evaluator_auth_mode": "env",
                 "evaluator_gateway": {
-                    "opencode_provider": "openrouter",
-                    "opencode_base_url": "https://openrouter.ai/api/v1",
-                    "opencode_api_key_env": "OPENROUTER_API_KEY",
+                    "provider": "openrouter",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
                 },
             },
         )

@@ -33,6 +33,8 @@ SUPPORTED_KEYWORDS = {
     "required",
     "properties",
     "additionalProperties",
+    "propertyNames",
+    "maxProperties",
     "items",
     "minItems",
     "minimum",
@@ -128,6 +130,17 @@ def _validate_object(schema: Dict[str, Any], data: Dict[str, Any], *, path: str)
         if key not in data:
             raise ContractValidationError(f"{path}: missing required key {key!r}")
 
+    max_properties = schema.get("maxProperties")
+    if max_properties is not None and len(data) > max_properties:
+        raise ContractValidationError(
+            f"{path}: expected at most {max_properties} propert(y/ies), got {len(data)}"
+        )
+
+    property_names = schema.get("propertyNames")
+    if property_names is not None:
+        for key in data:
+            validate_json_schema(property_names, key, path=f"{path}.<key {key!r}>")
+
     properties = schema.get("properties", {})
     for key, child_schema in properties.items():
         if key in data:
@@ -138,9 +151,16 @@ def _validate_object(schema: Dict[str, Any], data: Dict[str, Any], *, path: str)
         extra = set(data) - set(properties)
         if extra:
             raise ContractValidationError(f"{path}: unexpected key(s): {sorted(extra)}")
+    elif isinstance(additional, dict):
+        # Schema-valued additionalProperties: every key outside `properties`
+        # must satisfy the given subschema. Used by the role option boxes,
+        # whose value shape is fixed even though their key set is dynamic.
+        for key, value in data.items():
+            if key not in properties:
+                validate_json_schema(additional, value, path=f"{path}.{key}")
     elif additional is not True:
-        # Schema-valued additionalProperties is a real constraint this
-        # validator does not implement; refuse rather than silently pass.
+        # Any other additionalProperties form is not implemented; refuse
+        # rather than silently pass.
         raise ContractValidationError(
             f"{path}: unsupported additionalProperties form: {additional!r}"
         )

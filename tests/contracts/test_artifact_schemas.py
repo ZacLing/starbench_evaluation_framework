@@ -416,6 +416,23 @@ class ArtifactSchemaTests(unittest.TestCase):
             validate_json_schema(schema("task.schema.json"), {})
 
 
+class RunPlanSchemaTests(unittest.TestCase):
+    """run_plan v2: role option boxes are accepted, v1 documents are rejected."""
+
+    def minimal_plan(self) -> Dict[str, Any]:
+        # The smallest document the schema's `required` list accepts.
+        return {"schema_version": 2, "run_id": "plan_run", "tasks_dir": "tasks"}
+
+    def test_v2_plan_with_boxes_validates(self) -> None:
+        plan = {**self.minimal_plan(), "schema_version": 2,
+                "executor_options": {"max_turns": 50}}
+        validate_payload("run_plan.schema.json", plan)  # must not raise
+
+    def test_v1_plan_is_rejected(self) -> None:
+        with self.assertRaises(ContractValidationError):
+            validate_payload("run_plan.schema.json", {**self.minimal_plan(), "schema_version": 1})
+
+
 class ValidatorKeywordTests(unittest.TestCase):
     """The lightweight validator must refuse keywords it does not implement.
 
@@ -464,12 +481,29 @@ class ValidatorKeywordTests(unittest.TestCase):
             "value",
         )
 
-    def test_schema_valued_additional_properties_raises(self) -> None:
+    def test_schema_valued_additional_properties_validates_values(self) -> None:
+        # Schema-valued additionalProperties (used by the role option boxes)
+        # validates every non-declared value against the subschema.
+        schema = {"type": "object", "additionalProperties": {"type": "string"}}
+        validate_json_schema(schema, {"free": "form"})  # ok
+        with self.assertRaisesRegex(ContractValidationError, "expected type 'string'"):
+            validate_json_schema(schema, {"free": 7})
+
+    def test_unsupported_additional_properties_form_still_raises(self) -> None:
         with self.assertRaisesRegex(ContractValidationError, "unsupported additionalProperties form"):
-            validate_json_schema(
-                {"type": "object", "additionalProperties": {"type": "string"}},
-                {"free": "form"},
-            )
+            validate_json_schema({"type": "object", "additionalProperties": 3}, {"free": "form"})
+
+    def test_property_names_pattern_is_enforced(self) -> None:
+        schema = {"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}}
+        validate_json_schema(schema, {"max_turns": 1})  # ok
+        with self.assertRaisesRegex(ContractValidationError, "does not match"):
+            validate_json_schema(schema, {"Max-Turns": 1})
+
+    def test_max_properties_is_enforced(self) -> None:
+        schema = {"type": "object", "maxProperties": 1}
+        validate_json_schema(schema, {"a": 1})  # ok
+        with self.assertRaisesRegex(ContractValidationError, "at most 1 propert"):
+            validate_json_schema(schema, {"a": 1, "b": 2})
 
     def test_non_object_items_form_raises(self) -> None:
         with self.assertRaisesRegex(ContractValidationError, "unsupported items form"):

@@ -253,6 +253,11 @@ def plan_experiment(
                     context=f"Contender {entry_label}",
                 )
             )
+    # TRANSITional: removed in the frontend task. The GUI form still posts a
+    # shared claude_max_turns; map it into each claude contender's executor
+    # option box so max-turns keeps working until the frontend posts the box.
+    shared_max_turns = shared.get("claude_max_turns")
+
     plans: List[Dict[str, Any]] = []
     used_run_ids = set()
     for index, contender in enumerate(contenders):
@@ -296,13 +301,21 @@ def plan_experiment(
         )
         effective_backend = backend if docker_capable else "local"
 
-        # Executor and Judge own independent OpenCode gateway configurations.
+        # Executor and Judge own independent gateway wiring. The keys are the
+        # opencode adapter's declared option names, so they fold straight into
+        # the role option box (resolve_runtime_options validates them).
         gateway = {
-            "opencode_provider": contender.get("opencode_provider"),
-            "opencode_base_url": contender.get("opencode_base_url"),
-            "opencode_api_key_env": contender.get("opencode_api_key_env"),
+            "provider": contender.get("provider"),
+            "base_url": contender.get("base_url"),
+            "api_key_env": contender.get("api_key_env"),
         }
         evaluator_gateway = evaluator_gateway or {}
+
+        # Contender user options merge under the wiring. For a claude contender,
+        # the transitional shared max-turns joins them (see shared_max_turns).
+        contender_options = dict(contender.get("options") or {})
+        if agent == "claude" and shared_max_turns not in (None, ""):
+            contender_options.setdefault("max_turns", shared_max_turns)
 
         launch_payload = {
             "run_id": run_id,
@@ -320,7 +333,6 @@ def plan_experiment(
             "auth_mode": str(contender.get("auth_mode") or "env"),
             "thinking_effort": _validated_thinking_effort(agent, contender, label),
             "web_search": str(shared.get("web_search_mode") or "task"),
-            "claude_max_turns": shared.get("claude_max_turns"),
             "evaluator_agent": str(shared.get("evaluator_agent") or "codex"),
             "evaluator_model": str(shared.get("evaluator_model") or "").strip(),
             "evaluator_auth_mode": str(shared.get("evaluator_auth_mode") or "") or None,
@@ -332,12 +344,18 @@ def plan_experiment(
             "repeat": shared.get("repeat"),
             "executor_bin": contender.get("codex_bin"),
             "evaluator_bin": shared.get("evaluator_bin"),
-            "executor_opencode_provider": gateway.get("opencode_provider"),
-            "executor_opencode_base_url": gateway.get("opencode_base_url"),
-            "executor_opencode_api_key_env": gateway.get("opencode_api_key_env"),
-            "evaluator_opencode_provider": evaluator_gateway.get("opencode_provider"),
-            "evaluator_opencode_base_url": evaluator_gateway.get("opencode_base_url"),
-            "evaluator_opencode_api_key_env": evaluator_gateway.get("opencode_api_key_env"),
+            "executor_options": {
+                **{k: v for k, v in contender_options.items() if v not in (None, "")},
+                **{k: v for k, v in gateway.items() if v},
+            },
+            "evaluator_options": {
+                **{
+                    k: v
+                    for k, v in (shared.get("evaluator_options") or {}).items()
+                    if v not in (None, "")
+                },
+                **{k: v for k, v in (evaluator_gateway or {}).items() if v},
+            },
             "extra_args": str(shared.get("extra_args") or ""),
             # Shared instruction ablation: same mode/steps for every contender.
             "instruction_mode": instruction_mode,
@@ -436,13 +454,13 @@ def plan_experiment(
         judge_provider = provider_by_id.get(str(shared.get("evaluator_provider_id") or ""))
         executor_credential_env_keys = _credential_source_names(
             executor_env_spec,
-            api_key_env=launch_payload.get("executor_opencode_api_key_env"),
+            api_key_env=(launch_payload.get("executor_options") or {}).get("api_key_env"),
             provider=executor_provider,
             auth_mode=launch_payload["auth_mode"],
         )
         evaluator_credential_env_keys = _credential_source_names(
             judge_env,
-            api_key_env=launch_payload.get("evaluator_opencode_api_key_env"),
+            api_key_env=(launch_payload.get("evaluator_options") or {}).get("api_key_env"),
             provider=judge_provider,
             auth_mode=str(launch_payload.get("evaluator_auth_mode") or "env"),
         )
@@ -509,12 +527,10 @@ def plan_experiment(
                 ),
                 "executor_bin": str(launch_payload.get("executor_bin") or ""),
                 "evaluator_bin": str(launch_payload.get("evaluator_bin") or ""),
-                "executor_opencode_api_key_env": str(
-                    launch_payload.get("executor_opencode_api_key_env") or ""
-                ),
-                "evaluator_opencode_api_key_env": str(
-                    launch_payload.get("evaluator_opencode_api_key_env") or ""
-                ),
+                # Role option boxes the review step surfaces (wiring api_key_env
+                # NAMES plus any user knobs); the box carries no key values.
+                "executor_options": dict(launch_payload.get("executor_options") or {}),
+                "evaluator_options": dict(launch_payload.get("evaluator_options") or {}),
                 "executor_credential_env_keys": executor_credential_env_keys,
                 "evaluator_credential_env_keys": evaluator_credential_env_keys,
                 # Legacy merged view (kept for display/back-compat).

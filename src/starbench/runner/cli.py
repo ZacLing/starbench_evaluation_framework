@@ -117,6 +117,14 @@ def _expand_plan_argv(
         plan = json.loads(raw)
     except ValueError as exc:
         parser.error(f"--plan: {plan_path} is not valid JSON: {exc}")
+    if plan.get("schema_version") == 1:
+        parser.error(
+            f"--plan: {plan_path}: run plan schema_version 1 is no longer accepted. "
+            'Move "claude_max_turns" into "executor_options": {"max_turns": ...} and '
+            'the opencode_* keys into "executor_options"/"evaluator_options" '
+            '({"provider": ..., "base_url": ..., "api_key_env": ...}), then re-emit '
+            "with schema_version 2."
+        )
     try:
         validate_payload("run_plan.schema.json", plan)
     except ContractValidationError as exc:

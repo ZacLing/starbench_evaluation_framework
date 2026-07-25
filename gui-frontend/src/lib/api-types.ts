@@ -407,6 +407,7 @@ export interface ProfileSnapshotContender {
   provider_id?: string
   base_url?: string
   api_key_env?: string
+  options?: Record<string, number | string | boolean>
 }
 
 export interface ProfileSnapshotInstrument {
@@ -425,7 +426,7 @@ export interface ProfileSnapshotExecution {
   executor_auth_mode: string
   max_evaluator_parallel?: number
   web_search?: "task" | "allow" | "deny"
-  claude_max_turns?: number
+  evaluator_options?: Record<string, number | string | boolean>
 }
 
 export interface ProfileSnapshotTaskSet {
@@ -491,8 +492,8 @@ export interface ExperimentPlanItem {
   evaluator_auth_mode?: string
   executor_bin?: string
   evaluator_bin?: string
-  executor_opencode_api_key_env?: string
-  evaluator_opencode_api_key_env?: string
+  executor_options?: Record<string, number | string | boolean>
+  evaluator_options?: Record<string, number | string | boolean>
   executor_credential_env_keys?: string[]
   evaluator_credential_env_keys?: string[]
 }
@@ -503,6 +504,7 @@ export interface Contender {
   model: string
   label?: string
   thinking_effort?: string
+  options?: Record<string, number | string | boolean>
 }
 
 export interface ExecutorStats {
@@ -896,9 +898,9 @@ export interface EnvSource {
 }
 
 export interface GatewayConfig {
-  opencode_provider?: string
-  opencode_base_url?: string
-  opencode_api_key_env?: string
+  provider?: string
+  base_url?: string
+  api_key_env?: string
 }
 
 export interface SharedConfig {
@@ -914,7 +916,6 @@ export interface SharedConfig {
   batch_size?: number | string | null
   repeat?: number | string | null
   max_evaluator_parallel?: number | string | null
-  claude_max_turns?: number | string | null
   web_search_mode?: string
   extra_args?: string
   executor_skills?: string[]
@@ -925,6 +926,7 @@ export interface SharedConfig {
   rigors?: string[]
   evaluator_provider_id?: string
   evaluator_gateway?: GatewayConfig | null
+  evaluator_options?: Record<string, number | string | boolean>
   judge_env?: Record<string, EnvSource> | null
 }
 

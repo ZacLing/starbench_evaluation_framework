@@ -92,12 +92,15 @@ class ExperimentTest(unittest.TestCase):
         payload["shared"]["claude_max_turns"] = 30
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         self.assertEqual(len(plan["plans"]), 2)
+        by_agent = {item["agent"]: item for item in plan["plans"]}
         for item in plan["plans"]:
-            joined = launch_flags(item)
-            self.assertIn("--max-evaluator-parallel 8", joined)
-            self.assertIn("--claude-max-turns 30", joined)
+            self.assertIn("--max-evaluator-parallel 8", launch_flags(item))
+        # Transitional: the shared max-turns lands in the claude contender's
+        # executor option box; a non-claude contender never receives it.
+        self.assertIn("--executor-option max_turns=30", launch_flags(by_agent["claude"]))
+        self.assertNotIn("max_turns", launch_flags(by_agent["codex"]))
 
-    def test_executor_and_judge_opencode_gateways_are_independent(self) -> None:
+    def test_executor_and_judge_option_boxes_are_independent(self) -> None:
         payload = self.experiment_payload(
             contenders=[
                 {
@@ -105,9 +108,9 @@ class ExperimentTest(unittest.TestCase):
                     "agent": "opencode",
                     "model": "executor/model",
                     "auth_mode": "env",
-                    "opencode_provider": "executor-provider",
-                    "opencode_base_url": "https://executor.example/v1",
-                    "opencode_api_key_env": "EXECUTOR_KEY",
+                    "provider": "executor-provider",
+                    "base_url": "https://executor.example/v1",
+                    "api_key_env": "EXECUTOR_KEY",
                 }
             ]
         )
@@ -117,21 +120,21 @@ class ExperimentTest(unittest.TestCase):
                 "evaluator_model": "judge/model",
                 "evaluator_auth_mode": "env",
                 "evaluator_gateway": {
-                    "opencode_provider": "judge-provider",
-                    "opencode_base_url": "https://judge.example/v1",
-                    "opencode_api_key_env": "JUDGE_KEY",
+                    "provider": "judge-provider",
+                    "base_url": "https://judge.example/v1",
+                    "api_key_env": "JUDGE_KEY",
                 },
             }
         )
 
         item = experiments.plan_experiment(payload, runs_dir=self.runs_dir)["plans"][0]
         joined = launch_flags(item)
-        self.assertIn("--executor-opencode-provider executor-provider", joined)
-        self.assertIn("--executor-opencode-base-url https://executor.example/v1", joined)
-        self.assertIn("--evaluator-opencode-provider judge-provider", joined)
-        self.assertIn("--evaluator-opencode-base-url https://judge.example/v1", joined)
-        self.assertEqual(item["executor_opencode_api_key_env"], "EXECUTOR_KEY")
-        self.assertEqual(item["evaluator_opencode_api_key_env"], "JUDGE_KEY")
+        self.assertIn("--executor-option provider=executor-provider", joined)
+        self.assertIn("--executor-option base_url=https://executor.example/v1", joined)
+        self.assertIn("--evaluator-option provider=judge-provider", joined)
+        self.assertIn("--evaluator-option base_url=https://judge.example/v1", joined)
+        self.assertEqual(item["executor_options"]["api_key_env"], "EXECUTOR_KEY")
+        self.assertEqual(item["evaluator_options"]["api_key_env"], "JUDGE_KEY")
         self.assertEqual(item["executor_credential_env_keys"], ["EXECUTOR_KEY"])
         self.assertEqual(item["evaluator_credential_env_keys"], ["JUDGE_KEY"])
 
@@ -154,10 +157,10 @@ class ExperimentTest(unittest.TestCase):
         self.assertIn("--executor-bin codex -c model_provider=gateway", joined)
         self.assertNotIn("--evaluator-bin", joined)
 
-    def test_claude_max_turns_omitted_when_unset(self) -> None:
+    def test_max_turns_omitted_when_unset(self) -> None:
         plan = experiments.plan_experiment(self.experiment_payload(), runs_dir=self.runs_dir)
         for item in plan["plans"]:
-            self.assertNotIn("--claude-max-turns", launch_flags(item))
+            self.assertNotIn("max_turns", launch_flags(item))
 
     def test_docker_backend_uses_one_image_per_runtime(self) -> None:
         payload = self.experiment_payload()

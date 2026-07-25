@@ -627,6 +627,9 @@ class ProfileSnapshotContender(_ProfileSnapshotContenderBase, total=False):
     provider_id: str
     base_url: str
     api_key_env: str
+    # Runtime-specific executor knobs (e.g. max_turns); names enforced at parse
+    # time. Values are scalars; any credential is an env-var NAME, never a value.
+    options: Dict[str, Union[int, str, bool]]
 
 
 class _ProfileSnapshotInstrumentBase(TypedDict):
@@ -651,7 +654,9 @@ class _ProfileSnapshotExecutionBase(TypedDict):
 class ProfileSnapshotExecution(_ProfileSnapshotExecutionBase, total=False):
     max_evaluator_parallel: int
     web_search: WebSearchMode
-    claude_max_turns: int
+    # Judge-side option box (evaluator knobs plus gateway wiring) in effect for
+    # this run; names enforced at parse time, values are scalars/env-var NAMES.
+    evaluator_options: Dict[str, Union[int, str, bool]]
 
 
 class ProfileSnapshotTaskSet(TypedDict):
@@ -757,8 +762,10 @@ class ExperimentPlanItem(_ExperimentPlanItemBase, total=False):
     evaluator_auth_mode: str
     executor_bin: str
     evaluator_bin: str
-    executor_opencode_api_key_env: str
-    evaluator_opencode_api_key_env: str
+    # Role option boxes surfaced to the review step (wiring api_key_env NAMES
+    # plus any user knobs); the boxes never carry key values.
+    executor_options: Dict[str, Union[int, str, bool]]
+    evaluator_options: Dict[str, Union[int, str, bool]]
     executor_credential_env_keys: List[str]
     evaluator_credential_env_keys: List[str]
 
@@ -778,6 +785,9 @@ class _ContenderBase(TypedDict):
 class Contender(_ContenderBase, total=False):
     label: str
     thinking_effort: str
+    # Runtime-specific executor knobs the form posts (user knobs, e.g.
+    # max_turns); gateway wiring is merged on top at plan time.
+    options: Dict[str, Union[int, str, bool]]
 
 
 # ---------------------------------------------------------------------------
@@ -1183,9 +1193,11 @@ class EnvSource(TypedDict, total=False):
 
 
 class GatewayConfig(TypedDict, total=False):
-    opencode_provider: str
-    opencode_base_url: str
-    opencode_api_key_env: str
+    # Judge gateway wiring, keyed by the opencode adapter's declared option
+    # names; folded into the evaluator option box at plan time.
+    provider: str
+    base_url: str
+    api_key_env: str
 
 
 class SharedConfig(TypedDict, total=False):
@@ -1201,7 +1213,6 @@ class SharedConfig(TypedDict, total=False):
     batch_size: Optional[Union[int, str]]
     repeat: Optional[Union[int, str]]
     max_evaluator_parallel: Optional[Union[int, str]]
-    claude_max_turns: Optional[Union[int, str]]
     web_search_mode: str
     extra_args: str
     executor_skills: List[str]
@@ -1212,6 +1223,9 @@ class SharedConfig(TypedDict, total=False):
     rigors: List[str]
     evaluator_provider_id: str
     evaluator_gateway: Optional[GatewayConfig]
+    # Judge-side runtime option box the form posts directly (user knobs);
+    # gateway wiring is merged on top of it at plan time.
+    evaluator_options: Dict[str, Union[int, str, bool]]
     judge_env: Optional[Dict[str, EnvSource]]
 
 

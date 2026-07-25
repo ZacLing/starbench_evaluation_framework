@@ -95,6 +95,16 @@
         "api_key_env": {
           "description": "NAME of the environment variable holding the provider key. Never the key value: this contract has no field for secrets, and unknown keys are rejected.",
           "type": "string"
+        },
+        "options": {
+          "description": "Runtime-specific executor knobs for this contender (e.g. max_turns). Shape-only here: names are enforced against the runtime's declarations at parse time. Values are scalars; any credential appears as an env-var NAME, never a value.",
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+          "additionalProperties": {
+            "type": ["string", "integer", "boolean", "null"],
+            "maxLength": 512
+          }
         }
       },
       "required": [
@@ -149,6 +159,16 @@
           "api_key_env": {
             "description": "NAME of the environment variable holding the provider key; never the key value.",
             "type": "string"
+          },
+          "options": {
+            "description": "Runtime-specific executor knobs for this roster entry (e.g. max_turns). Shape-only here; names are enforced at parse time. Values are scalars; any credential appears as an env-var NAME.",
+            "type": "object",
+            "maxProperties": 32,
+            "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+            "additionalProperties": {
+              "type": ["string", "integer", "boolean", "null"],
+              "maxLength": 512
+            }
           }
         },
         "required": [
@@ -240,9 +260,15 @@
             "deny"
           ]
         },
-        "claude_max_turns": {
-          "type": "integer",
-          "minimum": 1
+        "evaluator_options": {
+          "description": "Runtime-specific judge (evaluator) knobs and gateway wiring in effect for this run. Shape-only here; names are enforced against the judge runtime's declarations at parse time. Values are scalars; any credential appears as an env-var NAME, never a value.",
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+          "additionalProperties": {
+            "type": ["string", "integer", "boolean", "null"],
+            "maxLength": 512
+          }
         }
       },
       "required": [

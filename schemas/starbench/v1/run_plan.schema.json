@@ -9,7 +9,7 @@
   "properties": {
     "schema_version": {
       "type": "integer",
-      "enum": [1]
+      "enum": [2]
     },
     "run_id": {
       "type": "string",
@@ -92,33 +92,23 @@
     "evaluator_model": {
       "type": "string"
     },
-    "opencode_provider": {
-      "type": "string"
+    "executor_options": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": {
+        "type": ["string", "integer", "boolean", "null"],
+        "maxLength": 512
+      }
     },
-    "opencode_base_url": {
-      "type": "string"
-    },
-    "opencode_api_key_env": {
-      "type": "string",
-      "description": "Environment variable NAME holding the key - never the key itself."
-    },
-    "executor_opencode_provider": {
-      "type": "string"
-    },
-    "executor_opencode_base_url": {
-      "type": "string"
-    },
-    "executor_opencode_api_key_env": {
-      "type": "string"
-    },
-    "evaluator_opencode_provider": {
-      "type": "string"
-    },
-    "evaluator_opencode_base_url": {
-      "type": "string"
-    },
-    "evaluator_opencode_api_key_env": {
-      "type": "string"
+    "evaluator_options": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": {
+        "type": ["string", "integer", "boolean", "null"],
+        "maxLength": 512
+      }
     },
     "thinking_effort": {
       "type": "string",
@@ -141,10 +131,6 @@
       "minimum": 1
     },
     "max_evaluator_parallel": {
-      "type": "integer",
-      "minimum": 1
-    },
-    "claude_max_turns": {
       "type": "integer",
       "minimum": 1
     },

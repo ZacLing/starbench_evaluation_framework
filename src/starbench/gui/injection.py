@@ -94,12 +94,15 @@ def builtin_settings(info: RuntimeInfo, provider: Dict[str, Any]) -> Settings:
         base = str(provider.get("base_url") or "") or DEFAULT_OPENAI_BASE_URLS.get(
             str(provider.get("kind") or ""), ""
         )
+        # Gateway keys are the opencode adapter's declared option names
+        # (provider/base_url/api_key_env); planning.py folds them straight into
+        # the role's option box, where resolve_runtime_options validates them.
         return {
             "auth_mode": auth_mode,
             "gateway": {
-                "opencode_provider": provider.get("id"),
-                "opencode_base_url": base or None,
-                "opencode_api_key_env": str(provider.get("api_key_env") or "") or None,
+                "provider": provider.get("id"),
+                "base_url": base or None,
+                "api_key_env": str(provider.get("api_key_env") or "") or None,
             },
         }
 

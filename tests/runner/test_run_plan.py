@@ -51,7 +51,7 @@ class RunPlanTests(unittest.TestCase):
 
     def write_plan(self, **overrides) -> Path:
         plan = {
-            "schema_version": 1,
+            "schema_version": 2,
             "run_id": "plan_run",
             "tasks_dir": str(self.tmp),
             "tasks": ["task_a", "task_b"],
@@ -107,6 +107,34 @@ class RunPlanTests(unittest.TestCase):
             ["--tasks-dir", str(self.tmp), "--thinking-effort", "ultra"]
         )
         self.assertEqual(args.thinking_effort, "ultra")
+
+    def test_v1_plan_gets_a_friendly_migration_error(self) -> None:
+        # A schema_version 1 document is rejected before the raw schema check,
+        # with a message that names the new box keys and how to migrate.
+        path = self.write_plan(schema_version=1)
+        message = self.parse_error(["--plan", str(path)])
+        self.assertIn("schema_version 1 is no longer accepted", message)
+        self.assertIn('"executor_options": {"max_turns": ...}', message)
+        self.assertNotIn("run_plan contract", message)
+
+    def test_v2_plan_with_option_boxes_expands(self) -> None:
+        # claude executor declares max_turns; an opencode judge declares the
+        # gateway wiring options (api_key_env is default-filled by the resolver).
+        path = self.write_plan(
+            evaluator_agent="opencode",
+            executor_options={"max_turns": 40},
+            evaluator_options={"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1"},
+        )
+        args = parse_args(["--plan", str(path), "--runs-dir", str(self.tmp)])
+        self.assertEqual(args.executor_options, {"max_turns": 40})
+        self.assertEqual(
+            args.evaluator_options,
+            {
+                "provider": "openrouter",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        )
 
     def test_plan_is_exclusive_with_config_flags(self) -> None:
         path = self.write_plan()

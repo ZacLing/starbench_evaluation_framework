@@ -16,7 +16,7 @@ from ..adapters import list_builtin
 from ..domain import INSTRUCTION_MODES, RIGOR_MODES
 from ..lifecycle import LaunchError
 from ..contracts import ContractValidationError, validate_payload
-from ..runner.cli import PLAN_LIST_FLAGS
+from ..runner.cli import PLAN_LIST_FLAGS, PLAN_OPTION_FLAGS
 from ..domain import THINKING_EFFORTS as VOCAB_THINKING_EFFORTS
 from ..domain import canonical_thinking_effort
 from ..runner.env_scope import EXECUTOR_ENV_PREFIX, JUDGE_ENV_PREFIX
@@ -144,15 +144,6 @@ def _normalized_launch(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, 
         "evaluator_model",
         "executor_auth_mode",
         "evaluator_auth_mode",
-        "opencode_provider",
-        "opencode_base_url",
-        "opencode_api_key_env",
-        "executor_opencode_provider",
-        "executor_opencode_base_url",
-        "executor_opencode_api_key_env",
-        "evaluator_opencode_provider",
-        "evaluator_opencode_base_url",
-        "evaluator_opencode_api_key_env",
     ):
         value = str(payload.get(key) or "").strip()
         if value:
@@ -175,12 +166,27 @@ def _normalized_launch(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, 
         ("batch_size", 1),
         ("repeat", 1),
         ("max_evaluator_parallel", 1),
-        ("claude_max_turns", 1),
         ("evaluator_timeout_seconds", 1),
     ):
         number = _optional_int(payload.get(key), key, minimum)
         if number is not None:
             plan[key] = number
+
+    # Role option boxes: runtime-specific knobs and gateway wiring, namespaced
+    # by role. Names are validated against the runtime's declarations at parse
+    # time (resolve_runtime_options); here we only drop blank values so an
+    # untouched form field never pins an empty option.
+    for box_key in ("executor_options", "evaluator_options"):
+        box = payload.get(box_key) or {}
+        if not isinstance(box, dict):
+            raise LaunchError(f"{box_key} must be an object of option values.")
+        cleaned = {
+            str(name): value
+            for name, value in box.items()
+            if value is not None and str(value).strip() != ""
+        }
+        if cleaned:
+            plan[box_key] = cleaned
 
     # Executor skills: the console picks skills and groups by name; the runner
     # installs them into the executor's workspace. Groups are passed through as
@@ -229,7 +235,7 @@ def build_run_plan(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, Any]
         raise LaunchError(
             "Extra CLI flags cannot ride a typed run plan; launch via argv instead."
         )
-    plan = {"schema_version": 1, **_normalized_launch(payload, runs_dir=runs_dir)}
+    plan = {"schema_version": 2, **_normalized_launch(payload, runs_dir=runs_dir)}
     # Belt and braces: the runner re-validates fail-closed, but an assembly bug
     # should surface here as a form error, not at launch.
     try:
@@ -256,6 +262,14 @@ def build_run_argv(payload: Dict[str, Any], *, runs_dir: Path) -> List[str]:
         "--no-progress",
     ]
     for key, value in plan.items():
+        if key in PLAN_OPTION_FLAGS:
+            # Boxes expand to repeated NAME=VALUE flags, mirroring cli.py's
+            # _expand_plan_argv exactly (booleans lowercased) so the argv and
+            # plan transports render a box the same way.
+            for name, item in value.items():
+                rendered = str(item).lower() if isinstance(item, bool) else item
+                argv += [PLAN_OPTION_FLAGS[key], f"{name}={rendered}"]
+            continue
         if key in PLAN_LIST_FLAGS:
             for item in value:
                 argv += [PLAN_LIST_FLAGS[key], str(item)]

@@ -519,9 +519,9 @@ class ProviderTest(unittest.TestCase):
             "shared": {
                 "evaluator_agent": "opencode",
                 "evaluator_gateway": {
-                    "opencode_provider": "gw-a",
-                    "opencode_base_url": "https://a.example/v1",
-                    "opencode_api_key_env": "A_KEY",
+                    "provider": "gw-a",
+                    "base_url": "https://a.example/v1",
+                    "api_key_env": "A_KEY",
                 },
                 "judge_mode": "single",
             },
@@ -531,16 +531,16 @@ class ProviderTest(unittest.TestCase):
                     "agent": "opencode",
                     "model": "doubao",
                     "auth_mode": "env",
-                    "opencode_provider": "gw-b",
-                    "opencode_base_url": "https://b.example/v1",
-                    "opencode_api_key_env": "B_KEY",
+                    "provider": "gw-b",
+                    "base_url": "https://b.example/v1",
+                    "api_key_env": "B_KEY",
                 }
             ],
         }
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         joined = launch_flags(plan["plans"][0])
-        self.assertIn("--executor-opencode-base-url https://b.example/v1", joined)
-        self.assertIn("--evaluator-opencode-base-url https://a.example/v1", joined)
+        self.assertIn("--executor-option base_url=https://b.example/v1", joined)
+        self.assertIn("--evaluator-option base_url=https://a.example/v1", joined)
 
     def test_codex_executor_wrapper_does_not_reroute_codex_judge(self) -> None:
         payload = {
@@ -572,9 +572,9 @@ class ProviderTest(unittest.TestCase):
                 "evaluator_agent": "opencode",
                 "evaluator_model": "doubao-judge",
                 "evaluator_gateway": {
-                    "opencode_provider": "gw-a",
-                    "opencode_base_url": "https://a.example/v1",
-                    "opencode_api_key_env": "A_KEY",
+                    "provider": "gw-a",
+                    "base_url": "https://a.example/v1",
+                    "api_key_env": "A_KEY",
                 },
                 "judge_mode": "single",
             },
@@ -584,8 +584,8 @@ class ProviderTest(unittest.TestCase):
         }
         plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
         joined = launch_flags(plan["plans"][0])
-        self.assertIn("--evaluator-opencode-base-url https://a.example/v1", joined)
-        self.assertIn("--evaluator-opencode-provider gw-a", joined)
+        self.assertIn("--evaluator-option base_url=https://a.example/v1", joined)
+        self.assertIn("--evaluator-option provider=gw-a", joined)
 
     def test_resolve_env_spec(self) -> None:
         import os

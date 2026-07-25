@@ -77,32 +77,35 @@ class LauncherTest(unittest.TestCase):
 
     def test_advanced_run_knobs_pass_through(self) -> None:
         argv = build_run_argv(
-            self.payload(max_evaluator_parallel="8", claude_max_turns="30"),
+            self.payload(max_evaluator_parallel="8", executor_options={"max_turns": "30"}),
             runs_dir=self.runs_dir,
         )
         joined = " ".join(argv)
         self.assertIn("--max-evaluator-parallel 8", joined)
-        self.assertIn("--claude-max-turns 30", joined)
+        # Role knobs ride the generic per-role option flag as NAME=VALUE pairs.
+        self.assertIn("--executor-option max_turns=30", joined)
 
     def test_role_specific_runtime_and_gateway_flags_pass_through(self) -> None:
         argv = build_run_argv(
             self.payload(
                 executor_bin="executor-cli --profile gateway",
                 evaluator_bin="judge-cli",
-                executor_opencode_provider="executor-provider",
-                evaluator_opencode_provider="judge-provider",
+                executor_options={"provider": "executor-provider"},
+                evaluator_options={"provider": "judge-provider"},
             ),
             runs_dir=self.runs_dir,
         )
         joined = " ".join(argv)
         self.assertIn("--executor-bin executor-cli --profile gateway", joined)
         self.assertIn("--evaluator-bin judge-cli", joined)
-        self.assertIn("--executor-opencode-provider executor-provider", joined)
-        self.assertIn("--evaluator-opencode-provider judge-provider", joined)
+        self.assertIn("--executor-option provider=executor-provider", joined)
+        self.assertIn("--evaluator-option provider=judge-provider", joined)
 
-    def test_blank_claude_max_turns_is_omitted(self) -> None:
-        argv = build_run_argv(self.payload(claude_max_turns=""), runs_dir=self.runs_dir)
-        self.assertNotIn("--claude-max-turns", argv)
+    def test_blank_option_values_are_omitted(self) -> None:
+        argv = build_run_argv(
+            self.payload(executor_options={"max_turns": ""}), runs_dir=self.runs_dir
+        )
+        self.assertNotIn("--executor-option", argv)
 
     def test_thinking_effort_passes_generic_flag_and_none_is_omitted(self) -> None:
         argv = build_run_argv(self.payload(thinking_effort="high"), runs_dir=self.runs_dir)
