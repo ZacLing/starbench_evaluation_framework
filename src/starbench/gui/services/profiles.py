@@ -5,8 +5,9 @@ from __future__ import annotations
 import copy
 import os
 import tempfile
+import threading
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ...fsio import atomic_write_json
 from ..read_models.base import SAFE_ID, _read_json
@@ -115,6 +116,22 @@ def _migrate_shared_opencode(shared: Dict[str, Any]) -> None:
             _fold_into_options(shared, f"{role}_options", box)
 
 
+def _coerce_optional_int(value: Any) -> Optional[int]:
+    """Best-effort int for a legacy cap, or ``None`` when it cannot be honored.
+
+    ``int(value)`` per the spec, but a hand-edited non-numeric ``claude_max_turns``
+    must not raise out of ``load_profiles`` (that would 500 the endpoint on read).
+    An unparseable or blank cap yields ``None``: the flat field is dropped from
+    the v2 contract regardless, and honest absence beats a fabricated number, so
+    no options box is written for it."""
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _migrate_profile(profile: Dict[str, Any]) -> None:
     """Apply the per-profile migration rules in place on a copied profile."""
     shared = profile.get("shared")
@@ -122,9 +139,8 @@ def _migrate_profile(profile: Dict[str, Any]) -> None:
     if isinstance(shared, dict):
         # Rule 1: shared claude_max_turns -> each claude contender's option box.
         if _LEGACY_CLAUDE_MAX_TURNS in shared:
-            value = shared.pop(_LEGACY_CLAUDE_MAX_TURNS)
-            if value not in (None, "") and isinstance(roster, list):
-                max_turns = int(value)
+            max_turns = _coerce_optional_int(shared.pop(_LEGACY_CLAUDE_MAX_TURNS))
+            if max_turns is not None and isinstance(roster, list):
                 for contender in roster:
                     if isinstance(contender, dict) and contender.get("agent") == "claude":
                         # Spec rule 1: {**existing, "max_turns": int(value)} — the
@@ -198,16 +214,30 @@ def _atomic_copy(source: Path, destination: Path) -> None:
         raise
 
 
+# Serializes the whole read-guard + backup + rewrite critical section. The
+# console runs on ThreadingHTTPServer, so two first-load callers (e.g. a
+# GET /profiles racing a launch that hits load_profiles via planning) can enter
+# the migration at once. Without this, both could pass the `backup.exists()`
+# guard, and the second `_atomic_copy` would read the already-rewritten v2 file
+# and clobber the pristine v1 backup — destroying the one recovery snapshot.
+# Under the lock the backup is authored exactly once from pristine bytes, and
+# the (idempotent, atomic) rewrites are serialized rather than torn.
+_MIGRATION_LOCK = threading.Lock()
+
+
 def _persist_one_time_migration(path: Path, document: Dict[str, Any]) -> None:
     """Back up the pristine v1 file once, then atomically install the migrated
     document. The backup is written only when absent so a re-entered migration
     (a crash before the atomic rewrite completed) never clobbers the original
     v1 snapshot; the rewrite reuses the module's atomic writer, so a torn file
-    is impossible and a failed attempt simply leaves the v1 file to retry."""
+    is impossible and a failed attempt simply leaves the v1 file to retry. The
+    whole section is serialized so concurrent first-load callers cannot race the
+    write-once backup (see ``_MIGRATION_LOCK``)."""
     backup = path.with_name(f"{path.name}.v1.bak")
-    if not backup.exists():
-        _atomic_copy(path, backup)
-    atomic_write_json(path, document, indent=2, sort_keys=True)
+    with _MIGRATION_LOCK:
+        if not backup.exists():
+            _atomic_copy(path, backup)
+        atomic_write_json(path, document, indent=2, sort_keys=True)
 
 
 def load_profiles(runs_dir: Path) -> Dict[str, Any]:

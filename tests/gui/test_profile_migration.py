@@ -11,9 +11,13 @@ import copy
 import json
 import shutil
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from starbench.gui.services import profiles as profiles_mod
 from starbench.gui.services.profiles import (
     load_profiles,
     migrate_profiles_document,
@@ -157,6 +161,17 @@ class MigratePureFunctionTest(unittest.TestCase):
         for contender in migrated["profiles"][0]["roster"]:
             self.assertNotIn("options", contender)
 
+    def test_unparseable_cap_is_dropped_not_raised(self) -> None:
+        # A hand-edited non-numeric cap must not raise out of the migration
+        # (that would 500 load_profiles). It is dropped, honoring nothing.
+        doc = _v1_document()
+        doc["profiles"][0]["shared"]["claude_max_turns"] = "lots"
+        migrated, changed = migrate_profiles_document(doc)
+        self.assertTrue(changed)
+        self.assertNotIn("claude_max_turns", migrated["profiles"][0]["shared"])
+        for contender in migrated["profiles"][0]["roster"]:
+            self.assertNotIn("options", contender)
+
     def test_opencode_shared_wiring_moves_into_role_boxes(self) -> None:
         # Synthetic: the real file has none of these (gateway wiring is derived
         # at launch, never persisted). Rule 2 is a defensive one-time fold.
@@ -234,9 +249,17 @@ class MigratePureFunctionTest(unittest.TestCase):
         launch_shared = dict(profile["shared"])
         launch_shared["claude_max_turns"] = 30
         self.assertEqual(_shared_deviations(launch_shared, profile["shared"]), [])
-        # Roster identity ignores the per-contender options box, so a launch
-        # of the same contenders matches the migrated baseline.
-        self.assertFalse(_roster_deviates(profile["roster"], profile["roster"]))
+        # Roster identity ignores the per-contender options box: a launch that
+        # set no options must not deviate from the migrated profile, whose
+        # claude entry now carries one. Compare the migrated roster (claude has
+        # options) against a launch roster with the options stripped off.
+        launch_roster = [
+            {key: value for key, value in entry.items() if key != "options"}
+            for entry in profile["roster"]
+        ]
+        self.assertTrue(any("options" in e for e in profile["roster"]))
+        self.assertTrue(all("options" not in e for e in launch_roster))
+        self.assertFalse(_roster_deviates(launch_roster, profile["roster"]))
 
 
 class MigrateLoaderHookTest(unittest.TestCase):
@@ -294,6 +317,52 @@ class MigrateLoaderHookTest(unittest.TestCase):
         # Already-v2: no rewrite, no backup — the loader only writes on change.
         self.assertEqual(path.read_bytes(), before)
         self.assertFalse(self._backup_path().exists())
+
+    def test_concurrent_first_load_backs_up_pristine_v1_exactly_once(self) -> None:
+        # Regression guard for the migration TOCTOU race under the console's
+        # ThreadingHTTPServer: two callers migrate the same v1 file at once.
+        # Serialization must author the .v1.bak exactly once, from PRISTINE v1
+        # bytes — never the post-rewrite v2. Without the lock both callers would
+        # pass the exists() guard and the second copy would read the rewritten
+        # v2 file and clobber the backup.
+        pristine = self._write(_v1_document()).read_bytes()
+        real_atomic_copy = profiles_mod._atomic_copy
+        capture_lock = threading.Lock()
+        copied_sources = []
+
+        def instrumented_copy(source: Path, destination: Path) -> None:
+            with capture_lock:
+                copied_sources.append(source.read_bytes())
+            # Widen the window a would-be second, unserialized caller could
+            # exploit; under the real lock only one caller ever runs this.
+            time.sleep(0.05)
+            real_atomic_copy(source, destination)
+
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def worker() -> None:
+            try:
+                barrier.wait(timeout=5)
+                load_profiles(self.runs_dir)
+            except BaseException as exc:  # pragma: no cover - surfaced via assert
+                errors.append(exc)
+
+        with mock.patch.object(profiles_mod, "_atomic_copy", instrumented_copy):
+            threads = [threading.Thread(target=worker) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+
+        self.assertEqual(errors, [])
+        # The backup was authored exactly once (the second caller saw it already
+        # present and skipped), and it captured the pristine v1 bytes.
+        self.assertEqual(len(copied_sources), 1)
+        self.assertEqual(copied_sources[0], pristine)
+        self.assertEqual(self._backup_path().read_bytes(), pristine)
+        on_disk = json.loads(profiles_path(self.runs_dir).read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["schema_version"], 2)
 
 
 if __name__ == "__main__":  # pragma: no cover
