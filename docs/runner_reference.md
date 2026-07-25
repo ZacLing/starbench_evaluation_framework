@@ -65,9 +65,9 @@ Evaluator-only switch examples:
 
 # Other OpenAI-compatible evaluator through OpenCode.
 --evaluator-agent opencode \
---opencode-provider yunwu \
---opencode-base-url https://yunwu.ai/v1 \
---opencode-api-key-env ANTHROPIC_AUTH_TOKEN \
+--evaluator-option provider=yunwu \
+--evaluator-option base_url=https://yunwu.ai/v1 \
+--evaluator-option api_key_env=ANTHROPIC_AUTH_TOKEN \
 --evaluator-model yunwu/doubao-seed-2-0-pro-260215
 
 # Grok Build evaluator.
@@ -116,7 +116,7 @@ Claude Code executors run through `claude -p --output-format stream-json`, so th
 Claude Code executors have no agentic turn cap by default, matching other runtimes. Set one explicitly if needed:
 
 ```bash
---claude-max-turns 30
+--executor-option max_turns=30
 ```
 
 When a task package sets `allow_web_search: true`, the Claude executor tool allowlist additionally includes `WebSearch` and `WebFetch`; otherwise both stay disabled.
@@ -163,29 +163,31 @@ export ANTHROPIC_AUTH_TOKEN=...
 starbench-run \
   --executor-agent opencode \
   --opencode-bin "$HOME/.opencode/bin/opencode" \
-  --opencode-provider yunwu \
-  --opencode-base-url https://yunwu.ai/v1 \
-  --opencode-api-key-env ANTHROPIC_AUTH_TOKEN \
+  --executor-option provider=yunwu \
+  --executor-option base_url=https://yunwu.ai/v1 \
+  --executor-option api_key_env=ANTHROPIC_AUTH_TOKEN \
   --executor-model doubao-seed-2-0-pro-260215 \
   --executor-backend local
 ```
 
-`--opencode-provider`, `--opencode-base-url`, and
-`--opencode-api-key-env` are backward-compatible defaults for both roles. A
-mixed-provider run should use the role-scoped forms so one side cannot reroute
-the other:
+OpenCode gateway settings are role-scoped through the repeatable
+`--executor-option` / `--evaluator-option` flags (option names `provider`,
+`base_url`, `api_key_env`). Each role carries its own option box, so one side
+cannot reroute the other; `api_key_env` defaults to `OPENAI_API_KEY` per role,
+while `provider` and `base_url` stay unset unless given. A mixed-provider run
+sets each side explicitly:
 
 ```bash
 starbench-run \
   --executor-agent opencode \
-  --executor-opencode-provider openrouter \
-  --executor-opencode-base-url https://openrouter.ai/api/v1 \
-  --executor-opencode-api-key-env OPENROUTER_API_KEY \
+  --executor-option provider=openrouter \
+  --executor-option base_url=https://openrouter.ai/api/v1 \
+  --executor-option api_key_env=OPENROUTER_API_KEY \
   --executor-model openai/gpt-5.3-codex \
   --evaluator-agent opencode \
-  --evaluator-opencode-provider internal-judge \
-  --evaluator-opencode-base-url https://judge.example/v1 \
-  --evaluator-opencode-api-key-env JUDGE_API_KEY \
+  --evaluator-option provider=internal-judge \
+  --evaluator-option base_url=https://judge.example/v1 \
+  --evaluator-option api_key_env=JUDGE_API_KEY \
   --evaluator-model judge/gpt-5.5
 ```
 

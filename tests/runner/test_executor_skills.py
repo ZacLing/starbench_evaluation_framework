@@ -202,12 +202,18 @@ class ExecutorSkillTests(unittest.TestCase):
                     "opencode",
                     "--opencode-bin",
                     "/tmp/opencode",
-                    "--opencode-provider",
-                    "yunwu",
-                    "--opencode-base-url",
-                    "https://yunwu.ai/v1",
-                    "--opencode-api-key-env",
-                    "ANTHROPIC_AUTH_TOKEN",
+                    "--executor-option",
+                    "provider=yunwu",
+                    "--executor-option",
+                    "base_url=https://yunwu.ai/v1",
+                    "--executor-option",
+                    "api_key_env=ANTHROPIC_AUTH_TOKEN",
+                    "--evaluator-option",
+                    "provider=yunwu",
+                    "--evaluator-option",
+                    "base_url=https://yunwu.ai/v1",
+                    "--evaluator-option",
+                    "api_key_env=ANTHROPIC_AUTH_TOKEN",
                     "--auth-mode",
                     "env",
                     "--evaluator-auth-mode",
@@ -217,35 +223,49 @@ class ExecutorSkillTests(unittest.TestCase):
             self.assertEqual(args.executor_agent, "opencode")
             self.assertEqual(args.evaluator_agent, "opencode")
             self.assertEqual(args.opencode_bin, "/tmp/opencode")
-            self.assertEqual(args.opencode_provider, "yunwu")
-            self.assertEqual(args.opencode_base_url, "https://yunwu.ai/v1")
-            self.assertEqual(args.opencode_api_key_env, "ANTHROPIC_AUTH_TOKEN")
-            self.assertEqual(args.executor_opencode_provider, "yunwu")
-            self.assertEqual(args.evaluator_opencode_provider, "yunwu")
+            self.assertEqual(
+                args.executor_options,
+                {
+                    "provider": "yunwu",
+                    "base_url": "https://yunwu.ai/v1",
+                    "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+                },
+            )
+            self.assertEqual(
+                args.evaluator_options,
+                {
+                    "provider": "yunwu",
+                    "base_url": "https://yunwu.ai/v1",
+                    "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+                },
+            )
             self.assertEqual(args.executor_auth_mode, "env")
             self.assertEqual(args.evaluator_auth_mode, "global")
 
-    def test_role_specific_opencode_settings_override_legacy_defaults(self) -> None:
+    def test_role_specific_opencode_settings_are_independent(self) -> None:
         args = parse_args(
             [
                 "--executor-agent",
                 "opencode",
                 "--evaluator-agent",
                 "opencode",
-                "--executor-opencode-provider",
-                "executor-provider",
-                "--executor-opencode-base-url",
-                "https://executor.example/v1",
-                "--evaluator-opencode-provider",
-                "judge-provider",
-                "--evaluator-opencode-base-url",
-                "https://judge.example/v1",
+                "--executor-option",
+                "provider=executor-provider",
+                "--executor-option",
+                "base_url=https://executor.example/v1",
+                "--evaluator-option",
+                "provider=judge-provider",
+                "--evaluator-option",
+                "base_url=https://judge.example/v1",
             ]
         )
-        self.assertEqual(args.executor_opencode_provider, "executor-provider")
-        self.assertEqual(args.executor_opencode_base_url, "https://executor.example/v1")
-        self.assertEqual(args.evaluator_opencode_provider, "judge-provider")
-        self.assertEqual(args.evaluator_opencode_base_url, "https://judge.example/v1")
+        # Executor and evaluator boxes are independent: no shared flag, no
+        # shared->role fallback. (api_key_env default-fills OPENAI_API_KEY into
+        # each box; the provider/base_url each role set stay role-scoped.)
+        self.assertEqual(args.executor_options["provider"], "executor-provider")
+        self.assertEqual(args.executor_options["base_url"], "https://executor.example/v1")
+        self.assertEqual(args.evaluator_options["provider"], "judge-provider")
+        self.assertEqual(args.evaluator_options["base_url"], "https://judge.example/v1")
 
     def test_agent_runtime_cli_arguments_can_select_grok_and_gemini(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

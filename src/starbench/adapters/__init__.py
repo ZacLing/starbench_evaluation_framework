@@ -24,6 +24,7 @@ from .base import (
     RuntimeInfo,
     finalize_success,
     provider_filter_for_protocol,
+    resolve_runtime_options,
 )
 from .registry import (
     BUILTIN_AGENTS,
@@ -47,4 +48,5 @@ __all__ = [
     "list_builtin",
     "provider_filter_for_protocol",
     "resolve",
+    "resolve_runtime_options",
 ]

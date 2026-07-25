@@ -256,16 +256,8 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "evaluator_runtime": args.evaluator_runtime_spec.public_metadata() if args.evaluator_runtime_spec else None,
         "thinking_effort": args.thinking_effort,
         "web_search": args.web_search,
-        "claude_max_turns": args.claude_max_turns,
-        "opencode_provider": args.opencode_provider,
-        "opencode_base_url": args.opencode_base_url,
-        "opencode_api_key_env": args.opencode_api_key_env,
-        "executor_opencode_provider": args.executor_opencode_provider,
-        "executor_opencode_base_url": args.executor_opencode_base_url,
-        "executor_opencode_api_key_env": args.executor_opencode_api_key_env,
-        "evaluator_opencode_provider": args.evaluator_opencode_provider,
-        "evaluator_opencode_base_url": args.evaluator_opencode_base_url,
-        "evaluator_opencode_api_key_env": args.evaluator_opencode_api_key_env,
+        "executor_options": args.executor_options,
+        "evaluator_options": args.evaluator_options,
         "executor_bin": args.executor_bin,
         "evaluator_bin": args.evaluator_bin,
         "executor_model": args.executor_model,
@@ -321,27 +313,8 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     # CLI use — both equal the ambient environment, so behaviour is unchanged.
     executor_base_env, judge_base_env = scoped_base_envs(os.environ)
     executor_base_env[RUN_ID_ENV] = run_id
-    # TEMPORARY BRIDGE (removed when the CLI grows --executor-option): funnel
-    # the legacy flat flags into the role option boxes verbatim.
-    executor_options = {
-        key: value
-        for key, value in (
-            ("max_turns", args.claude_max_turns),
-            ("provider", args.executor_opencode_provider),
-            ("base_url", args.executor_opencode_base_url),
-            ("api_key_env", args.executor_opencode_api_key_env),
-        )
-        if value is not None
-    }
-    evaluator_options = {
-        key: value
-        for key, value in (
-            ("provider", args.evaluator_opencode_provider),
-            ("base_url", args.evaluator_opencode_base_url),
-            ("api_key_env", args.evaluator_opencode_api_key_env),
-        )
-        if value is not None
-    }
+    # Option boxes were validated/coerced against each role's adapter at parse
+    # time (cli.resolve_runtime_options); the contexts carry them verbatim.
     executor_ctx = ExecutorContext(
         base_env=executor_base_env,
         bins=executor_bins,
@@ -351,7 +324,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         auth_mode=args.executor_auth_mode,
         model=args.executor_model,
         thinking_effort=args.thinking_effort,
-        options=executor_options,
+        options=args.executor_options,
         web_search_mode=args.web_search,
     )
     judge_ctx = JudgeContext(
@@ -360,7 +333,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         auth_mode=args.evaluator_auth_mode,
         model=args.evaluator_model,
         thinking_effort=args.thinking_effort,
-        options=evaluator_options,
+        options=args.evaluator_options,
     )
     # Stamped into every aggregate a judge invocation produced, so a verdict
     # stays attributable to its instrument without the run_config in hand.

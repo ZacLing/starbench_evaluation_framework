@@ -321,10 +321,25 @@ class RegressionFixTests(unittest.TestCase):
 
     def test_parse_args_claude_max_turns_defaults_to_unlimited(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp])
-            self.assertIsNone(args.claude_max_turns)
-            args = parse_args(["--tasks-dir", tmp, "--runs-dir", tmp, "--claude-max-turns", "30"])
-            self.assertEqual(args.claude_max_turns, 30)
+            args = parse_args(
+                ["--tasks-dir", tmp, "--runs-dir", tmp, "--executor-agent", "claude"]
+            )
+            # No cap by default: claude's max_turns declares no default, so an
+            # unset box omits it entirely (the runtime CLI keeps its own default).
+            self.assertEqual(args.executor_options, {})
+            args = parse_args(
+                [
+                    "--tasks-dir",
+                    tmp,
+                    "--runs-dir",
+                    tmp,
+                    "--executor-agent",
+                    "claude",
+                    "--executor-option",
+                    "max_turns=30",
+                ]
+            )
+            self.assertEqual(args.executor_options, {"max_turns": 30})
 
     def test_opencode_judges_use_read_only_plan_agent(self) -> None:
         from starbench.runner.run_benchmark import OPENCODE_JUDGE_AGENT

@@ -90,7 +90,7 @@ class InjectionChannel:
     - ``codex_config``     provider overrides baked into the ``codex`` bin prefix
     - ``anthropic_env``    ANTHROPIC_BASE_URL / token env vars (Claude Code)
     - ``gemini_env``       GOOGLE_GEMINI_BASE_URL / key env vars (Gemini CLI)
-    - ``opencode_gateway`` ``--opencode-provider/base-url/api-key-env`` flags
+    - ``opencode_gateway`` opencode provider/base_url/api_key_env options
     - ``spec_env``         env vars named by a custom spec (``base_url_env`` etc.)
     - ``none``             no override channel at all (Grok Build)
 

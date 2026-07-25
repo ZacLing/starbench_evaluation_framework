@@ -259,7 +259,16 @@ class OpenCodeAdapter(RuntimeAdapter):
         options=(
             RuntimeOption(name="provider", type="string", role="both", surface="wiring"),
             RuntimeOption(name="base_url", type="string", role="both", surface="wiring"),
-            RuntimeOption(name="api_key_env", type="string", role="both", surface="wiring"),
+            # Default-filled so every opencode box (executor and evaluator) carries
+            # the key exactly as the deleted --opencode-api-key-env flag default did;
+            # without it the docker path would silently drop it (bare ctx.options.get).
+            RuntimeOption(
+                name="api_key_env",
+                type="string",
+                role="both",
+                surface="wiring",
+                default="OPENAI_API_KEY",
+            ),
         ),
     )
 

@@ -24,7 +24,13 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from ..adapters import BUILTIN_AGENTS, DEFAULT_DOCKER_IMAGES, list_builtin, resolve
+from ..adapters import (
+    BUILTIN_AGENTS,
+    DEFAULT_DOCKER_IMAGES,
+    list_builtin,
+    resolve,
+    resolve_runtime_options,
+)
 from ..contracts import ContractValidationError, validate_payload
 from ..domain import (
     INSTRUCTION_MODES,
@@ -53,6 +59,11 @@ PLAN_LIST_FLAGS = {
     "rigors": "--rigor",
     "executor_skills": "--executor-skill",
     "executor_skill_groups": "--executor-skill-group",
+}
+# Plan keys holding role option boxes; each expands to repeated NAME=VALUE flags.
+PLAN_OPTION_FLAGS = {
+    "executor_options": "--executor-option",
+    "evaluator_options": "--evaluator-option",
 }
 # Plan keys the expansion consumes without emitting a flag.
 _PLAN_NON_FLAG_KEYS = {"schema_version", "profile_snapshot"}
@@ -114,6 +125,13 @@ def _expand_plan_argv(
     expanded: List[str] = []
     for key, value in plan.items():
         if key in _PLAN_NON_FLAG_KEYS:
+            continue
+        if key in PLAN_OPTION_FLAGS:
+            for name, item in value.items():
+                expanded += [
+                    PLAN_OPTION_FLAGS[key],
+                    f"{name}={str(item).lower() if isinstance(item, bool) else item}",
+                ]
             continue
         if key in PLAN_LIST_FLAGS:
             for item in value:
@@ -220,40 +238,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "their own tooling and are not affected."
         ),
     )
-    parser.add_argument(
-        "--claude-max-turns",
-        type=int,
-        default=None,
-        help=(
-            "Optional agentic turn cap for the Claude Code executor. Defaults to no cap so "
-            "Claude runs are comparable with other runtimes."
-        ),
-    )
-    parser.add_argument(
-        "--opencode-provider",
-        help="OpenCode provider id for generated OpenAI-compatible config, e.g. yunwu.",
-    )
-    parser.add_argument(
-        "--opencode-base-url",
-        help="OpenCode OpenAI-compatible base URL, e.g. https://yunwu.ai/v1.",
-    )
-    parser.add_argument(
-        "--opencode-api-key-env",
-        default="OPENAI_API_KEY",
-        help="Environment variable name that OpenCode should read as the provider API key.",
-    )
     for role in ("executor", "evaluator"):
         parser.add_argument(
-            f"--{role}-opencode-provider",
-            help=f"OpenCode provider id used only by the {role} role.",
-        )
-        parser.add_argument(
-            f"--{role}-opencode-base-url",
-            help=f"OpenCode base URL used only by the {role} role.",
-        )
-        parser.add_argument(
-            f"--{role}-opencode-api-key-env",
-            help=f"OpenCode API-key environment variable used only by the {role} role.",
+            f"--{role}-option",
+            action="append",
+            default=[],
+            metavar="NAME=VALUE",
+            help=(
+                f"Runtime-specific option for the {role} agent, e.g. max_turns=50. "
+                "Repeatable. Valid names are declared by the selected runtime's "
+                "adapter; unknown names are rejected before any task runs."
+            ),
         )
     parser.add_argument("--auth-mode", choices=["env", "global", "copy-auth"], default="env")
     parser.add_argument(
@@ -405,11 +400,28 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.docker_image = DEFAULT_DOCKER_IMAGES.get(args.executor_agent, "")
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
-    for role in ("executor", "evaluator"):
-        for field in ("provider", "base_url", "api_key_env"):
-            role_name = f"{role}_opencode_{field}"
-            if getattr(args, role_name) is None:
-                setattr(args, role_name, getattr(args, f"opencode_{field}"))
+
+    def parse_option_pairs(pairs, flag):
+        raw: Dict[str, str] = {}
+        for pair in pairs:
+            name, sep, value = pair.partition("=")
+            if not sep or not name:
+                parser.error(f"{flag} expects NAME=VALUE, got {pair!r}")
+            raw[name] = value
+        return raw
+
+    evaluator_adapter = resolve(
+        args.evaluator_agent, spec=args.evaluator_runtime_spec, runtimes_dir=args.runtimes_dir
+    )
+    try:
+        args.executor_options = resolve_runtime_options(
+            executor_adapter, "executor", parse_option_pairs(args.executor_option, "--executor-option")
+        )
+        args.evaluator_options = resolve_runtime_options(
+            evaluator_adapter, "evaluator", parse_option_pairs(args.evaluator_option, "--evaluator-option")
+        )
+    except ValueError as error:
+        parser.error(str(error))
     args.tasks_dir = args.tasks_dir.resolve()
     args.runs_dir = args.runs_dir.resolve()
     args.executor_skill_root = args.executor_skill_root.resolve()

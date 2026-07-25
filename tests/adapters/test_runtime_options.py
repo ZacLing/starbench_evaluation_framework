@@ -74,3 +74,7 @@ class ResolverTests(unittest.TestCase):
 
     def test_empty_box_resolves_empty(self) -> None:
         self.assertEqual(resolve_runtime_options(get_builtin("claude"), "executor", {}), {})
+
+    def test_opencode_api_key_env_default_fills(self) -> None:
+        resolved = resolve_runtime_options(get_builtin("opencode"), "executor", {})
+        self.assertEqual(resolved, {"api_key_env": "OPENAI_API_KEY"})
