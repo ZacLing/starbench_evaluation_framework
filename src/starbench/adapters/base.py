@@ -253,10 +253,9 @@ class ExecutorContext:
     auth_mode: str
     model: str | None
     thinking_effort: str
-    claude_max_turns: int | None
-    opencode_provider: str | None
-    opencode_base_url: str | None
-    opencode_api_key_env: str | None
+    # Runtime-specific knobs for this role's resolved agent, already validated
+    # by resolve_runtime_options. Adapters read their own declared names.
+    options: Mapping[str, object] = field(default_factory=dict)
     # Run-level web-search override: "task" defers to task.allow_web_search,
     # "allow"/"deny" force it for runtimes that enforce web access (Claude's
     # tool allowlist, Codex's --search). Runtimes without an enforcement hook
@@ -277,9 +276,9 @@ class JudgeContext:
     auth_mode: str
     model: str | None
     thinking_effort: str
-    opencode_provider: str | None
-    opencode_base_url: str | None
-    opencode_api_key_env: str | None
+    # Runtime-specific knobs for this role's resolved agent, already validated
+    # by resolve_runtime_options. Adapters read their own declared names.
+    options: Mapping[str, object] = field(default_factory=dict)
 
 
 def effective_web_search(mode: str, task_allow: bool) -> bool:

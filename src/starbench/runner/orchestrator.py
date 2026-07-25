@@ -321,6 +321,27 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     # CLI use — both equal the ambient environment, so behaviour is unchanged.
     executor_base_env, judge_base_env = scoped_base_envs(os.environ)
     executor_base_env[RUN_ID_ENV] = run_id
+    # TEMPORARY BRIDGE (removed when the CLI grows --executor-option): funnel
+    # the legacy flat flags into the role option boxes verbatim.
+    executor_options = {
+        key: value
+        for key, value in (
+            ("max_turns", args.claude_max_turns),
+            ("provider", args.executor_opencode_provider),
+            ("base_url", args.executor_opencode_base_url),
+            ("api_key_env", args.executor_opencode_api_key_env),
+        )
+        if value is not None
+    }
+    evaluator_options = {
+        key: value
+        for key, value in (
+            ("provider", args.evaluator_opencode_provider),
+            ("base_url", args.evaluator_opencode_base_url),
+            ("api_key_env", args.evaluator_opencode_api_key_env),
+        )
+        if value is not None
+    }
     executor_ctx = ExecutorContext(
         base_env=executor_base_env,
         bins=executor_bins,
@@ -330,10 +351,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         auth_mode=args.executor_auth_mode,
         model=args.executor_model,
         thinking_effort=args.thinking_effort,
-        claude_max_turns=args.claude_max_turns,
-        opencode_provider=args.executor_opencode_provider,
-        opencode_base_url=args.executor_opencode_base_url,
-        opencode_api_key_env=args.executor_opencode_api_key_env,
+        options=executor_options,
         web_search_mode=args.web_search,
     )
     judge_ctx = JudgeContext(
@@ -342,9 +360,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         auth_mode=args.evaluator_auth_mode,
         model=args.evaluator_model,
         thinking_effort=args.thinking_effort,
-        opencode_provider=args.evaluator_opencode_provider,
-        opencode_base_url=args.evaluator_opencode_base_url,
-        opencode_api_key_env=args.evaluator_opencode_api_key_env,
+        options=evaluator_options,
     )
     # Stamped into every aggregate a judge invocation produced, so a verdict
     # stays attributable to its instrument without the run_config in hand.

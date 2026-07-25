@@ -279,7 +279,7 @@ class OpenCodeAdapter(RuntimeAdapter):
         task = task_run.task
         logs = paths["logs"]
         opencode_bin = ctx.bins["opencode"]
-        model_name = opencode_model_name(ctx.model, ctx.opencode_provider)
+        model_name = opencode_model_name(ctx.model, ctx.options.get("provider"))
         # Thinking effort rides OpenCode's native --variant switch, not the prompt.
         opencode_prompt = build_executor_prompt(
             task_run, executor_skill_location=self.executor_skill_prompt_location()
@@ -295,9 +295,9 @@ class OpenCodeAdapter(RuntimeAdapter):
                 stderr_path=logs / "stderr.log",
                 timeout_seconds=task.timeout_seconds,
                 model=model_name,
-                provider=ctx.opencode_provider,
-                base_url=ctx.opencode_base_url,
-                api_key_env=ctx.opencode_api_key_env,
+                provider=ctx.options.get("provider"),
+                base_url=ctx.options.get("base_url"),
+                api_key_env=ctx.options.get("api_key_env"),
                 base_env=ctx.base_env,
                 variant=ctx.thinking_effort,
             )
@@ -313,10 +313,10 @@ class OpenCodeAdapter(RuntimeAdapter):
             env = prepare_opencode_env(
                 paths["agent_home"] / "opencode_executor",
                 ctx.auth_mode,
-                provider=ctx.opencode_provider,
-                base_url=ctx.opencode_base_url,
+                provider=ctx.options.get("provider"),
+                base_url=ctx.options.get("base_url"),
                 model=model_name,
-                api_key_env=ctx.opencode_api_key_env,
+                api_key_env=ctx.options.get("api_key_env") or "OPENAI_API_KEY",
                 base_env=ctx.base_env,
             )
             result = await run_cli_process(
@@ -355,7 +355,7 @@ class OpenCodeAdapter(RuntimeAdapter):
         ctx: JudgeContext,
     ) -> ProcessResult:
         opencode_bin = ctx.bins["opencode"]
-        model_name = opencode_model_name(model, ctx.opencode_provider)
+        model_name = opencode_model_name(model, ctx.options.get("provider"))
         command = build_opencode_run_command(
             opencode_bin,
             cwd=judge_workspace,
@@ -365,10 +365,10 @@ class OpenCodeAdapter(RuntimeAdapter):
         env = prepare_opencode_env(
             judge_home_base.parent / f"{judge_home_base.name}_opencode",
             ctx.auth_mode,
-            provider=ctx.opencode_provider,
-            base_url=ctx.opencode_base_url,
+            provider=ctx.options.get("provider"),
+            base_url=ctx.options.get("base_url"),
             model=model_name,
-            api_key_env=ctx.opencode_api_key_env,
+            api_key_env=ctx.options.get("api_key_env") or "OPENAI_API_KEY",
             base_env=ctx.base_env,
         )
         prompt = append_json_schema_instruction(base_prompt, schema_path)

@@ -262,7 +262,7 @@ class ClaudeAdapter(RuntimeAdapter):
                 timeout_seconds=task.timeout_seconds,
                 model=ctx.model,
                 allowed_tools=claude_executor_allowed_tools(allow_web),
-                max_turns=ctx.claude_max_turns,
+                max_turns=ctx.options.get("max_turns"),
                 base_env=ctx.base_env,
                 effort=ctx.thinking_effort,
             )
@@ -273,7 +273,7 @@ class ClaudeAdapter(RuntimeAdapter):
                 model=ctx.model,
                 permission_mode="acceptEdits",
                 allowed_tools=claude_executor_allowed_tools(allow_web),
-                max_turns=ctx.claude_max_turns,
+                max_turns=ctx.options.get("max_turns"),
                 output_format="stream-json",
                 effort=ctx.thinking_effort,
             )
