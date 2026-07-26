@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
 # ---------------------------------------------------------------------------
 
 ProviderKind = Literal["anthropic", "openai", "google", "xai", "openai-compatible"]
-RuntimeProtocol = Literal["openai", "anthropic", "gemini", "xai", "none"]
+RuntimeProtocol = Literal["openai", "anthropic", "gemini", "xai", "multi", "none"]
 AuthKind = Literal["api_key", "cli_login"]
 ModelsSource = Literal["api", "catalog", "cli_cache"]
 CliAuthStatusKind = Literal["ok", "api_key", "warn", "fail", "unknown"]
@@ -130,7 +130,8 @@ class BuiltinRuntime(TypedDict):
     note: str
     protocol: RuntimeProtocol
     docker_capable: bool
-    docker_image: str
+    # Null for host-local runtimes that ship no image of their own (pi).
+    docker_image: Optional[str]
     builtin: Literal[True]
     cli: RuntimeCli
     provider_filter: ProviderFilter

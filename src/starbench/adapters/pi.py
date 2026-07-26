@@ -9,8 +9,12 @@ installed executor skill is passed explicitly via ``--skill``.
 Invariants:
 - Auth mode is ``env`` only. The operator's ``~/.pi/agent/auth.json`` is a
   personal OAuth identity and must never carry benchmark traffic.
-- ``PI_CODING_AGENT_DIR`` / ``PI_OFFLINE`` / ``PI_SKIP_VERSION_CHECK`` are
-  hard-set (not setdefault): isolation must survive injected base envs.
+- ``PI_CODING_AGENT_DIR`` / ``PI_CODING_AGENT_SESSION_DIR`` / ``PI_OFFLINE`` /
+  ``PI_SKIP_VERSION_CHECK`` are hard-set (not setdefault): isolation must
+  survive injected base envs.
+- Pi tool events map to ``command_execution`` only; a ``file_change`` mapping
+  waits on live-stream verification of the tool-argument payload (an optional
+  real-CLI smoke), so ``trace_summary.file_changes`` is empty for pi.
 
 "改什么来这里": pi command shape, env isolation, provider flag wiring.
 """
@@ -82,6 +86,7 @@ def prepare_pi_env(
     env = dict(base_env) if base_env is not None else {}
     pi_home.mkdir(parents=True, exist_ok=True)
     env["PI_CODING_AGENT_DIR"] = str(pi_home)
+    env["PI_CODING_AGENT_SESSION_DIR"] = str(pi_home / "sessions")
     env["PI_OFFLINE"] = "1"
     env["PI_SKIP_VERSION_CHECK"] = "1"
     return env

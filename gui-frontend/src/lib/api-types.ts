@@ -4,7 +4,7 @@
 
 export type ProviderKind = "anthropic" | "openai" | "google" | "xai" | "openai-compatible"
 
-export type RuntimeProtocol = "openai" | "anthropic" | "gemini" | "xai" | "none"
+export type RuntimeProtocol = "openai" | "anthropic" | "gemini" | "xai" | "multi" | "none"
 
 export type AuthKind = "api_key" | "cli_login"
 
@@ -90,9 +90,9 @@ export interface BuiltinRuntime {
   id: string
   label: string
   note: string
-  protocol: "openai" | "anthropic" | "gemini" | "xai" | "none"
+  protocol: "openai" | "anthropic" | "gemini" | "xai" | "multi" | "none"
   docker_capable: boolean
-  docker_image: string
+  docker_image: string | null
   builtin: true
   cli: RuntimeCli
   provider_filter: ProviderFilter
@@ -111,7 +111,7 @@ export interface CustomRuntime {
   label?: string
   description?: string
   icon?: string
-  protocol?: "openai" | "anthropic" | "gemini" | "xai" | "none"
+  protocol?: "openai" | "anthropic" | "gemini" | "xai" | "multi" | "none"
   provider_filter?: ProviderFilter
   base_url_env?: string
   api_key_env?: string

@@ -48,7 +48,7 @@ class PiEnvTests(unittest.TestCase):
 
     def test_env_mode_isolates_home_and_forces_offline(self):
         # Hostile base env: every var the adapter hard-sets arrives pre-set to a
-        # value that would break isolation. All three must be overridden, so a
+        # value that would break isolation. All four must be overridden, so a
         # regression to setdefault on any one of them fails here.
         home = self.tempdir() / "pi_executor"
         env = prepare_pi_env(
@@ -58,10 +58,12 @@ class PiEnvTests(unittest.TestCase):
                 "PATH": "/bin",
                 "PI_OFFLINE": "0",
                 "PI_CODING_AGENT_DIR": "/home/attacker/.pi",
+                "PI_CODING_AGENT_SESSION_DIR": "/home/attacker/sessions",
                 "PI_SKIP_VERSION_CHECK": "0",
             },
         )
         self.assertEqual(env["PI_CODING_AGENT_DIR"], str(home))
+        self.assertEqual(env["PI_CODING_AGENT_SESSION_DIR"], str(home / "sessions"))
         self.assertEqual(env["PI_OFFLINE"], "1")
         self.assertEqual(env["PI_SKIP_VERSION_CHECK"], "1")
         self.assertEqual(env["PATH"], "/bin")
