@@ -14,13 +14,14 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 from urllib.parse import parse_qs, urlparse
 
 from . import data
 from .agents import AgentError, DEFAULT_RUNTIMES_DIR
 from .experiments import ExperimentError
 from .launcher import LaunchError
+from ..home import HomeLayout, resolve_home
 from ..lifecycle import LaunchRegistry
 from .library import LibraryError
 from .providers import ProviderError
@@ -366,24 +367,42 @@ def make_handler(state: ConsoleState) -> type:
 
 
 def build_state(
-    runs_dir: Path,
+    runs_dir: Optional[Path] = None,
     tasks_dirs: Optional[Sequence[Path]] = None,
     cwd: Optional[Path] = None,
     runtimes_dir: Optional[Path] = None,
     skills_dir: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> ConsoleState:
+    """Assemble console state; every omitted location comes from the home layout.
+
+    Precedence per directory: explicit argument > ``$STARBENCH_HOME`` >
+    ``~/.starbench``. The environment is read here (or via an injected
+    ``environ``) and nowhere inward. Home-derived and argument-derived paths go
+    through the same absolutize-then-``resolve()`` treatment, so two spellings
+    of the same directory compare equal downstream. Raises ``ValueError`` when
+    ``$STARBENCH_HOME`` is set to a relative path.
+    """
     cwd = (cwd or Path.cwd()).resolve()
-    runs_dir = runs_dir if runs_dir.is_absolute() else cwd / runs_dir
+    home = HomeLayout(resolve_home(environ))
+    if runs_dir is None:
+        runs_dir = home.runs
     if tasks_dirs is None:
-        tasks_dirs = [cwd / "tasks", cwd / "examples" / "tasks"]
+        tasks_dirs = [home.tasks]
+    if runtimes_dir is None:
+        runtimes_dir = home.runtimes
+    if skills_dir is None:
+        skills_dir = home.skills
+    runs_dir = runs_dir if runs_dir.is_absolute() else cwd / runs_dir
     resolved = []
     for path in tasks_dirs:
         path = path if path.is_absolute() else cwd / path
         resolved.append(path.resolve())
-    if runtimes_dir is not None and not runtimes_dir.is_absolute():
+    if not runtimes_dir.is_absolute():
         runtimes_dir = cwd / runtimes_dir
-    if skills_dir is not None and not skills_dir.is_absolute():
+    if not skills_dir.is_absolute():
         skills_dir = cwd / skills_dir
+    # ConsoleState resolves runtimes_dir/skills_dir on the way in.
     return ConsoleState(runs_dir.resolve(), resolved, cwd, runtimes_dir, skills_dir)
 
 
@@ -396,37 +415,47 @@ def serve(state: ConsoleState, host: str, port: int) -> Tuple[ThreadingHTTPServe
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Serve the StarBench Console GUI.")
-    parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help="Run artifact root. Defaults to $STARBENCH_HOME/runs (~/.starbench/runs).",
+    )
     parser.add_argument(
         "--tasks-dir",
         type=Path,
         action="append",
         help="Task package directory offered in the launcher. Repeatable. "
-        "Defaults to ./tasks and ./examples/tasks.",
+        "Defaults to $STARBENCH_HOME/tasks (~/.starbench/tasks).",
     )
     parser.add_argument(
         "--runtimes-dir",
         type=Path,
         default=None,
-        help="Directory of custom runtime specs (defaults to the repo's runtimes/).",
+        help="Directory of custom runtime specs. "
+        "Defaults to $STARBENCH_HOME/runtimes (~/.starbench/runtimes).",
     )
     parser.add_argument(
         "--skills-dir",
         type=Path,
         default=None,
-        help="Executor skill library root (defaults to the repo's executor_skills/).",
+        help="Executor skill library root. "
+        "Defaults to $STARBENCH_HOME/skills (~/.starbench/skills).",
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8321)
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser tab.")
     args = parser.parse_args(argv)
 
-    state = build_state(
-        args.runs_dir,
-        args.tasks_dir,
-        runtimes_dir=args.runtimes_dir,
-        skills_dir=args.skills_dir,
-    )
+    try:
+        state = build_state(
+            args.runs_dir,
+            args.tasks_dir,
+            runtimes_dir=args.runtimes_dir,
+            skills_dir=args.skills_dir,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     server = ThreadingHTTPServer((args.host, args.port), make_handler(state))
     url = f"http://{args.host}:{server.server_address[1]}/"
     print(f"StarBench Console serving {state.runs_dir}")
