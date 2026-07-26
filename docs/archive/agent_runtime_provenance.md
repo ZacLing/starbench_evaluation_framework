@@ -1,3 +1,8 @@
+> **[已归档 2026-07-26]** 实现前规划，本文描述的是当时的系统，不是现在的系统。
+> 该规划已经落地：`src/starbench/runner/runtime_provenance.py` 负责采集，
+> `schemas/starbench/v1/runtime_provenance.schema.json` 是字段的唯一事实源，
+> 现行字段说明见 `docs/artifact_contracts.md`。本文只读，不再更新。
+
 # Agent Runtime Provenance 规划
 
 > 目标：让一次 StarBench run 的结果可以回答"当时实际用什么运行环境跑出来的"。

@@ -35,7 +35,7 @@
 │   │   ├── read_models/      只读视图：runs、coverage、compare、trace、catalog 缓存
 │   │   ├── launcher.py       启动请求归一化 → run_plan / argv 渲染（永不 spawn）
 │   │   └── contracts.py      API TypedDict（gen-types 的源，生成 api-types.ts）
-│   ├── skills/ skill_distiller/ report/   executor 技能库 / 轨迹蒸馏 / 报告
+│   ├── skills/ skill_distiller/          executor 技能库 / 轨迹蒸馏
 │   └── fsio.py               共享原子 JSON 写
 ├── gui-frontend/src/
 │   ├── pages/                路由页（Dashboard、Coverage、Runs、Compare、Profiles…）
@@ -127,12 +127,18 @@ console 与 core 之间只允许通过以下契约对话，全部落盘、全部
 
 ## 6. 文档地图
 
+每篇文档都必须落在下面某一行里。**归不进去的文档不要写。**
+
 | 文档 | 角色 |
 |---|---|
 | `ARCHITECTURE.md`（本文） | 结构、边界、所有权——**唯一权威** |
 | `AGENTS.md` | agent 工作守则（凭证红线、运行时注意事项） |
 | `PRODUCT.md` / `DESIGN.md` | 前端设计宪法 / 视觉 token |
-| `BRD.md` | 产品需求叙事（"做什么、为什么"） |
-| `runner_reference.md`、`artifact_contracts.md`、`task_package.md` 等 | 操作参考 |
-| `results_experience_plan.md` | 活跃规划（R3 报告导出未做） |
-| `docs/archive/` | 已被取代的历史规划，只读不更新 |
+| `quickstart.md`、`runner_reference.md`、`gui.md`、`docker.md`、`task_package.md`、`artifact_contracts.md`、`recipes.md`、`rubrics.md`、`human_reference.md`、`rigor_prompt_injection.md`、`executor_skills.md`、`use_skills_in_eval.md`、`skill_distillation.md`、`distill_task_to_skill.md`、`contributing.md` | 操作参考：描述系统**当前**如何工作。事实以代码/schema 为准，绝不以另一篇文档为准 |
+| `evaluation_report_template.md`、`rubric_reader_fairness.md` | 人工作业模板：给任务与 rubric 生产者填写/自查，不描述系统行为 |
+| `results_experience_plan.md` | 活跃规划（R0–R2 已完成；R3 报告导出未做，`src/starbench/report/` 尚不存在） |
+| `docs/archive/` | 历史记录：已实现或已放弃的规划、被取代的决策、一次性需求快照（含 2026-07-09 的 `BRD.md`、`model_runtime_matrix.md`、`agent_runtime_provenance.md`）。**只读不更新**，描述的是当时的系统 |
+| `docs/superpowers/plans/`、`docs/superpowers/specs/` | 按日期命名的单次改动实现计划与设计规格，落地即冻结，事后不更新 |
+
+归档判据：规划一旦实现或放弃、需求快照一旦不再约束实现，就 `git mv` 进
+`archive/` 并在首行标注归档日期——不要把它改写成现状说明。现状说明属于操作参考。

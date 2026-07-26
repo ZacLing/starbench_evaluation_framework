@@ -173,14 +173,12 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
-- [Business Requirements Document](docs/BRD.md)
 - [Recipes: common changes, one file each](docs/recipes.md)
 - [Architecture: structure, boundaries, ownership](docs/ARCHITECTURE.md)
 - [GUI Console](docs/gui.md)
 - [Task Package Structure](docs/task_package.md)
 - [Artifact Contracts](docs/artifact_contracts.md)
 - [Runner Reference](docs/runner_reference.md)
-- [Model Runtime Matrix](docs/model_runtime_matrix.md)
 - [Docker Isolation](docs/docker.md)
 - [Executor Skills](docs/executor_skills.md)
 - [Trace-to-Skill Distillation](docs/skill_distillation.md)
@@ -190,6 +188,10 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Human Reference Instructions](docs/human_reference.md)
 - [Rigor Prompt Injection](docs/rigor_prompt_injection.md)
 - [Contributing Notes](docs/contributing.md)
+
+Superseded plans and one-off requirement snapshots (including the 2026-07 BRD and
+the model/runtime matrix) are kept read-only under [docs/archive/](docs/archive/).
+They describe the system as it was; they are not maintained.
 
 ## Where To Put Tasks
 

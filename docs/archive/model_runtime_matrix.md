@@ -1,3 +1,13 @@
+> **[Archived 2026-07-26]** Historical record; describes the system as it was, not
+> as it is. No model-family→runtime rule is enforced anywhere in the code: the
+> runner passes `--executor-model` / `--evaluator-model` through verbatim, and
+> `--executor-agent` / `--evaluator-agent` accept every built-in id
+> independently. (The console does narrow *providers* per runtime via each
+> adapter's `ProviderFilter`, but that is a provider-kind filter, not the
+> "required" mapping below.) The non-binding pairing convention now lives in
+> `README.md`; the runtime facts live in `src/starbench/adapters/`.
+> Read-only; not maintained.
+
 # Model Runtime Matrix
 
 This document records the required CLI/runtime mapping for Starbench model-family evaluations.

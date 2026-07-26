@@ -1,3 +1,8 @@
+> **[已归档 2026-07-26]** 2026-07-09 的一次性需求基线快照，描述的是当时的系统，
+> 不是现在的系统。其结构与所有权部分已被 `docs/ARCHITECTURE.md` 取代（该文是唯一权威），
+> 里程碑与待确认问题已由 `docs/ARCHITECTURE.md` §5 路线图接管，
+> 功能事实以代码与 `docs/` 下的操作参考为准。本文只读，不再更新。
+
 # StarBench 测试框架 BRD：业务需求与功能需求
 
 > 版本：v0.1  
@@ -17,9 +22,9 @@
 4. 当前代码中这些能力大致落在哪些模块，后续需求变更应该从哪里切入。
 
 本文不是 API 参考，也不是代码架构说明。详细命令行参数以
-[Runner Reference](runner_reference.md) 为准，制品字段以
-[Artifact Contracts](artifact_contracts.md) 和 `schemas/starbench/v1/` 为准，
-GUI 使用说明以 [StarBench Console](gui.md) 为准。
+[Runner Reference](../runner_reference.md) 为准，制品字段以
+[Artifact Contracts](../artifact_contracts.md) 和 `schemas/starbench/v1/` 为准，
+GUI 使用说明以 [StarBench Console](../gui.md) 为准。
 
 ## 2. 背景与业务目标
 
