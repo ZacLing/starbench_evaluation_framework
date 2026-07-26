@@ -11,8 +11,10 @@
 1. **覆盖率碎片化（核心矛盾）**：coverage / task history / compare 只能看见启动参数
    指向的那一个 `runs/` 目录。每换一个 cwd 或 worktree，测量历史就"失忆"一次；
    Run matrix 作为产品核心承诺，被存储模型结构性削弱。
-2. **CLI 默认值失效**：`DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks"`（`runner/cli.py`）
-   锚在源码树根，wheel 安装后指向包安装目录，事实上不可用。
+2. **默认值锚点混乱**：CLI 的 `PROJECT_ROOT = Path.cwd()`（`runner/cli.py`）把
+   tasks/runs/skills/runtimes 默认全锚在进程工作目录；GUI 的 `DEFAULT_RUNTIMES_DIR` /
+   `DEFAULT_SKILLS_DIR` 却锚在源码树（`__file__.parents[3]`），wheel 安装后失效。
+   两套锚点、三种语义，没有一个指向稳定位置。
 3. **任务库注册即忘**：GUI `POST /api/tasklib/dirs` 仅 append 进内存
    （`services/console.py:register_tasks_dir`），重启丢失。
 4. **概念堆积**：多任务库列表、运行时注册、服务端文件夹浏览器、
