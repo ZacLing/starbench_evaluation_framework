@@ -147,9 +147,9 @@ export ANTHROPIC_BASE_URL=https://your-anthropic-compatible-gateway
 export ANTHROPIC_AUTH_TOKEN=...
 ```
 
-Claude executor support currently uses `--executor-backend local` (this is the automatic default for non-Codex runtimes). With `--auth-mode global`, Starbench keeps the host `CLAUDE_CONFIG_DIR` so the host `claude` login is used directly; with `--auth-mode env`, each task gets an isolated config dir and credentials must come from `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`.
+The Claude executor defaults to `--executor-backend local` (the automatic default for every non-Codex runtime). With `--auth-mode global`, Starbench keeps the host `CLAUDE_CONFIG_DIR` so the host `claude` login is used directly; with `--auth-mode env`, each task gets an isolated config dir and credentials must come from `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`.
 
-If the host does not have `claude`, build the helper image and point `--claude-bin` at a small wrapper script that forwards `claude "$@"` into `docker run` (mount the task workspace and pass through `ANTHROPIC_*` variables). Native Docker isolation for non-Codex runtimes is planned but not yet implemented:
+If the host does not have `claude`, build the runtime's own image and select it with `--executor-backend docker`; the adapter mounts the task workspace and passes the `ANTHROPIC_*` variables through itself, so no `--claude-bin` wrapper script is needed:
 
 ```bash
 docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
@@ -267,9 +267,9 @@ starbench-run \
 
 StarBench invokes Pi with `--mode json` and `--no-skills`, and sends the prompt on stdin. `--no-skills` turns off Pi's own skill discovery, and each selected executor skill is then passed back explicitly as `--skill <path>`, so a run only ever loads the skills it chose; evaluator runs get no `--skill` at all. Reasoning rides Pi's native `--thinking` flag, which is the one runtime accepting the `off` tier (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `default` passes no flag). Evaluators receive the JSON schema in the prompt, and StarBench extracts the final assistant message from the event stream into the judge result file. `--executor-option provider=<kind>` / `--evaluator-option provider=<kind>` select which provider Pi talks to.
 
-Pi is host-local only and accepts `--auth-mode env` only; `global` and `copy-auth` are refused by the adapter and fail the task with that reason recorded in `status.json`. Every run gets its own `PI_CODING_AGENT_DIR` under the task's `agent_home/` (the executor and the judge get separate ones), and `PI_OFFLINE` / `PI_SKIP_VERSION_CHECK` are forced on, so the operator's `~/.pi` OAuth login never carries benchmark traffic. Credentials come from the provider's own API-key variable: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `XAI_API_KEY`.
+Pi is host-local only and accepts `--auth-mode env` only; `global` and `copy-auth` are refused by the adapter and fail the task with that reason recorded in `status.json`. Every run gets its own `PI_CODING_AGENT_DIR` under the task's `agent_home/` (the executor and the judge get separate ones), with `PI_CODING_AGENT_SESSION_DIR` pinned beneath it, and `PI_OFFLINE` / `PI_SKIP_VERSION_CHECK` are forced on, so the operator's `~/.pi` OAuth login never carries benchmark traffic. Credentials come from the provider's own API-key variable: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `XAI_API_KEY`.
 
-Grok Build, Gemini CLI, and Pi executor support currently requires `--executor-backend local`. Docker support is still Codex-only because the bundled Docker image installs Codex and mounts a `CODEX_HOME`.
+Docker isolation covers every built-in but Pi: Codex, Claude Code, Gemini CLI, Grok Build, and OpenCode each have their own image, carrying exactly its own CLI and built by `make docker-images`. Pi ships none, so it is the one built-in that requires `--executor-backend local` and `--executor-backend docker` is rejected at argument parsing.
 
 Custom runtimes plug in any other headless agent CLI through a declarative
 config file — no Python adapter:
@@ -305,7 +305,7 @@ Control evaluator concurrency:
 
 ## Executor Backend
 
-The default follows the executor runtime: `docker` for Codex, `local` for all other runtimes. Docker can be selected explicitly for Codex, Claude Code, and custom runtimes that declare a `docker` section; other combinations are rejected at argument parsing.
+The default follows the executor runtime: `docker` for Codex, `local` for all other runtimes. Docker can be selected explicitly for every built-in except Pi — Codex, Claude Code, Gemini CLI, Grok Build, and OpenCode each have their own image (`make docker-images`) — and for custom runtimes that declare a `docker` section; other combinations are rejected at argument parsing.
 
 ```bash
 # Claude Code in Docker (auth via environment):
