@@ -145,6 +145,26 @@ class RunPlanTests(unittest.TestCase):
         )
         self.assertEqual(args.thinking_effort, "ultra")
 
+    def test_off_tier_reaches_pi_through_both_transports(self) -> None:
+        # "off" is pi's explicit disable-reasoning level (--thinking off), a
+        # real tier distinct from "default" (pass no switch at all). Both
+        # transports must carry it: argparse choices and the plan contract
+        # enum. Registering a runtime that declares a tier the shared
+        # vocabulary lacks would leave the console offering a level the
+        # launch then refuses.
+        argv_args = parse_args(
+            ["--tasks-dir", str(self.tmp), "--thinking-effort", "off"]
+        )
+        self.assertEqual(argv_args.thinking_effort, "off")
+        path = self.write_plan(
+            executor_agent="pi", executor_model="claude-sonnet-4-5", thinking_effort="off"
+        )
+        plan_args = parse_args(["--plan", str(path), "--runs-dir", str(self.tmp)])
+        self.assertEqual(plan_args.thinking_effort, "off")
+        self.assertEqual(plan_args.executor_agent, "pi")
+        # "off" is not folded away the way the legacy "none" spelling is.
+        self.assertNotEqual(plan_args.thinking_effort, "default")
+
     def test_v1_plan_gets_a_friendly_migration_error(self) -> None:
         # A schema_version 1 document is rejected before the raw schema check,
         # with a message that names the new box keys and how to migrate.

@@ -128,7 +128,7 @@ Reasoning effort is a run-level knob shared by all runtimes:
 --thinking-effort high
 ```
 
-The tiers are `default`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` (`none` is the deprecated spelling of `default`, which leaves the runtime/model default alone). Runtimes with a native switch apply it there (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`); the rest get a prompt-level instruction (`low`/`medium`/`high` only). Each runtime declares the tiers its CLI accepts and the runner rejects unsupported levels at start; the value is recorded in `run_config.json`. `--claude-thinking-effort` remains as a deprecated alias.
+The tiers are `default`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` (`none` is the deprecated spelling of `default`, which leaves the runtime/model default alone). `off` is distinct from `default`: it passes the runtime's switch to explicitly disable reasoning, where `default` passes no switch at all. Runtimes with a native switch apply it there (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`); the rest get a prompt-level instruction (`low`/`medium`/`high` only). Each runtime declares the tiers its CLI accepts and the runner rejects unsupported levels at start; the value is recorded in `run_config.json`. `--claude-thinking-effort` remains as a deprecated alias.
 
 For proxy/API-gateway use, set Claude Code environment variables before launching the runner:
 

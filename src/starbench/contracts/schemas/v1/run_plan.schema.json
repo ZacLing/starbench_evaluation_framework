@@ -117,7 +117,7 @@
     },
     "thinking_effort": {
       "type": "string",
-      "enum": ["default", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "none"]
+      "enum": ["default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "none"]
     },
     "web_search": {
       "type": "string",

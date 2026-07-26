@@ -67,6 +67,7 @@
           "type": "string",
           "enum": [
             "default",
+            "off",
             "minimal",
             "low",
             "medium",
@@ -132,6 +133,7 @@
             "type": "string",
             "enum": [
               "default",
+              "off",
               "minimal",
               "low",
               "medium",
