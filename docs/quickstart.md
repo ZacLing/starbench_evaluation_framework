@@ -97,17 +97,18 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 ## Your Own Tasks
 
-Put real benchmark task packages in `tasks/`:
+Put real benchmark task packages in the StarBench home task library —
+`$STARBENCH_HOME/tasks` (`~/.starbench/tasks` by default):
 
 ```text
-tasks/
+~/.starbench/tasks/
   my_task/
     task.json
     prompt.md
     rubrics.json
 ```
 
-Then run without `--tasks-dir`:
+Then run without `--tasks-dir`, since it now resolves to that directory:
 
 ```bash
 starbench-run \

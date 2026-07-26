@@ -11,14 +11,14 @@ For stable run-output files written by this command, see
 
 ## Core Options
 
-- `--tasks-dir PATH`: directory containing task packages. Default: `tasks`.
-- `--runs-dir PATH`: directory for run outputs. Default: `runs`.
+- `--tasks-dir PATH`: directory containing task packages. Default: `$STARBENCH_HOME/tasks` (`~/.starbench/tasks`).
+- `--runs-dir PATH`: directory for run outputs. Default: `$STARBENCH_HOME/runs` (`~/.starbench/runs`).
 - `--task ID_OR_DIR`: include one task. Repeat for multiple tasks.
 - `--repeat N`: repeat the selected task list.
 - `--seed INT`: controls task shuffle, batch grouping, and evaluator launch order.
 - `--batch-size N`: number of executor tasks to run concurrently.
 - `--run-id NAME`: stable output directory name.
-- `--batch NAME`: experiment batch label recorded in `run_config.json`. Runs launched together share it, and the console groups and compares them by it. Optional; a run without one is simply unlabelled.
+- `--batch NAME`: experiment batch label recorded in `run_config.json`. Runs launched together share it, and the console groups and compares them by it. Optional; a run without one is simply unlabelled. Note: `--batch` no longer abbreviates `--batch-size`. Argparse's unambiguous-prefix matching used to accept the shorter `--batch` as shorthand for `--batch-size`; now that `--batch` is its own flag, that shortcut is gone — always spell `--batch-size` in full.
 
 The seed controls Starbench scheduling randomness. It does not claim to make model internals deterministic.
 
@@ -254,7 +254,7 @@ starbench-run \
   --evaluator-model qwen3-coder
 ```
 
-`--runtimes-dir` (default `runtimes/`) holds one `<id>.json` per runtime
+`--runtimes-dir` (default `$STARBENCH_HOME/runtimes`, i.e. `~/.starbench/runtimes`) holds one `<id>.json` per runtime
 declaring the command, prompt delivery (`stdin` or argv), one of three output
 parsers (`headless-json`, `jsonl-events`, `text`), static env, and an
 optional docker image. Configs are validated at argument parsing. Field

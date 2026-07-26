@@ -48,7 +48,7 @@
 ├── runtimes/                 custom:<id> 运行时声明（runtimes/<id>.json）
 ├── scripts/                  gen_api_types.py、sync_schemas.py
 ├── docs/                     本文 + PRODUCT/DESIGN + 操作参考；archive/ 为历史规划
-└── runs/                     运行产物（gitignored；文件系统即真相的落点）
+└── runs/                     运行产物（gitignored；文件系统即真相的落点；默认解析自 `$STARBENCH_HOME`，见 home 设计）
 ```
 
 ★ = 单一事实源。`build/`、`__pycache__`、`src/starbench/gui/static/`（前端构建产物，
@@ -82,6 +82,9 @@ committed）不列。树只到达"该去哪个目录"的粒度；目录内布局
 read_models 不得向上 import services（需要 services 数据时由调用方注入参数）。
 
 ## 3. 过境契约
+
+数据根（tasks/runs/runtimes/skills）的解析优先级统一为：显式旗标 >
+`$STARBENCH_HOME` > `~/.starbench`，与 cwd 无关（见 `src/starbench/home.py`）。
 
 console 与 core 之间只允许通过以下契约对话，全部落盘、全部有 schema：
 

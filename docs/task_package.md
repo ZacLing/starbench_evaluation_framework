@@ -1,12 +1,12 @@
 # Task Package Structure
 
-A Starbench task package is one directory with `task.json`, `prompt.md`, `rubrics.json`, and optional input materials. By default, put user task packages under the project-level `tasks/` directory.
+A Starbench task package is one directory with `task.json`, `prompt.md`, `rubrics.json`, and optional input materials. By default, put user task packages under the StarBench home task library, `$STARBENCH_HOME/tasks` (`~/.starbench/tasks`); `--tasks-dir` overrides it.
 
 For the protocol-level contract, schema, and compatibility policy, see
 [Artifact Contracts](artifact_contracts.md).
 
 ```text
-tasks/
+~/.starbench/tasks/
   my_task/
     task.json
     prompt.md
@@ -17,7 +17,7 @@ tasks/
     figure.png                  # optional
 ```
 
-The bundled `examples/tasks/` directory is for demos. To run those examples, pass `--tasks-dir examples/tasks`.
+The bundled `examples/tasks/` directory in a repository checkout is for demos and is never auto-loaded into the library. Seed it with `cp -r examples/tasks/* ~/.starbench/tasks/`, or run those examples directly by passing `--tasks-dir examples/tasks`.
 
 At runtime the executor sees a fresh workspace:
 

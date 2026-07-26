@@ -77,7 +77,7 @@ StarBench 是本地/CLI 优先的评测框架，不是多租户 SaaS。
 
 ### 3.2 核心业务流程
 
-1. 操作者注册或导入任务包。
+1. 操作者把任务包导入 home 任务库。
 2. 操作者配置 AI providers、agent runtimes、executor skills。
 3. 操作者选择 profile 或临时配置一次实验。
 4. 系统预检任务、agent CLI、凭证、Docker、provider/model 等运行条件。
@@ -180,13 +180,15 @@ StarBench 是本地/CLI 优先的评测框架，不是多租户 SaaS。
   - `src/starbench/runner/task_loader.py`
   - `src/starbench/runner/trace.py`
 
-#### TASK-003 GUI 任务库浏览、注册与导入
+#### TASK-003 GUI 任务库浏览与导入（单一 home 库）
 
 - 优先级：P0
 - 功能描述：
-  - GUI 应显示注册任务目录及其中的 task package。
-  - 用户可以注册额外 task folder。
-  - 用户可以拖拽 task folder 或 `.zip` 导入任务包。
+  - GUI 只服务单一任务库：默认 `$STARBENCH_HOME/tasks`（`~/.starbench/tasks`），
+    或启动时 `--tasks-dir` 指定的目录；应显示该目录及其中的 task package。
+  - 目录注册与多目录浏览已下线：没有额外的"注册 task folder"入口；要服务
+    另一个目录，需用不同的 `--tasks-dir` 重启控制台。
+  - 用户可以拖拽 task folder 或 `.zip` 导入任务包到当前库。
   - 导入前必须做 server-side 校验；不合法时不能写入。
   - 上传大小必须受限，路径必须防 traversal。
 - 验收标准：
@@ -900,7 +902,7 @@ StarBench 是本地/CLI 优先的评测框架，不是多租户 SaaS。
 | GUI experiments/profiles | `tests/gui/test_experiments.py` |
 | GUI agents/providers | `tests/gui/test_agents.py`, `tests/gui/test_providers.py` |
 | GUI launch argv equivalence | `tests/gui/test_launcher.py`, `tests/gui/test_equivalence.py` |
-| Task library import/browse | `tests/gui/test_library.py` |
+| Task library import (single home library) | `tests/gui/test_library.py` |
 | API type generation | `tests/gui/test_contracts.py` |
 
 ## 11. 里程碑建议

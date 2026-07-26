@@ -41,12 +41,17 @@ edit or delete; the runs themselves stay fully CLI-owned.
 ## Start
 
 ```bash
-starbench-gui                       # serves ./runs on http://127.0.0.1:8321/
+starbench-gui                       # serves $STARBENCH_HOME/runs (default ~/.starbench/runs) on http://127.0.0.1:8321/
 starbench-gui --runs-dir path/to/runs --port 9000
-starbench-gui --tasks-dir tasks --tasks-dir examples/tasks
-starbench-gui --runtimes-dir runtimes   # custom runtime specs (defaults to repo runtimes/)
+starbench-gui --tasks-dir path/to/tasks     # single task library; pass at most one --tasks-dir
+starbench-gui --runtimes-dir runtimes       # custom runtime specs (default: $STARBENCH_HOME/runtimes, ~/.starbench/runtimes)
 starbench-gui --no-browser          # do not open a browser tab
 ```
+
+Every directory flag defaults to the StarBench home layout — explicit flag >
+`$STARBENCH_HOME` > `~/.starbench` — never to the working directory. A fresh
+home has an empty task library until it is seeded; see the README Quick
+Start for `cp -r examples/tasks/* ~/.starbench/tasks/`.
 
 The server is standard-library only and binds to `127.0.0.1` by default. It is a
 single-operator tool; do not expose it to a network.
@@ -86,10 +91,17 @@ single-operator tool; do not expose it to a network.
   OpenAI-protocol provider (gateway flags), and Grok Build is official-only
   (its CLI has no endpoint override). The wizard contains no endpoint or
   credential inputs at all.
-- **Task library** — task packages as browsable cards. Click one to preview its
-  prompt and rubrics and launch it directly. Import new packages by dragging a
-  task folder or `.zip` onto the page (validated server-side before anything is
-  written), and register additional task folders with a built-in directory picker.
+- **Task library** — the console's single task library (the home
+  `$STARBENCH_HOME/tasks` directory by default, or whatever directory
+  `--tasks-dir` names) as browsable cards; a fresh, unseeded home shows an
+  empty library rather than falling back to the repo's `examples/tasks/`.
+  Click a card to preview its prompt and rubrics and launch it directly.
+  Import new packages by dragging a task folder or `.zip` onto the page
+  (validated server-side before anything is written; the library directory is
+  created on the first import if it does not exist yet). There is exactly one
+  library per running console — directory registration and server-side
+  browsing of other folders are gone; start the console with a different
+  `--tasks-dir` to serve a different library.
 - **Runs** — every run in the runs directory with status, executor outcomes, and
   judge pass counts; sortable and filterable. Runs in flight refresh automatically.
 - **Run detail** — summary cards, a live progress strip while executing, one row

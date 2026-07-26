@@ -25,12 +25,27 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - Rigor prompt injection: restate selected rubric requirements as hard requirements in the executor prompt.
 - Executor skills: install reusable skill folders into the executor workspace, individually or as named groups.
 - Trace capture: raw JSONL events, final message, status/timing, artifact manifest, and derived summary.
-- A default `tasks/` directory for user task packages.
+- A default task library at `$STARBENCH_HOME/tasks` (`~/.starbench/tasks`) for user task packages.
 - Two sample task packages under `examples/tasks/`.
 - Unit and closed-loop fake-runner smoke tests that do not call a live model.
 - A local GUI console (`starbench-gui`): a five-step launch wizard with readiness checks (broken task packages surfaced, CLI/credential/Docker preflight gating Launch), reusable measurement profiles (shared judge/seed/roster/task set, frozen into each run as `profile_snapshot.json`), a task-by-agent coverage matrix, run browsing with rubric verdicts and traces, and stateless side-by-side comparison of any runs (`/api/compare?runs=a,b,c`).
 
 ## Quick Start
+
+StarBench keeps everything — task packages, run results, custom runtimes,
+executor skills — under one home: `~/.starbench`, relocatable with
+`STARBENCH_HOME`. Explicit `--tasks-dir` / `--runs-dir` flags always win.
+
+    pip install starbench
+    cp -r examples/tasks/* ~/.starbench/tasks/   # seed the library
+    starbench-gui                                 # zero-argument console
+
+Migrating an existing checkout:
+
+    mkdir -p ~/.starbench
+    mv runs ~/.starbench/runs
+
+For a full Docker-isolated run from a repository checkout:
 
 ```bash
 cd starbench_evaluation_framework
@@ -246,10 +261,12 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 ## Where To Put Tasks
 
-Put your own task packages under `tasks/`:
+Put your own task packages under the StarBench home task library —
+`$STARBENCH_HOME/tasks` (`~/.starbench/tasks` by default; `--tasks-dir`
+overrides it):
 
 ```text
-tasks/
+~/.starbench/tasks/
   my_task/
     task.json
     prompt.md
@@ -257,14 +274,19 @@ tasks/
     materials/
 ```
 
-`starbench-run` uses `tasks/` by default. The bundled `examples/tasks/` directory is only for sample tasks and smoke tests. To run a sample, pass `--tasks-dir examples/tasks`.
+`starbench-run` and `starbench-gui` use `$STARBENCH_HOME/tasks` by default.
+The bundled `examples/tasks/` directory in a repository checkout is only for
+sample tasks and smoke tests, and it is never auto-loaded: seed it into the
+library with `cp -r examples/tasks/* ~/.starbench/tasks/`, or pass
+`--tasks-dir examples/tasks` to run it directly without seeding.
 
 ## Output Layout
 
-Each run writes to `runs/<run_id>/`.
+Each run writes to `<runs-dir>/<run_id>/`, where `<runs-dir>` defaults to
+`$STARBENCH_HOME/runs` (`~/.starbench/runs`) and `--runs-dir` overrides it.
 
 ```text
-runs/<run_id>/
+<runs-dir>/<run_id>/
   run_config.json
   run_plan.json                     # plan-launched runs: the exact launch contract
   profile_snapshot.json             # profile-launched runs: the frozen measurement contract
