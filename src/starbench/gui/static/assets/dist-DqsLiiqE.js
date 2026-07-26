@@ -1,1 +1,0 @@
-import{V as e,W as t}from"./skeleton-BOodris7.js";import{i as n}from"./dist-_BBIIxF9.js";var r=t(e(),1),i=r.useId||(()=>void 0),a=0;function o(e){let[t,o]=r.useState(i());return n(()=>{e||o(e=>e??String(a++))},[e]),e||(t?`radix-${t}`:``)}export{o as t};

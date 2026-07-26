@@ -5,7 +5,6 @@ import { toast } from "sonner"
 import { ArrowLeft, ArrowRight, Loader2, Rocket } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { DirectoryPickerDialog } from "@/components/task-import"
 import { runtimeFilters } from "@/components/brand"
 import { ErrorNote } from "@/components/error-note"
 import {
@@ -51,7 +50,6 @@ export default function NewRun() {
     () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
     [tasklib.data],
   )
-  const recentLibraryDir = libraries[libraries.length - 1]?.dir
   const providers = providersQuery.data?.providers ?? []
   const agentStatuses = agentStatusQuery.data?.statuses ?? {}
   const customRuntimes = useMemo(
@@ -115,7 +113,6 @@ export default function NewRun() {
   )
 
   const [step, setStep] = useState(0)
-  const [pickerOpen, setPickerOpen] = useState(false)
   const [launching, setLaunching] = useState(false)
   const [preflightBlocked, setPreflightBlocked] = useState(false)
   const [savingProfile, setSavingProfile] = useState(false)
@@ -134,7 +131,6 @@ export default function NewRun() {
     rosteredProfiles,
     selectedProfile,
     launchProfileId,
-    setTasksDir,
     setTasks,
     setProfileId,
     setShared,
@@ -407,12 +403,7 @@ export default function NewRun() {
           libraries={libraries}
           tasksDir={tasksDir}
           tasks={tasks}
-          setTasksDir={(dir) => {
-            setTasksDir(dir)
-            setTasks([])
-          }}
           setTasks={setTasks}
-          onOpenPicker={() => setPickerOpen(true)}
           onImported={() => queryClient.invalidateQueries({ queryKey: ["tasklib"] })}
           runtimeLabel={runtimeLabel}
         />
@@ -533,24 +524,6 @@ export default function NewRun() {
           </Button>
         )}
       </div>
-
-      <DirectoryPickerDialog
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        initialPath={recentLibraryDir}
-        title="Choose a task folder"
-        description="Pick a folder that contains task packages."
-        onSelect={async (path) => {
-          try {
-            await api.registerTasksDir(path)
-            await queryClient.invalidateQueries({ queryKey: ["tasklib"] })
-            setTasksDir(path)
-            setTasks([])
-          } catch (error) {
-            toast.error((error as Error).message)
-          }
-        }}
-      />
     </div>
   )
 }

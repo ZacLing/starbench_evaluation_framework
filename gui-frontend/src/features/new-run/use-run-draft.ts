@@ -174,11 +174,10 @@ export function useRunDraft({
     }
   }, [applyProfile, preset.taskIds, preset.tasksDir, profiles, profilesPayload, ready, rosteredProfiles])
 
+  /* One console, one library: the wizard's task dir is the home library unless
+     a preset or a profile's task set already named it. */
   useEffect(() => {
-    if (!tasksDir && libraries.length) {
-      const withTasks = libraries.find((library) => library.tasks.length) ?? libraries[0]
-      setTasksDir(withTasks.dir)
-    }
+    if (!tasksDir && libraries.length) setTasksDir(libraries[0].dir)
   }, [libraries, tasksDir])
 
   const effectiveTasksDir = useCallback(() => {
@@ -304,7 +303,6 @@ export function useRunDraft({
     rosteredProfiles,
     selectedProfile,
     launchProfileId: mode === "profile" && profileId ? profileId : undefined,
-    setTasksDir,
     setTasks,
     setProfileId,
     setShared,

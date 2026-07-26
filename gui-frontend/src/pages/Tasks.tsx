@@ -1,8 +1,7 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { toast } from "sonner"
-import { ClipboardList, FolderSearch, Play, Timer } from "lucide-react"
+import { ClipboardList, Play, Timer } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -15,7 +14,7 @@ import {
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DirectoryPickerDialog, ImportDropzone } from "@/components/task-import"
+import { ImportDropzone } from "@/components/task-import"
 import { WebSearchBadge } from "@/components/task-badges"
 import { ErrorNote } from "@/components/error-note"
 import { api, type TaskPackage } from "@/lib/api"
@@ -26,125 +25,90 @@ export default function Tasks() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const tasklib = useQuery({ queryKey: ["tasklib"], queryFn: api.tasklib })
-  const [pickerOpen, setPickerOpen] = useState(false)
   const [preview, setPreview] = useState<{ dir: string; task: TaskPackage } | null>(null)
 
   if (tasklib.isPending) return <Skeleton className="h-96" />
   if (tasklib.isError) return <ErrorNote message={(tasklib.error as Error).message} />
 
-  const libraries = tasklib.data.libraries.filter((library) => library.exists)
-  const importTarget = libraries[0]?.dir
-  const recentLibraryDir = libraries[libraries.length - 1]?.dir
+  /* One console, one library: the home task directory the server was started
+     with. Everything on this page targets it. */
+  const library = tasklib.data.libraries[0]
+  if (!library) return <ErrorNote message="The console reported no task library." />
 
   return (
     <div className="grid gap-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Task library</h1>
-          <p className="text-sm text-muted-foreground">
-            {libraries.reduce((sum, library) => sum + library.tasks.length, 0)} task packages in{" "}
-            {libraries.length} folders
-          </p>
-        </div>
-        <div className="ml-auto">
-          <Button variant="outline" onClick={() => setPickerOpen(true)}>
-            <FolderSearch /> Add a task folder
-          </Button>
-        </div>
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">Task library</h1>
+        <p className="text-sm text-muted-foreground">
+          {library.tasks.length} task package{library.tasks.length === 1 ? "" : "s"} in{" "}
+          <span className="font-mono text-xs" title={library.dir}>
+            {shortDir(library.dir)}
+          </span>
+        </p>
       </div>
 
-      {importTarget && (
-        <ImportDropzone
-          compact
-          targetDir={importTarget}
-          onImported={() => queryClient.invalidateQueries({ queryKey: ["tasklib"] })}
-        />
-      )}
+      <ImportDropzone
+        compact
+        targetDir={library.dir}
+        onImported={() => queryClient.invalidateQueries({ queryKey: ["tasklib"] })}
+      />
 
-      {libraries.map((library) => (
-        <section key={library.dir} className="grid gap-3">
-          <h2 className="truncate font-mono text-xs text-muted-foreground" title={library.dir}>
-            {shortDir(library.dir)}
-          </h2>
-          {library.tasks.length ? (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {library.tasks.map((task) => (
-                <Card
-                  key={`${library.dir}/${task.dir_name}`}
-                  className="cursor-pointer py-4 transition-colors hover:border-primary/40"
-                  onClick={() => setPreview({ dir: library.dir, task })}
-                >
-                  <CardContent className="grid gap-2 px-4">
-                    {task.error ? (
-                      <p className="text-xs text-fail-ink" title={task.error}>
-                        broken: {task.error}
-                      </p>
-                    ) : task.warning ? (
-                      <p className="text-xs text-warn-ink" title={task.warning}>
-                        {task.warning}
-                      </p>
-                    ) : null}
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="font-mono text-sm font-semibold">{task.id}</span>
-                      <div className="flex flex-wrap items-center justify-end gap-1">
-                        <WebSearchBadge allow={task.allow_web_search} />
-                        {task.has_human_reference && (
-                          <Badge variant="outline" className="text-xs text-muted-foreground">
-                            expert steps
-                          </Badge>
-                        )}
-                        {task.rigor_count > 0 && (
-                          <Badge variant="outline" className="text-xs text-muted-foreground">
-                            {task.rigor_count} {task.rigor_count === 1 ? "rigor" : "rigors"}
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                    <p className="line-clamp-2 text-sm text-muted-foreground">{task.name}</p>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <ClipboardList className="size-3.5" /> {task.rubric_count} rubrics
-                      </span>
-                      {task.timeout_seconds ? (
-                        <span className="flex items-center gap-1">
-                          <Timer className="size-3.5" /> {fmtDuration(task.timeout_seconds)} limit
-                        </span>
-                      ) : null}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No task packages in this folder yet.</p>
-          )}
-        </section>
-      ))}
-
-      {!libraries.length && (
+      {library.tasks.length ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {library.tasks.map((task) => (
+            <Card
+              key={task.dir_name}
+              className="cursor-pointer py-4 transition-colors hover:border-primary/40"
+              onClick={() => setPreview({ dir: library.dir, task })}
+            >
+              <CardContent className="grid gap-2 px-4">
+                {task.error ? (
+                  <p className="text-xs text-fail-ink" title={task.error}>
+                    broken: {task.error}
+                  </p>
+                ) : task.warning ? (
+                  <p className="text-xs text-warn-ink" title={task.warning}>
+                    {task.warning}
+                  </p>
+                ) : null}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-mono text-sm font-semibold">{task.id}</span>
+                  <div className="flex flex-wrap items-center justify-end gap-1">
+                    <WebSearchBadge allow={task.allow_web_search} />
+                    {task.has_human_reference && (
+                      <Badge variant="outline" className="text-xs text-muted-foreground">
+                        expert steps
+                      </Badge>
+                    )}
+                    {task.rigor_count > 0 && (
+                      <Badge variant="outline" className="text-xs text-muted-foreground">
+                        {task.rigor_count} {task.rigor_count === 1 ? "rigor" : "rigors"}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                <p className="line-clamp-2 text-sm text-muted-foreground">{task.name}</p>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <ClipboardList className="size-3.5" /> {task.rubric_count} rubrics
+                  </span>
+                  {task.timeout_seconds ? (
+                    <span className="flex items-center gap-1">
+                      <Timer className="size-3.5" /> {fmtDuration(task.timeout_seconds)} limit
+                    </span>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
         <Card>
           <CardContent className="py-12 text-center text-sm text-muted-foreground">
-            No task folders registered. Add one with the button above.
+            No task packages yet — drop a folder or .zip here to import into the library.
           </CardContent>
         </Card>
       )}
-
-      <DirectoryPickerDialog
-        open={pickerOpen}
-        onOpenChange={setPickerOpen}
-        initialPath={recentLibraryDir}
-        title="Add a task folder"
-        description="Pick a folder that contains task packages (each with its own task.json)."
-        onSelect={async (path) => {
-          try {
-            await api.registerTasksDir(path)
-            queryClient.invalidateQueries({ queryKey: ["tasklib"] })
-            toast.success("Task folder added.")
-          } catch (error) {
-            toast.error((error as Error).message)
-          }
-        }}
-      />
 
       <TaskPreviewSheet
         selection={preview}

@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
-import { AlertTriangle, CheckCircle2, FolderSearch, Loader2, XCircle } from "lucide-react"
+import { AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react"
 import { ImportDropzone } from "@/components/task-import"
 import { TaskBadges } from "@/components/task-badges"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -17,33 +17,29 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { api, type TaskHistory, type TaskHistoryConfig, type TaskPackage } from "@/lib/api"
-import { fmtDuration, fmtRelative } from "@/lib/format"
+import { fmtDuration, fmtRelative, shortDir } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 export function StepTasks({
   libraries,
   tasksDir,
   tasks,
-  setTasksDir,
   setTasks,
-  onOpenPicker,
   onImported,
   runtimeLabel,
 }: {
   libraries: { dir: string; tasks: TaskPackage[] }[]
   tasksDir: string
   tasks: string[]
-  setTasksDir: (dir: string) => void
   setTasks: (tasks: string[]) => void
-  onOpenPicker: () => void
   onImported: () => void
   runtimeLabel: (runtime: string) => string
 }) {
   const library = libraries.find((item) => item.dir === tasksDir)
+  /* Run history is global: every run in the runs directory, keyed by task id. */
   const historyQuery = useQuery({
-    queryKey: ["task-history", tasksDir],
-    queryFn: () => api.taskHistory(tasksDir),
-    enabled: Boolean(tasksDir),
+    queryKey: ["task-history"],
+    queryFn: () => api.taskHistory(),
   })
   const historyByTask = historyQuery.data?.tasks ?? {}
   const runnableTasks = library?.tasks.filter((task) => !task.error) ?? []
@@ -69,30 +65,15 @@ export function StepTasks({
   return (
     <Card>
       <CardContent className="grid gap-5">
-        <div className="grid gap-2">
-          <Label>Task folder</Label>
-          <div className="flex flex-wrap items-center gap-2">
-            {libraries.map((item) => (
-              <button
-                key={item.dir}
-                type="button"
-                onClick={() => setTasksDir(item.dir)}
-                className={cn(
-                  "max-w-full truncate rounded-md border px-3 py-1.5 font-mono text-xs transition-colors",
-                  item.dir === tasksDir
-                    ? "border-primary bg-accent text-accent-foreground"
-                    : "hover:border-primary/40",
-                )}
-                title={item.dir}
-              >
-                …/{item.dir.split("/").slice(-2).join("/")}
-                <span className="ml-2 text-muted-foreground">{item.tasks.length}</span>
-              </button>
-            ))}
-            <Button variant="outline" size="sm" onClick={onOpenPicker}>
-              <FolderSearch /> Browse…
-            </Button>
-          </div>
+        <div className="grid gap-1.5">
+          <Label>Task library</Label>
+          {tasksDir ? (
+            <p className="truncate font-mono text-xs text-muted-foreground" title={tasksDir}>
+              {shortDir(tasksDir)}
+            </p>
+          ) : (
+            <Skeleton className="h-4 w-64" />
+          )}
         </div>
 
         {library && library.tasks.length > 0 ? (
@@ -111,10 +92,10 @@ export function StepTasks({
             {runnableTasks.length === 0 ? (
               <Alert className="border-warn-ink/40 bg-warn-soft/60">
                 <AlertTriangle className="size-4" />
-                <AlertTitle>No runnable tasks in this folder</AlertTitle>
+                <AlertTitle>No runnable tasks in the library</AlertTitle>
                 <AlertDescription>
-                  Fix the broken task packages, import valid ones, or choose another task
-                  folder before continuing.
+                  Fix the broken task packages, or import valid ones below, before
+                  continuing.
                 </AlertDescription>
               </Alert>
             ) : requiresTaskSelection ? (
@@ -260,13 +241,13 @@ export function StepTasks({
             </p>
             {library.tasks.some((task) => task.error) && (
               <p className="text-xs text-warn-ink">
-                This folder contains broken packages. They are disabled here until fixed.
+                The library contains broken packages. They are disabled here until fixed.
               </p>
             )}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No task packages in this folder. Import one below or browse to another folder.
+            No task packages yet — drop a folder or .zip below to import into the library.
           </p>
         )}
 

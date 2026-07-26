@@ -12,7 +12,6 @@ import type {
   CustomRuntime,
   CustomRuntimePayload,
   DeletedAgentPayload,
-  DirListing,
   ExperimentPlanResponse,
   ImportFile,
   ImportReport,
@@ -100,20 +99,13 @@ export const api = {
       `/api/coverage${profileId ? `?profile=${encodeURIComponent(profileId)}` : ""}`,
     ),
   tasklib: () => request<TaskLibrariesPayload>("/api/tasklib"),
-  taskHistory: (dir?: string | null) =>
-    request<TaskHistoryPayload>(
-      `/api/tasklib/history${dir ? `?dir=${encodeURIComponent(dir)}` : ""}`,
-    ),
+  taskHistory: () => request<TaskHistoryPayload>("/api/tasklib/history"),
   launches: () => request<LaunchesPayload>("/api/launches"),
   launch: (payload: LaunchPayload) => request<Launch>("/api/launch", jsonBody(payload)),
   planLaunch: (payload: LaunchPayload) =>
     request<LaunchPlanResponse>("/api/launch", jsonBody({ ...payload, dry_run: true })),
   stop: (runId: string) =>
     request<Launch>(`/api/launches/${encodeURIComponent(runId)}/stop`, { method: "POST" }),
-  browse: (path?: string | null) =>
-    request<DirListing>(`/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-  registerTasksDir: (dir: string) =>
-    request<TaskLibrariesPayload>("/api/tasklib/dirs", jsonBody({ dir })),
   taskDetail: (dir: string, name: string) =>
     request<TaskPackageDetail>(
       `/api/tasklib/task?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(name)}`,
