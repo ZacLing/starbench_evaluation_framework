@@ -78,7 +78,9 @@ export default function Compare() {
         )}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {/* auto-fit with a 280px floor: tracks never drop below what a run id +
+          model + status chip need, so cards wrap instead of clipping. */}
+      <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
         {payload.runs.map((row) => (
           <RunCard
             key={row.run_id}
@@ -256,8 +258,12 @@ function RunCard({
   const run = row.run
   return (
     <Card className="py-4">
+      {/* min-w-0 on every row: they are grid items (min-width:auto by default),
+          and the Badge primitive is shrink-0 — without the override the row's
+          min-content wins over the track and content bleeds under the next
+          card. */}
       <CardContent className="grid gap-2 px-4">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           {run && <AgentIcon agent={run.executor_agent ?? ""} icon={iconHint} size={20} />}
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-semibold">{label}</span>
@@ -268,7 +274,7 @@ function RunCard({
           {run ? <StatusBadge status={run.status} /> : <Badge variant="secondary">missing</Badge>}
         </div>
         {run && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             {run.executor_backend && (
               <Badge variant="outline" className="text-[10px] text-muted-foreground">
                 {run.executor_backend}
@@ -277,7 +283,7 @@ function RunCard({
             <span>{spanBetween(run.started_at, run.ended_at, run.status === "running")}</span>
           </div>
         )}
-        <div className="flex items-center justify-between">
+        <div className="flex min-w-0 items-center justify-between gap-2">
           {run ? (
             <PassSummaryBadge passed={run.judge_passes.single} total={run.judge_totals.single} />
           ) : (
@@ -286,7 +292,7 @@ function RunCard({
           {run && (
             <Link
               to={`/runs/${encodeURIComponent(row.run_id)}`}
-              className="text-xs text-primary hover:underline"
+              className="shrink-0 whitespace-nowrap text-xs text-primary hover:underline"
             >
               View run →
             </Link>
