@@ -339,7 +339,11 @@ export default function Profiles() {
   const profiles = payload.profiles
   const persisted = Boolean(payload.persisted)
   const providers = providersQuery.data?.providers ?? []
-  const libraries = (tasklibQuery.data?.libraries ?? []).filter((l) => l.exists)
+  /* The console's one library, kept even when its directory does not exist yet:
+     a fresh home has no tasks/ until the first import creates it, and a profile
+     pinning a task set must still be able to target that library rather than
+     silently store an empty tasks_dir. */
+  const libraries = tasklibQuery.data?.libraries ?? []
   const meta = metaQuery.data
   /* The wizard uses default_profile_id, falling back to the first profile when
      none is set. We render the same effective default rather than invent one. */
