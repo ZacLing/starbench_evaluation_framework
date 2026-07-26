@@ -80,6 +80,13 @@ Evaluator-only switch examples:
 --evaluator-agent gemini \
 --gemini-bin gemini \
 --evaluator-model gemini-2.5-pro
+
+# Pi evaluator (auth mode env only).
+--evaluator-agent pi \
+--pi-bin pi \
+--evaluator-auth-mode env \
+--evaluator-option provider=anthropic \
+--evaluator-model claude-opus-4-8
 ```
 
 ## Agent Runtimes
@@ -93,6 +100,7 @@ Use this runtime convention:
 | Other OpenAI-compatible models, such as Doubao or Qwen | OpenCode, `--executor-agent opencode` / `--evaluator-agent opencode` |
 | xAI Grok Build models | Grok Build, `--executor-agent grok` / `--evaluator-agent grok` |
 | Gemini CLI models | Gemini CLI, `--executor-agent gemini` / `--evaluator-agent gemini` |
+| Anthropic, OpenAI, Google, or xAI models through one multi-provider CLI | Pi, `--executor-agent pi` / `--evaluator-agent pi` |
 | Any other headless agent CLI | Custom runtime, `--executor-agent custom:<id>` / `--evaluator-agent custom:<id>` |
 
 Codex is the default executor and evaluator runtime, and is the expected runtime for GPT/OpenAI-family models:
@@ -128,7 +136,9 @@ Reasoning effort is a run-level knob shared by all runtimes:
 --thinking-effort high
 ```
 
-The tiers are `default`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` (`none` is the deprecated spelling of `default`, which leaves the runtime/model default alone). `off` is distinct from `default`: it passes the runtime's switch to explicitly disable reasoning, where `default` passes no switch at all. Runtimes with a native switch apply it there (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`); the rest get a prompt-level instruction (`low`/`medium`/`high` only). Each runtime declares the tiers its CLI accepts and the runner rejects unsupported levels at start; the value is recorded in `run_config.json`. `--claude-thinking-effort` remains as a deprecated alias.
+The tiers are `default`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra` (`none` is the deprecated spelling of `default`, which leaves the runtime/model default alone). `off` is distinct from `default`: it passes the runtime's switch to explicitly disable reasoning, where `default` passes no switch at all. Runtimes with a native switch apply it there (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`, Pi `--thinking`); the rest get a prompt-level instruction (`low`/`medium`/`high` only). Each runtime declares the tiers its CLI accepts and the runner rejects unsupported levels at start; the value is recorded in `run_config.json`. `--claude-thinking-effort` remains as a deprecated alias.
+
+`--thinking-effort` is a single run-level value that applies to the executor and the evaluator alike, but the start-up check validates it against the **executor** runtime only. A tier that only one side's runtime declares therefore reaches the judge unclamped: `off` is declared by Pi alone, so `--executor-agent pi --thinking-effort off` paired with a Claude Code evaluator hands `off` to the judge side, which has no instruction for that tier and fails the judge call. When executor and evaluator run different runtimes, pick a tier both accept.
 
 For proxy/API-gateway use, set Claude Code environment variables before launching the runner:
 
@@ -240,7 +250,26 @@ starbench-run \
 
 StarBench invokes Gemini with `--output-format json`, `--skip-trust`, and `-p ""` so the long StarBench prompt can still be sent on stdin. Executor runs use `--yolo`; evaluator runs use `--approval-mode plan`. Evaluators receive the JSON schema in the prompt, and StarBench extracts the final assistant response into `result.json`. Selected executor skills are installed under `./.gemini/skills/<skill-id>/` inside the isolated task workspace.
 
-Grok Build and Gemini CLI executor support currently requires `--executor-backend local`. Docker support is still Codex-only because the bundled Docker image installs Codex and mounts a `CODEX_HOME`.
+Pi is one CLI over four native provider kinds (Anthropic, OpenAI, Google, xAI) and runs headless through `pi --mode json`:
+
+```bash
+starbench-run \
+  --executor-agent pi \
+  --evaluator-agent pi \
+  --pi-bin pi \
+  --executor-backend local \
+  --auth-mode env \
+  --executor-option provider=anthropic \
+  --evaluator-option provider=anthropic \
+  --executor-model claude-opus-4-8 \
+  --evaluator-model claude-opus-4-8
+```
+
+StarBench invokes Pi with `--mode json` and `--no-skills`, and sends the prompt on stdin. `--no-skills` turns off Pi's own skill discovery, and each selected executor skill is then passed back explicitly as `--skill <path>`, so a run only ever loads the skills it chose; evaluator runs get no `--skill` at all. Reasoning rides Pi's native `--thinking` flag, which is the one runtime accepting the `off` tier (`off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; `default` passes no flag). Evaluators receive the JSON schema in the prompt, and StarBench extracts the final assistant message from the event stream into the judge result file. `--executor-option provider=<kind>` / `--evaluator-option provider=<kind>` select which provider Pi talks to.
+
+Pi is host-local only and accepts `--auth-mode env` only; `global` and `copy-auth` are refused by the adapter and fail the task with that reason recorded in `status.json`. Every run gets its own `PI_CODING_AGENT_DIR` under the task's `agent_home/` (the executor and the judge get separate ones), and `PI_OFFLINE` / `PI_SKIP_VERSION_CHECK` are forced on, so the operator's `~/.pi` OAuth login never carries benchmark traffic. Credentials come from the provider's own API-key variable: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `XAI_API_KEY`.
+
+Grok Build, Gemini CLI, and Pi executor support currently requires `--executor-backend local`. Docker support is still Codex-only because the bundled Docker image installs Codex and mounts a `CODEX_HOME`.
 
 Custom runtimes plug in any other headless agent CLI through a declarative
 config file — no Python adapter:

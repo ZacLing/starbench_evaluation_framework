@@ -12,8 +12,8 @@ the CLI; see [Artifact Contracts](artifact_contracts.md).
 
 The console's unit of work is the **experiment**: a fixed task set and one shared
 judge (the controls) compared across multiple **agents under test** (the
-variable). The agents are coding-agent CLIs — the five built-in runtimes
-(Claude Code, Codex, Gemini CLI, Grok Build, OpenCode) plus any **custom
+variable). The agents are coding-agent CLIs — the six built-in runtimes
+(Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Pi) plus any **custom
 runtime** registered as a `runtimes/<id>.json` spec — each configured with a
 model drawn from an AI provider; the model is configuration, the runtime is the
 subject being measured. Launching a batch orchestrates one plain
@@ -89,9 +89,11 @@ single-operator tool; do not expose it to a network.
   OpenAI-protocol provider (official codex config overrides; the endpoint must
   support the Responses API), Gemini CLI takes any provider with a
   Gemini-compatible endpoint (env injection), OpenCode takes any
-  OpenAI-protocol provider (gateway flags), and Grok Build is official-only
-  (its CLI has no endpoint override). The wizard contains no endpoint or
-  credential inputs at all.
+  OpenAI-protocol provider (gateway flags), Pi takes any Anthropic, OpenAI,
+  Google, or xAI provider (its four native provider kinds, key injected as
+  that vendor's own env var), and Grok Build is official-only (its CLI has no
+  endpoint override). The wizard contains no endpoint or credential inputs at
+  all.
 - **Task library** — the console's single task library (the home
   `$STARBENCH_HOME/tasks` directory by default, or whatever directory
   `--tasks-dir` names) as browsable cards; a fresh, unseeded home shows an
@@ -115,7 +117,7 @@ single-operator tool; do not expose it to a network.
   comparison matrix built from single-judge results, refreshed live while runs
   are in flight.
 - **New experiment** — a four-step wizard: pick tasks; add agents from runtime
-  cards (the five built-ins plus every registered custom runtime) and configure
+  cards (the six built-ins plus every registered custom runtime) and configure
   each with a provider + model; review the shared configuration from the active
   profile (judge, environment, seed/batch/repeat, per-agent field declaration)
   and optionally save it back; review the full launch plan (one command per
