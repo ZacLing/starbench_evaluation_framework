@@ -1,10 +1,10 @@
 """Thinking-effort channels and the run-level web-search override.
 
 --thinking-effort must reach each runtime through its native switch where one
-exists (Claude: --effort, Codex: model_reasoning_effort, OpenCode: --variant;
-all verified against the installed CLIs' --help) and as a prompt instruction
-elsewhere; --web-search must override the task flag only where the runner
-actually enforces web access.
+exists (Claude: --effort, Codex: model_reasoning_effort, OpenCode: --variant,
+pi: --thinking; all verified against the installed CLIs' --help) and as a prompt
+instruction elsewhere; --web-search must override the task flag only where the
+runner actually enforces web access.
 """
 from __future__ import annotations
 
@@ -42,6 +42,12 @@ class ThinkingChannelTests(unittest.TestCase):
         )
         # OpenCode --variant: union of the built-in provider variants.
         self.assertIn("max", get_builtin("opencode").info.thinking_efforts)
+        # pi --thinking: off..max, where "off" explicitly disables reasoning and
+        # is a real tier distinct from "default" (pass no switch at all).
+        self.assertEqual(
+            get_builtin("pi").info.thinking_efforts,
+            ("default", "off", "minimal", "low", "medium", "high", "xhigh", "max"),
+        )
         # Prompt runtimes carry only the three instruction tiers.
         for agent in ("gemini", "grok"):
             self.assertEqual(

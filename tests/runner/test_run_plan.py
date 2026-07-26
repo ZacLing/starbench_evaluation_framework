@@ -8,18 +8,24 @@ under test:
   transports can never disagree about a knob's value.
 - Anything invalid (unreadable file, broken JSON, contract violation, bad
   embedded snapshot) aborts at argument time — before any run state exists.
+- --thinking-effort parses against the shared tier vocabulary and is narrowed
+  to the executor's own declared level set at launch, before any executor runs.
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
+from helpers import DEMO_TASK
 from starbench.runner.cli import _expand_plan_argv, parse_args
+from starbench.runner.run_benchmark import run_benchmark
 
 
 def _minimal_snapshot() -> dict:
@@ -49,6 +55,7 @@ def _minimal_snapshot() -> dict:
 class RunPlanTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp(prefix="starbench_plan_"))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     def write_plan(self, **overrides) -> Path:
         plan = {
@@ -164,6 +171,35 @@ class RunPlanTests(unittest.TestCase):
         self.assertEqual(plan_args.executor_agent, "pi")
         # "off" is not folded away the way the legacy "none" spelling is.
         self.assertNotEqual(plan_args.thinking_effort, "default")
+
+    def test_off_tier_is_rejected_for_an_executor_that_lacks_it(self) -> None:
+        # The shared vocabulary carries "off" so pi can reach its real tier, but
+        # the level set a launch is measured against is the executor's own.
+        # Claude Code has no "off", so the run aborts at the orchestrator's
+        # narrowing — before any executor starts, not silently coerced to
+        # something else that would skew the comparison.
+        tasks_dir = self.tmp / "tasks"
+        shutil.copytree(DEMO_TASK, tasks_dir / "demo_python_cli")
+        args = parse_args(
+            [
+                "--tasks-dir",
+                str(tasks_dir),
+                "--runs-dir",
+                str(self.tmp / "runs"),
+                "--executor-skill-root",
+                str(self.tmp / "skills"),
+                "--runtimes-dir",
+                str(self.tmp / "runtimes"),
+                "--executor-agent",
+                "claude",
+                "--thinking-effort",
+                "off",
+            ]
+        )
+        self.assertEqual(args.thinking_effort, "off")
+        with self.assertRaises(SystemExit) as context:
+            asyncio.run(run_benchmark(args))
+        self.assertIn("--thinking-effort off is not supported by claude", str(context.exception))
 
     def test_v1_plan_gets_a_friendly_migration_error(self) -> None:
         # A schema_version 1 document is rejected before the raw schema check,

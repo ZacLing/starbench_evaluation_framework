@@ -449,6 +449,13 @@ def parse_args(
     if args.executor_backend is None:
         args.executor_backend = executor_adapter.info.default_executor_backend
     elif args.executor_backend == "docker" and not executor_adapter.info.docker_capable:
+        # A builtin without an image is host-local by design — there is no spec
+        # to add a docker section to, so pointing at one would be bad advice.
+        if args.executor_runtime_spec is None:
+            parser.error(
+                f"--executor-agent {args.executor_agent} does not support "
+                "--executor-backend docker (host-local runtime); use --executor-backend local."
+            )
         parser.error(
             f"--executor-agent {args.executor_agent} currently requires --executor-backend local; "
             "Docker isolation needs a docker section in the custom runtime spec."

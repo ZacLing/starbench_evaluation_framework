@@ -157,8 +157,11 @@ class PiAdapter(RuntimeAdapter):
         )
 
         def _post() -> None:
-            write_pi_final_output(logs / "events.jsonl", logs / "final.md")
+            # Compat pass first: extraction raises on an empty turn and
+            # finalize_success stops at the first exception, so a failed run
+            # still keeps a readable trace (same order as opencode's _post).
             normalize_pi_events(logs / "events.jsonl")
+            write_pi_final_output(logs / "events.jsonl", logs / "final.md")
 
         return finalize_success(result, stderr_path=logs / "stderr.log", label="Pi", work=_post)
 
@@ -199,7 +202,9 @@ class PiAdapter(RuntimeAdapter):
         )
 
         def _post() -> None:
-            write_pi_final_output(events_path, judge_final_path, output_schema=schema_path)
+            # Compat pass first (see run_executor): a judge turn that produced
+            # no extractable JSON still leaves its trace behind.
             normalize_pi_events(events_path)
+            write_pi_final_output(events_path, judge_final_path, output_schema=schema_path)
 
         return finalize_success(result, stderr_path=stderr_path, label="Pi", work=_post)
