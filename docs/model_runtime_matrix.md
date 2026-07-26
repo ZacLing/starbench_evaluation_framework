@@ -10,29 +10,17 @@ This document records the required CLI/runtime mapping for Starbench model-famil
 | Claude models | Claude Code | Use Starbench's `claude` agent path. |
 | Gemini models | Gemini CLI | Use Starbench's `gemini` agent path. |
 | Grok models | Grok Build CLI | Use Starbench's `grok` agent path. |
+| Other OpenAI-compatible models (Doubao, Qwen, …) | OpenCode | Use Starbench's `opencode` agent path. |
+| Anthropic, OpenAI, Google, or xAI models through one multi-provider CLI | Pi | Use Starbench's `pi` agent path; `--auth-mode env` only. |
 
 ## Starbench Agent Selection
 
-The framework exposes dedicated agent paths for Codex, Claude Code, Gemini CLI, and Grok Build CLI:
+The framework exposes a dedicated agent path per built-in runtime; pick the same
+id on both sides, or mix them:
 
 ```bash
---executor-agent codex
---evaluator-agent codex
-```
-
-```bash
---executor-agent claude
---evaluator-agent claude
-```
-
-```bash
---executor-agent gemini
---evaluator-agent gemini
-```
-
-```bash
---executor-agent grok
---evaluator-agent grok
+--executor-agent  {codex|claude|gemini|grok|opencode|pi}
+--evaluator-agent {codex|claude|gemini|grok|opencode|pi}
 ```
 
 Gemini CLI and Grok Build CLI should not be routed through OpenCode when the benchmark is comparing native CLI behavior. Their native adapters should preserve the same process contract:

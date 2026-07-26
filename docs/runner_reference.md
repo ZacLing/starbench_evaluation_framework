@@ -269,7 +269,7 @@ StarBench invokes Pi with `--mode json` and `--no-skills`, and sends the prompt 
 
 Pi accepts `--auth-mode env` only; `global` and `copy-auth` are refused by the adapter and fail the task with that reason recorded in `status.json`. Every run gets its own `PI_CODING_AGENT_DIR` under the task's `agent_home/` (the executor and the judge get separate ones), with `PI_CODING_AGENT_SESSION_DIR` pinned beneath it, and `PI_OFFLINE` / `PI_SKIP_VERSION_CHECK` are forced on, so the operator's `~/.pi` OAuth login never carries benchmark traffic. Credentials come from the provider's own API-key variable: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `XAI_API_KEY`.
 
-Docker isolation covers every built-in: Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, and Pi each have their own image, carrying exactly its own CLI and built by `make docker-images`. In Pi's container the isolation home moves into the workspace mount (`/workspace/.runner/pi_home`), so session artifacts stay readable from the host after the run.
+In Pi's container the isolation home moves into the workspace mount (`/workspace/.runner/pi_home`), so session artifacts stay readable from the host after the run. Per-runtime image and backend rules: [Executor Backend](#executor-backend).
 
 Custom runtimes plug in any other headless agent CLI through a declarative
 config file — no Python adapter:
@@ -305,7 +305,7 @@ Control evaluator concurrency:
 
 ## Executor Backend
 
-The default follows the executor runtime: `docker` for Codex, `local` for all other runtimes. Docker can be selected explicitly for every built-in except Pi — Codex, Claude Code, Gemini CLI, Grok Build, and OpenCode each have their own image (`make docker-images`) — and for custom runtimes that declare a `docker` section; other combinations are rejected at argument parsing.
+The default follows the executor runtime: `docker` for Codex, `local` for all other runtimes. Docker can be selected explicitly for every built-in — each has its own image, all built by `make docker-images` — and for custom runtimes that declare a `docker` section; other combinations are rejected at argument parsing.
 
 ```bash
 # Claude Code in Docker (auth via environment):

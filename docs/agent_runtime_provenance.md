@@ -7,7 +7,7 @@
 ## 1. 背景
 
 Agent 版本是 benchmark 可复现性的一部分。Claude Code、Codex、Gemini CLI、
-Grok Build、OpenCode 以及自定义 runtime 都会随时间更新；同一个模型、同一组
+Grok Build、OpenCode、Pi 以及自定义 runtime 都会随时间更新；同一个模型、同一组
 任务，在不同 CLI 版本、不同 Docker image、不同 custom runtime spec 下可能有
 不同的行为。
 

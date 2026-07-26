@@ -116,7 +116,8 @@ single-operator tool; do not expose it to a network.
 - **Experiment detail** — per-contender summary cards and a rubric × contender
   comparison matrix built from single-judge results, refreshed live while runs
   are in flight.
-- **New experiment** — a four-step wizard: pick tasks; add agents from runtime
+- **New experiment** — a five-step wizard: choose the launch mode (from a
+  rostered profile, or a custom launch); pick tasks; add agents from runtime
   cards (the six built-ins plus every registered custom runtime) and configure
   each with a provider + model; review the shared configuration from the active
   profile (judge, environment, seed/batch/repeat, per-agent field declaration)

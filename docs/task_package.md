@@ -56,7 +56,7 @@ Fields:
 - `rubrics`: evaluator-facing rubric path. This is never copied into executor inputs.
 - `human_reference`: optional expert step file. Only public `instruction` text may be appended to executor prompts when enabled.
 - `timeout_seconds`: executor timeout.
-- `allow_web_search`: passes web-search permission to Codex when true.
+- `allow_web_search`: web-search permission for the task. Runtimes that can enforce it apply it (Codex's `--search`, Claude Code's tool allowlist); the rest leave web access to their own tooling. `--web-search {task,allow,deny}` overrides it per run.
 - `materials`: optional explicit list of files or directories to expose under `workspace/inputs/`.
 
 If `materials` is omitted, Starbench copies all top-level task files and directories except `task.json`, `prompt.md`, `rubrics.json`, `human_reference.json`, hidden files, and the configured `files_dir`.

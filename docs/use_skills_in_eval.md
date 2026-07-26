@@ -134,10 +134,10 @@ runs/<run_id>/<task_run_id>/agent_home/skills/<skill-id>/
 Other local runtime paths:
 
 ```text
-Grok Build  -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill-id>/
-Gemini CLI  -> runs/<run_id>/<task_run_id>/workspace/.gemini/skills/<skill-id>/
-Claude Code -> runs/<run_id>/<task_run_id>/workspace/.claude/skills/<skill-id>/
-OpenCode    -> runs/<run_id>/<task_run_id>/workspace/.starbench/executor_skills/<skill-id>/
+Grok Build     -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill-id>/
+Gemini CLI     -> runs/<run_id>/<task_run_id>/workspace/.gemini/skills/<skill-id>/
+Claude Code    -> runs/<run_id>/<task_run_id>/workspace/.claude/skills/<skill-id>/
+OpenCode, Pi   -> runs/<run_id>/<task_run_id>/workspace/.starbench/executor_skills/<skill-id>/
 ```
 
 ## Run Metadata

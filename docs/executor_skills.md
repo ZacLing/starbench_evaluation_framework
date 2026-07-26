@@ -115,11 +115,14 @@ runs/<run_id>/<task_run_id>/agent_home/skills/<skill_id>/
 Other local runtimes use task-workspace paths:
 
 ```text
-Grok Build  -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill_id>/
-Gemini CLI  -> runs/<run_id>/<task_run_id>/workspace/.gemini/skills/<skill_id>/
-Claude Code -> runs/<run_id>/<task_run_id>/workspace/.claude/skills/<skill_id>/
-OpenCode    -> runs/<run_id>/<task_run_id>/workspace/.starbench/executor_skills/<skill_id>/
+Grok Build     -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill_id>/
+Gemini CLI     -> runs/<run_id>/<task_run_id>/workspace/.gemini/skills/<skill_id>/
+Claude Code    -> runs/<run_id>/<task_run_id>/workspace/.claude/skills/<skill_id>/
+OpenCode, Pi   -> runs/<run_id>/<task_run_id>/workspace/.starbench/executor_skills/<skill_id>/
 ```
+
+Pi additionally runs with `--no-skills` and receives each installed skill back
+explicitly as `--skill <path>`, so a run only ever loads the skills it selected.
 
 ## Prompt Behavior
 

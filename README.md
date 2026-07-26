@@ -2,22 +2,22 @@
 
 Starbench is a small benchmark runner for evaluating coding-agent CLIs with rubric judges.
 
-It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Every built-in runtime has its own Docker executor image for isolated runs (Codex defaults to Docker; the others opt in with `--executor-backend docker`), and docker-enabled custom runtimes get the same isolation. Evaluators inspect only the delivered package, trace summaries, and rubrics.
+It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Every built-in runtime has its own Docker executor image for isolated runs (Codex defaults to Docker; the others opt in with `--executor-backend docker`), and docker-enabled custom runtimes get the same isolation — see [docs/docker.md](docs/docker.md). Evaluators inspect only the delivered package, trace summaries, and rubrics.
 
 ## What Is Included
 
 - Batch execution with `--seed`, `--batch-size`, `--repeat`, and deterministic task ordering.
 - A typed launch contract: `starbench-run --plan plan.json` takes one validated JSON file ([schemas/starbench/v1/run_plan.schema.json](schemas/starbench/v1/run_plan.schema.json)) instead of thirty flags, fails closed before any run state exists, and materializes the plan into the run directory for provenance. Flag-by-flag argv still works and shares the same validation.
-- Per-runtime Docker executor images for isolated execution (see [docs/docker.md](docs/docker.md)).
 - Independent executor and evaluator model selection, with separate auth modes and isolated executor/judge environment scopes.
-- Runtime selection for Codex, Claude Code, OpenCode, Grok Build, or Gemini CLI executors/evaluators.
+- Runtime selection for Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, or Pi executors/evaluators.
   - Use Claude Code for Claude-family models.
   - Use Codex for GPT/OpenAI-family models.
   - Use OpenCode for other OpenAI-compatible models, such as Doubao or Qwen.
   - Use Grok Build for xAI Grok Build runs.
   - Use Gemini CLI for existing Gemini CLI environments.
+  - Use Pi to reach Anthropic, OpenAI, Google, or xAI models through one multi-provider CLI.
 - Declarative custom runtimes (`custom:<id>`), with Qwen Code, Kimi Code CLI, and Trae Agent specs bundled in `runtimes/`.
-- `--thinking-effort {default,minimal,low,medium,high,xhigh,max,ultra}` applied through each runtime's native reasoning switch where one exists (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`) and as a prompt-level instruction elsewhere. `default` leaves the runtime/model default alone (`none` is its deprecated spelling); each runtime declares which tiers it supports, and the console narrows the choice further to the selected model's own published level table where the runtime ships one (Codex model catalog).
+- `--thinking-effort {default,off,minimal,low,medium,high,xhigh,max,ultra}` applied through each runtime's native reasoning switch where one exists (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`, Pi `--thinking`) and as a prompt-level instruction elsewhere. `default` leaves the runtime/model default alone (`none` is its deprecated spelling), while `off` explicitly disables reasoning through the runtime's own switch; each runtime declares which tiers it supports, and the console narrows the choice further to the selected model's own published level table where the runtime ships one (Codex model catalog).
 - `--web-search {task,allow,deny}`: follow each task package's `allow_web_search` or override it for the run (enforced for Claude Code and Codex; other runtimes' own tooling decides).
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
@@ -64,7 +64,7 @@ Build the Docker executor image for Codex (the default Docker runtime):
 docker build -t starbench-codex:latest -f docker/codex-bench.Dockerfile .
 ```
 
-Each runtime has its own image (`starbench-claude-code`, `starbench-gemini-cli`, `starbench-grok`, `starbench-opencode`, plus images for the bundled custom runtimes); build the ones you plan to isolate — see [docs/docker.md](docs/docker.md) for the full list and build commands.
+Each runtime has its own image (`starbench-claude-code`, `starbench-gemini-cli`, `starbench-grok`, `starbench-opencode`, `starbench-pi`, plus images for the bundled custom runtimes); build the ones you plan to isolate — see [docs/docker.md](docs/docker.md) for the full list and build commands.
 
 Run the sample task with real Codex execution and one GPT judge:
 
@@ -111,118 +111,49 @@ argument time with the exact contract violation; nothing is written to disk.
 Runtime convention:
 
 ```text
-Claude-family models          -> --executor-agent/--evaluator-agent claude
-GPT/OpenAI-family models      -> --executor-agent/--evaluator-agent codex
-Other OpenAI-compatible models -> --executor-agent/--evaluator-agent opencode
-xAI Grok Build models         -> --executor-agent/--evaluator-agent grok
-Gemini CLI models             -> --executor-agent/--evaluator-agent gemini
-Any other headless agent CLI  -> --executor-agent/--evaluator-agent custom:<id>
+Claude-family models             -> --executor-agent/--evaluator-agent claude
+GPT/OpenAI-family models         -> --executor-agent/--evaluator-agent codex
+Other OpenAI-compatible models   -> --executor-agent/--evaluator-agent opencode
+xAI Grok Build models            -> --executor-agent/--evaluator-agent grok
+Gemini CLI models                -> --executor-agent/--evaluator-agent gemini
+Anthropic/OpenAI/Google/xAI in
+  one multi-provider CLI         -> --executor-agent/--evaluator-agent pi
+Any other headless agent CLI     -> --executor-agent/--evaluator-agent custom:<id>
 ```
 
 Custom runtimes are declarative: drop a `<id>.json` file in `runtimes/`
 (command, prompt delivery, output parser, env, optional docker image) and no
 Python changes are needed. See [runtimes/README.md](runtimes/README.md).
 
-To switch the evaluator, set both the evaluator model and evaluator runtime:
+To switch the evaluator, pair the runtime with the model it should call —
+`--evaluator-agent codex --evaluator-model gpt-5.5`, and likewise for `claude`,
+`gemini`, `grok`, `opencode`, `pi`, or `custom:<id>`. When the two sides use
+different runtimes, split the auth modes: `--executor-auth-mode env` for an
+OpenCode executor reading a gateway key from the environment,
+`--evaluator-auth-mode global` for a Codex evaluator reading the local Codex
+login.
 
-```bash
---evaluator-agent codex    --evaluator-model gpt-5.5
---evaluator-agent claude   --evaluator-model claude-opus-4-8
---evaluator-agent opencode --evaluator-model yunwu/doubao-seed-2-0-pro-260215
---evaluator-agent grok     --evaluator-model your-grok-model
---evaluator-agent gemini   --evaluator-model gemini-2.5-pro
-```
-
-When mixing runtimes, split auth modes. For example, use `--executor-auth-mode env` for an OpenCode executor that reads an API key from the environment, and `--evaluator-auth-mode global` for a Codex evaluator that should read local Codex login credentials.
-
-Run the sample task with Claude Code through an Anthropic-compatible gateway:
-
-```bash
-export ANTHROPIC_BASE_URL=https://your-gateway.example
-export ANTHROPIC_AUTH_TOKEN=...
-
-PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
-  --tasks-dir examples/tasks \
-  --task demo_python_cli \
-  --runs-dir runs \
-  --run-id smoke_claude \
-  --executor-agent claude \
-  --evaluator-agent claude \
-  --auth-mode env \
-  --executor-model claude-opus-4-8 \
-  --evaluator-model claude-opus-4-8 \
-  --judge-mode single
-```
-
-Run the sample task with OpenCode through an OpenAI-compatible gateway:
-
-```bash
-export ANTHROPIC_AUTH_TOKEN=...
-
-PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
-  --tasks-dir examples/tasks \
-  --task demo_python_cli \
-  --runs-dir runs \
-  --run-id smoke_opencode \
-  --executor-agent opencode \
-  --evaluator-agent codex \
-  --opencode-bin "$HOME/.opencode/bin/opencode" \
-  --opencode-provider yunwu \
-  --opencode-base-url https://yunwu.ai/v1 \
-  --opencode-api-key-env ANTHROPIC_AUTH_TOKEN \
-  --auth-mode env \
-  --executor-auth-mode env \
-  --evaluator-auth-mode global \
-  --executor-backend local \
-  --executor-model doubao-seed-2-0-pro-260215 \
-  --evaluator-model gpt-5.5 \
-  --judge-mode single
-```
-
-Run the sample task with Grok Build:
-
-```bash
-starbench-run \
-  --tasks-dir examples/tasks \
-  --task demo_python_cli \
-  --runs-dir runs \
-  --run-id smoke_grok \
-  --executor-agent grok \
-  --evaluator-agent grok \
-  --executor-backend local \
-  --auth-mode global \
-  --executor-model your-grok-model \
-  --evaluator-model your-grok-model \
-  --judge-mode single
-```
-
-Run the sample task with Gemini CLI:
-
-```bash
-starbench-run \
-  --tasks-dir examples/tasks \
-  --task demo_python_cli \
-  --runs-dir runs \
-  --run-id smoke_gemini \
-  --executor-agent gemini \
-  --evaluator-agent gemini \
-  --executor-backend local \
-  --auth-mode global \
-  --executor-model gemini-2.5-pro \
-  --evaluator-model gemini-2.5-pro \
-  --judge-mode single
-```
-
-Grok Build and Gemini CLI run host-local by default; both also ship Docker images (`starbench-grok`, `starbench-gemini-cli`) for isolated runs with `--executor-backend docker`. Authenticate those CLIs before invoking StarBench, or use `--auth-mode env` when the CLI reads its API key from the environment.
+Every other runtime keeps the same command shape as the Codex sample above —
+swap `--executor-agent`/`--evaluator-agent`, point the runtime's `--claude-bin`
+/ `--gemini-bin` / `--grok-bin` / `--opencode-bin` / `--pi-bin` at its CLI when
+it is not on `PATH`, and leave the backend alone (every non-Codex runtime
+defaults to `local`). Authenticate each CLI before invoking StarBench, or use
+`--auth-mode env` when it reads its API key from the environment. Per-runtime
+commands, gateway wiring (`--executor-option provider=…`), Pi's env-only auth
+rule, and mixed-auth examples live in the
+[Runner Reference](docs/runner_reference.md#agent-runtimes).
 
 Run-level knobs that apply to any of the above:
 
 ```text
---thinking-effort {default,minimal,low,    reasoning effort, via each runtime's native
-                   medium,high,xhigh,       switch (Claude --effort, Codex
-                   max,ultra}               model_reasoning_effort, OpenCode --variant);
-                                           prompt-level request for the rest;
-                                           "default" = leave the model default alone
+--thinking-effort {default,off,minimal,   reasoning effort, via each runtime's native
+                   low,medium,high,        switch (Claude Code --effort, Codex
+                   xhigh,max,ultra}        model_reasoning_effort, OpenCode --variant,
+                                           Pi --thinking); prompt-level request for the
+                                           rest; "default" = leave the model default
+                                           alone, "off" = disable reasoning explicitly;
+                                           levels a runtime does not declare are
+                                           rejected at start
 --web-search {task,allow,deny}             follow the task package's allow_web_search,
                                            or force it on/off for the whole run
                                            (enforced for Claude Code and Codex)

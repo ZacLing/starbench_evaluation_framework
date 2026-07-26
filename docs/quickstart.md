@@ -27,9 +27,9 @@ starbench-run --help
 
 ## Pick the Runtime
 
-Use Claude Code for Claude-family models, Codex for GPT/OpenAI-family models, and OpenCode for other OpenAI-compatible models such as Doubao or Qwen. See [Runner Reference](runner_reference.md#agent-runtimes) for provider-specific flags and mixed-auth examples.
+Use Claude Code for Claude-family models, Codex for GPT/OpenAI-family models, OpenCode for other OpenAI-compatible models such as Doubao or Qwen, Gemini CLI and Grok Build for their own vendors, and Pi to reach Anthropic/OpenAI/Google/xAI models through one multi-provider CLI. See [Runner Reference](runner_reference.md#agent-runtimes) for provider-specific flags and mixed-auth examples.
 
-Executor and evaluator runtimes are selected independently. To change the evaluator, set `--evaluator-agent` to `codex`, `claude`, or `opencode`, and set `--evaluator-model` to the exact model id that runtime should call.
+Executor and evaluator runtimes are selected independently: set `--evaluator-agent` to any built-in id (`codex`, `claude`, `gemini`, `grok`, `opencode`, `pi`) or `custom:<id>`, and `--evaluator-model` to the exact model id that runtime should call.
 
 ## Build the Docker Image
 

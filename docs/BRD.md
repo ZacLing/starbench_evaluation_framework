@@ -26,7 +26,7 @@ GUI 使用说明以 [StarBench Console](gui.md) 为准。
 ### 2.1 背景
 
 Coding-agent CLI 正在快速分化：Claude Code、Codex、Gemini CLI、Grok Build、
-OpenCode，以及各种厂商或开源 agent，运行方式、认证方式、事件格式、模型能力、
+OpenCode、Pi，以及各种厂商或开源 agent，运行方式、认证方式、事件格式、模型能力、
 推理档位和工具权限都不同。企业或研究团队如果要选择、回归测试或持续改进 agent，
 不能只看一次 demo 成功与否，需要有可重复的任务集、统一的执行隔离、稳定的评分规则、
 可复盘的 trace 和可审计的 run artifacts。
@@ -221,7 +221,7 @@ StarBench 是本地/CLI 优先的评测框架，不是多租户 SaaS。
 
 - 优先级：P0
 - 功能描述：
-  - 系统必须支持 Codex、Claude Code、Gemini CLI、Grok Build、OpenCode 五类内置 runtime。
+  - 系统必须支持 Codex、Claude Code、Gemini CLI、Grok Build、OpenCode、Pi 六类内置 runtime。
   - 每个 runtime 必须声明 id、label、protocol、bin、Docker image、provider filter、credential env、thinking capability。
   - runner 通过 adapter registry 解析 runtime，不应在 orchestrator 中硬编码 runtime 分支。
 - 验收标准：
