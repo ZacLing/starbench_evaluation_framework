@@ -6,7 +6,7 @@ Baseline behavior is unchanged unless you pass `--executor-skill` or `--executor
 
 ## Shared Skill Registry
 
-Shared skills live under:
+A shared skill library is a root directory laid out like this:
 
 ```text
 executor_skills/
@@ -14,7 +14,9 @@ executor_skills/
   generated/<skill-id>/SKILL.md
 ```
 
-The runner reads `registry.json` from `--executor-skill-root`.
+The runner reads `registry.json` from `--executor-skill-root`, which defaults to
+`$STARBENCH_HOME/skills` (`~/.starbench/skills`). The examples below point at
+`executor_skills/`, the example library this repository ships.
 
 ## Load One Skill
 
@@ -96,7 +98,8 @@ starbench-run --executor-skill-root executor_skills --executor-skill-group senio
 
 ## What The Executor Sees
 
-The executor prompt receives only a short activation block, for example:
+The executor prompt receives only a short activation block, here as rendered for
+Codex — the read path in the second rule is the selected runtime's own skill path:
 
 ```text
 Installed executor skills:
@@ -104,7 +107,7 @@ Installed executor skills:
 
 Skill usage rules:
 - Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
-- You may read installed skill files under the selected runtime's skill path.
+- You may read installed skill files under $CODEX_HOME/skills/<skill-id>/.
 - The task prompt and materials remain authoritative if they conflict with a skill.
 - Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables.
 ```
@@ -131,7 +134,7 @@ Codex local executor:
 runs/<run_id>/<task_run_id>/agent_home/skills/<skill-id>/
 ```
 
-Other local runtime paths:
+Other runtime paths, on either backend:
 
 ```text
 Grok Build     -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill-id>/

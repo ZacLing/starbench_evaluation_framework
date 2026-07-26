@@ -12,6 +12,7 @@ For the protocol-level contract, schema, and compatibility policy, see
     prompt.md
     rubrics.json
     human_reference.json        # optional
+    rigors.json                 # optional
     materials/                  # optional
     data.csv                    # optional
     figure.png                  # optional
@@ -42,6 +43,7 @@ Executors are instructed to read from `./inputs/` and write deliverables under `
   "prompt": "prompt.md",
   "rubrics": "rubrics.json",
   "human_reference": "human_reference.json",
+  "rigors": "rigors.json",
   "timeout_seconds": 1800,
   "allow_web_search": false,
   "materials": ["materials", "data.csv"]
@@ -55,11 +57,12 @@ Fields:
 - `prompt`: executor-facing task prompt path.
 - `rubrics`: evaluator-facing rubric path. This is never copied into executor inputs.
 - `human_reference`: optional expert step file. Only public `instruction` text may be appended to executor prompts when enabled.
+- `rigors`: optional rubric-derived hard requirements (`id`, `rubric_id`, `requirement`). Every field is executor-facing: selected requirements are restated in the executor prompt when `--rigor-mode select` is used.
 - `timeout_seconds`: executor timeout.
 - `allow_web_search`: web-search permission for the task. Runtimes that can enforce it apply it (Codex's `--search`, Claude Code's tool allowlist); the rest leave web access to their own tooling. `--web-search {task,allow,deny}` overrides it per run.
 - `materials`: optional explicit list of files or directories to expose under `workspace/inputs/`.
 
-If `materials` is omitted, Starbench copies all top-level task files and directories except `task.json`, `prompt.md`, `rubrics.json`, `human_reference.json`, hidden files, and the configured `files_dir`.
+If `materials` is omitted, Starbench copies all top-level task files and directories except `task.json`, `prompt.md`, `rubrics.json`, `human_reference.json`, `rigors.json`, the executor-skill manifest and the top-level directories its skills come from (including `skills/`), hidden files, `__pycache__`, and the configured `files_dir`.
 
 ## Prompt Guidelines
 

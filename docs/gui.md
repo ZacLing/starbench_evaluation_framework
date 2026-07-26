@@ -45,6 +45,7 @@ starbench-gui                       # serves $STARBENCH_HOME/runs (default ~/.st
 starbench-gui --runs-dir path/to/runs --port 9000
 starbench-gui --tasks-dir path/to/tasks     # single task library; pass at most one --tasks-dir
 starbench-gui --runtimes-dir runtimes       # custom runtime specs (default: $STARBENCH_HOME/runtimes, ~/.starbench/runtimes)
+starbench-gui --skills-dir skills           # executor skill library (default: $STARBENCH_HOME/skills, ~/.starbench/skills)
 starbench-gui --no-browser          # do not open a browser tab
 ```
 
@@ -59,8 +60,13 @@ single-operator tool; do not expose it to a network.
 
 ## Views
 
-- **Dashboard** — summary cards (runs, task pass rate, executor success, running
-  now), pass rate by run, and recent runs.
+- **Overview** — KPI cards (task pass rate, completed runs, running now, needs
+  attention) plus coverage/volume/runtime tiles, progress over time, runs by
+  status, a per-task performance heatmap, and side panels for what is running
+  now and recent failures.
+- **Run matrix** — task resilience across every agent × model combination on
+  disk, one metric lens at a time; scoped by the active profile's roster when
+  one is set.
 - **Agents** — the runtime resource side. Built-in runtime cards show wire
   protocol, compatible-provider count, Docker capability, and whether the CLI
   is on PATH. Custom runtimes are created and edited here as
@@ -89,11 +95,18 @@ single-operator tool; do not expose it to a network.
   OpenAI-protocol provider (official codex config overrides; the endpoint must
   support the Responses API), Gemini CLI takes any provider with a
   Gemini-compatible endpoint (env injection), OpenCode takes any
-  OpenAI-protocol provider (gateway flags), Pi takes any Anthropic, OpenAI,
+  OpenAI-protocol or xAI provider (gateway flags), Pi takes any Anthropic, OpenAI,
   Google, or xAI provider (its four native provider kinds, key injected as
   that vendor's own env var), and Grok Build is official-only (its CLI has no
   endpoint override). The wizard contains no endpoint or credential inputs at
   all.
+- **Skills** — the executor skill library (`$STARBENCH_HOME/skills` by default,
+  or `--skills-dir`) as read-only cards plus the groups declared over it; a
+  library that cannot be read is reported as an error, not hidden.
+- **Profiles** — the measurement contracts in `<runs-dir>/profiles.json`, edited
+  as a form: executors/roster, instrument (judge), execution parameters, task
+  set, and the per-agent field declaration. Built-in templates show until the
+  first save creates the file.
 - **Task library** — the console's single task library (the home
   `$STARBENCH_HOME/tasks` directory by default, or whatever directory
   `--tasks-dir` names) as browsable cards; a fresh, unseeded home shows an
@@ -110,12 +123,14 @@ single-operator tool; do not expose it to a network.
 - **Run detail** — summary cards, a live progress strip while executing, one row
   per task run, the instruction-ablation uplift table when present, and the full
   configuration.
-- **Task run detail** — five panes: *Verdicts* (per-rubric verdicts with the
-  judge's evidence), *Trace* (usage, commands, reasoning, file changes, raw
-  events), *Final message*, *Artifacts*, *Logs*.
-- **Experiment detail** — per-contender summary cards and a rubric × contender
-  comparison matrix built from single-judge results, refreshed live while runs
-  are in flight.
+- **Task run detail** — four panes: *Trace* (usage, commands, reasoning, file
+  changes, raw events), *Deliverables* (the executor's output files, with the
+  final message pinned at the top of the list), *Verdicts* (per-rubric verdicts
+  with the judge's evidence), *Logs*.
+- **Compare** — a stateless comparison named entirely by the URL
+  (`/compare?runs=a,b,c`; nothing is created or persisted): one summary card per
+  run and a rubric × run matrix per task built from single-judge results,
+  refreshed live while runs are in flight.
 - **New experiment** — a five-step wizard: choose the launch mode (from a
   rostered profile, or a custom launch); pick tasks; add agents from runtime
   cards (the six built-ins plus every registered custom runtime) and configure

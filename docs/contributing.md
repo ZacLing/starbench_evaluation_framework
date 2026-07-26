@@ -9,7 +9,9 @@ Use this checklist when changing task packages, run outputs, GUI import logic,
 or readers under `src/starbench/gui/data.py`.
 
 - Update `docs/artifact_contracts.md` when public artifact meaning changes.
-- Update `schemas/starbench/v1/` when public artifact shape changes.
+- Update `schemas/starbench/` (v1, and v2 for `judge_aggregate`) when public
+  artifact shape changes, then run `make sync-schemas` to refresh the packaged
+  mirror under `src/starbench/contracts/schemas/`.
 - Add or update `tests/contracts/` for task packages, run artifacts, privacy, or
   version behavior.
 - Preserve legacy readers where practical; missing `schema_version` means
@@ -36,11 +38,11 @@ platforms.
 Before committing behavior changes, run:
 
 ```bash
-HOME=/private/tmp PYTHONPATH=src:tests python3 -m unittest discover -s tests
+PYTHONPATH=src python3 -m unittest discover -s tests   # same as `make test`
 ```
 
 For artifact contract changes, also run:
 
 ```bash
-PYTHONPATH=src:tests python3 -m unittest discover -s tests/contracts
+PYTHONPATH=src python3 -m unittest discover -s tests/contracts
 ```

@@ -8,11 +8,12 @@ This is different from human-reference instruction injection or rigor injection:
 - Executor skills are copied as real skill directories into the runtime-specific install path.
 - The executor prompt only names the selected installed skills and tells the executor where to read them as private execution guidance.
 
-Baseline runs are unchanged unless `--executor-skill` is passed.
+Baseline runs are unchanged unless `--executor-skill` or `--executor-skill-group` is passed.
 
 ## Task Package Format
 
-Register skills in `task.json`:
+Register skills in `task.json` (the default name is already `executor_skills.json`,
+so this line is only needed for a non-default filename):
 
 ```json
 {
@@ -59,7 +60,9 @@ starbench-run \
   --executor-skill quant-finance-research-platform-expert
 ```
 
-Shared registry skills can be selected from `executor_skills/registry.json`:
+Shared registry skills can be selected from the skill library's `registry.json`.
+`--executor-skill-root` defaults to `$STARBENCH_HOME/skills` (`~/.starbench/skills`);
+this repository ships an example library at `executor_skills/`:
 
 ```bash
 starbench-run \
@@ -106,13 +109,13 @@ host agent_home/docker -> /codex-home
 CODEX_HOME=/codex-home
 ```
 
-For local executors, selected skills are installed at:
+For Codex local executors, selected skills are installed at:
 
 ```text
 runs/<run_id>/<task_run_id>/agent_home/skills/<skill_id>/
 ```
 
-Other local runtimes use task-workspace paths:
+Other runtimes use task-workspace paths, on either backend:
 
 ```text
 Grok Build     -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill_id>/
@@ -126,7 +129,7 @@ explicitly as `--skill <path>`, so a run only ever loads the skills it selected.
 
 ## Prompt Behavior
 
-The executor receives a short activation block:
+The executor receives a short activation block, here as rendered for Codex:
 
 ```text
 Installed executor skills:
@@ -134,10 +137,15 @@ Installed executor skills:
 
 Skill usage rules:
 - Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
-- You may read installed skill files under the runtime-specific path, such as `$CODEX_HOME/skills/<skill-id>/`, `./.grok/skills/<skill-id>/`, or `./.gemini/skills/<skill-id>/`.
+- You may read installed skill files under $CODEX_HOME/skills/<skill-id>/.
 - The task prompt and materials remain authoritative if they conflict with a skill.
 - Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables.
 ```
+
+The read path in the second rule is the selected runtime's own location:
+`$CODEX_HOME/skills/<skill-id>/`, `./.grok/skills/<skill-id>/`,
+`./.gemini/skills/<skill-id>/`, `./.claude/skills/<skill-id>/`, or
+`./.starbench/executor_skills/<skill-id>/` for OpenCode, Pi, and custom runtimes.
 
 The skill body itself is not appended into `workspace/inputs/prompt.md`.
 

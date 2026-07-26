@@ -40,7 +40,7 @@ Then register it in `task.json`:
 }
 ```
 
-When registered, `rigors.json` is treated as evaluator/control metadata. It is not copied as an ordinary task material unless selected through the runner.
+When present, `rigors.json` is treated as evaluator/control metadata. It is never copied as an ordinary task material; selected requirements reach the executor only as text injected into the prompt.
 
 ## Converting Rubrics To Rigors
 

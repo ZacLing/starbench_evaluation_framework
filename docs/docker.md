@@ -69,23 +69,76 @@ The Docker run command uses:
 
 Network access is not disabled by default. This matches research tasks that may need web access when `allow_web_search` is true.
 
-## Why `danger-full-access` Inside Docker?
+## Why The Executor Runs Unprompted
 
-Inside the container, Codex is given full access to `/workspace` so it can create files, run commands, install local dependencies if the task permits, and verify outputs. Docker provides the outer boundary, so the executor cannot see sibling tasks or the host project unless you mount them.
+Every executor is given full access to `/workspace` so it can create files, run
+commands, install local dependencies if the task permits, and verify outputs.
+Each runtime spells that its own way: Codex `--sandbox danger-full-access`,
+Claude Code `--permission-mode acceptEdits`, Gemini CLI `--yolo`, Grok Build
+`bypassPermissions`, OpenCode `--dangerously-skip-permissions`. Pi passes no
+permission flag at all — its headless `--mode json` run is already unprompted.
+
+Docker provides the outer boundary, so the executor cannot see sibling tasks or
+the host project unless you mount them. Note that this is why the two layers are
+not interchangeable: with `--executor-backend local` (the default for every
+runtime except Codex) the same unprompted permission mode applies with **no**
+container around it, and the executor runs against your real filesystem with only
+the workspace path convention keeping it in place.
 
 ## Real-container smoke checklist
 
-These were deferred because the docker daemon was down at build time. Run once the daemon is available:
+**Verification status: none of the boxes below have been ticked in this repository.**
+What *is* verified is the deterministic layer: the container argv, mounts, and env
+whitelist for every built-in runtime are asserted in `tests/adapters/test_docker_commands.py`
+and run on every `make test`. The timeout kill
+(`execution/docker.py:kill_container_on_timeout`) has no test — it is only
+covered by the manual box below. Nothing here has been confirmed against a live
+daemon with a real model, so treat the whole section as unrun. Tick a box only
+after you have actually run it, and say which host and image tag you ran it on.
+
+Preconditions:
 
 - [ ] `colima start` (or Docker Desktop) and `docker info` succeeds.
-- [ ] `make docker-build`; `docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .`
-- [ ] Codex regression: demo task with `--executor-backend docker` still passes.
-- [ ] Claude: demo task with `--executor-agent claude --executor-backend docker --docker-image starbench-claude-code:latest --auth-mode env` (requires `ANTHROPIC_API_KEY`).
+- [ ] `make docker-images` builds all six built-in images without error
+      (`make docker-build` alone builds only the Codex image).
+- [ ] `make docker-images-custom` builds the three bundled custom-runtime images.
+
+Per-runtime demo-task run with `--executor-backend docker`. Each needs that
+runtime's own credential in the environment; `--docker-image` may be omitted
+because it defaults to the runtime's own tag, and `--auth-mode` already defaults
+to `env`:
+
+- [ ] Codex — `--executor-agent codex` (docker is already its default backend; this is the regression case). Needs `OPENAI_API_KEY`.
+- [ ] Claude Code — `--executor-agent claude --executor-backend docker`. Needs `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`; must stay on `--auth-mode env`.
+- [ ] Gemini CLI — `--executor-agent gemini --executor-backend docker`. Needs `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
+- [ ] Grok Build — `--executor-agent grok --executor-backend docker`. Needs `XAI_API_KEY`.
+- [ ] OpenCode — `--executor-agent opencode --executor-backend docker --executor-option provider=…`. Needs the gateway key named by its `api_key_env` option (default `OPENAI_API_KEY`).
+- [ ] Pi — `--executor-agent pi --executor-backend docker` (Pi rejects `global` and `copy-auth` outright). Needs the key for the provider you select.
+- [ ] A docker-enabled custom runtime — `--executor-agent custom:<id> --executor-backend docker`.
+
+Cross-cutting:
+
 - [ ] Timeout kill: run a long task with a small `timeout_seconds`; verify `docker ps` shows no leftover container.
+- [ ] Isolation: after a run, confirm the agent home lives where this document says it does for that runtime, and that nothing was written outside the run directory.
 
 ## Evaluators
 
-Evaluators always run host-local — `--executor-backend` covers the executor only — each under its own runtime's read-only judge settings (Codex's `read-only` sandbox, Grok's read-only sandbox flags, Gemini's `--approval-mode plan`). They inspect a slim judge workspace containing:
+Evaluators always run host-local — `--executor-backend` covers the executor only.
+How much each runtime is restrained on the judge side differs, and one runtime is
+not restrained at all:
+
+| Judge runtime | Restraint |
+|---|---|
+| Codex | `--sandbox read-only` |
+| Gemini CLI | `--approval-mode plan` |
+| Grok Build | `--permission-mode dontAsk` |
+| Claude Code | tool allowlist `Read,Glob,Grep,Bash,LS` (no sandbox; `Bash` is allowed) |
+| OpenCode | a dedicated judge agent profile |
+| Pi | **none** — the judge runs the same command shape as the executor |
+
+Since judges run on the host, a judge that is not sandboxed can in principle
+touch anything the invoking user can. They inspect a slim judge workspace
+containing:
 
 - executor outputs,
 - prompt,

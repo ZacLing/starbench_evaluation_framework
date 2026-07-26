@@ -8,11 +8,17 @@
 - 结果是否在 reader-fairness 前提下稳定暴露 Senior-Junior Gap。
 - 是否需要修改 prompt、rubrics、runtime 配置或补测失败样本。
 
-复制本模板时，建议将最终报告放入对应 run 目录下的 `reports/` 子目录：
+复制本模板时，把最终报告写在 run 目录**之外**，并在文件里注明它分析的是哪个
+`run_id`：
 
 ```text
-runs/<run_id>/reports/evaluation_report.md
+<你自己的报告目录>/<run_id>-evaluation_report.md
 ```
+
+不要写进 `runs/<run_id>/`。run 目录的文件所有权是互斥的：runner 是所有 run 制品的
+唯一写者，监督器只拥有 `run_state.json` 和 `.runner_claim`（见
+`docs/ARCHITECTURE.md` §2）。人工报告落在 run 目录里会破坏这条边界，
+让"这个文件是谁写的"不再可判定。
 
 ## 1. 基本信息
 
@@ -247,7 +253,8 @@ starbench-run \
 | Per-run task summary | `<run_root>/<task_run_id>/task_summary.json` |
 | Executor events | `<run_root>/<task_run_id>/logs/events.jsonl` |
 | Executor final output | `<run_root>/<task_run_id>/workspace/outputs/...` |
-| Judge result | `<run_root>/<task_run_id>/judges/single_workspace/single_result.json` |
+| Judge result | `<run_root>/<task_run_id>/judges/single_result.json`（judge workspace 内的原件在 `judges/single_workspace/single_result.json`，只在 judge 成功写出时才会被复制到上面这个稳定路径） |
+| Judge aggregate（本报告的分数来源） | `<run_root>/<task_run_id>/judges/single_aggregate.json` |
 
 ### 10.3 Exclusions / Backfill Queue
 

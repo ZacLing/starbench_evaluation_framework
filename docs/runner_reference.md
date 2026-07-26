@@ -128,7 +128,7 @@ Claude Code executors have no agentic turn cap by default, matching other runtim
 --executor-option max_turns=30
 ```
 
-When a task package sets `allow_web_search: true`, the Claude executor tool allowlist additionally includes `WebSearch` and `WebFetch`; otherwise both stay disabled.
+When a task package sets `allow_web_search: true` (or the run forces it with `--web-search allow`), the Claude executor tool allowlist additionally includes `WebSearch` and `WebFetch`; otherwise both stay disabled. `--web-search` defaults to `task`, which follows each package's own flag.
 
 Reasoning effort is a run-level knob shared by all runtimes:
 
@@ -248,7 +248,7 @@ starbench-run \
   --evaluator-model gemini-2.5-pro
 ```
 
-StarBench invokes Gemini with `--output-format json`, `--skip-trust`, and `-p ""` so the long StarBench prompt can still be sent on stdin. Executor runs use `--yolo`; evaluator runs use `--approval-mode plan`. Evaluators receive the JSON schema in the prompt, and StarBench extracts the final assistant response into `result.json`. Selected executor skills are installed under `./.gemini/skills/<skill-id>/` inside the isolated task workspace.
+StarBench invokes Gemini with `--output-format json`, `--skip-trust`, and `-p ""` so the long StarBench prompt can still be sent on stdin. Executor runs use `--yolo`; evaluator runs use `--approval-mode plan`. Evaluators receive the JSON schema in the prompt, and StarBench extracts the final assistant response into the judge result file. Selected executor skills are installed under `./.gemini/skills/<skill-id>/` inside the isolated task workspace.
 
 Pi is one CLI over four native provider kinds (Anthropic, OpenAI, Google, xAI) and runs headless through `pi --mode json`:
 
@@ -392,7 +392,7 @@ Run a baseline, one executor per human-reference step, and one all-instructions 
 starbench-run --instruction-mode ablation --repeat 5 --judge-mode single
 ```
 
-Only `instruction` text is appended to the executor prompt. `reasoning` stays hidden in the task package and is not copied into executor or evaluator workspaces. For instruction variants, the augmented prompt is also written to `workspace/inputs/prompt.md` so the exact task seen by the executor is replayable.
+Only `instruction` text is appended to the executor prompt. `reasoning` stays hidden in the task package and is not copied into executor or evaluator workspaces. Every run writes the augmented prompt to `workspace/inputs/prompt.md` so the exact task seen by the executor is replayable.
 
 When `--instruction-mode ablation` is used, the runner also writes:
 

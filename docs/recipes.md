@@ -6,7 +6,7 @@ command to prove it. If a recipe tells you to touch a second copy of the same
 fact, that is a bug in the recipe — the fact should live in one place (see the
 ["Where facts live" table in DESIGN.md](DESIGN.md#where-facts-live--事实源速查表)).
 
-Baseline both test commands must stay green and at the same count (≥ 148):
+Baseline both test commands must stay green and at the same count (≥ 558):
 
 ```bash
 uv run --with pytest pytest tests/ -q          # or: python3 -m pytest tests/ -q
@@ -57,8 +57,8 @@ If you *bundle* the spec in `runtimes/` and want it guarded, add its `id` to
 **Verify:**
 
 ```bash
-python3 -c "from starbench.runner.custom_runtime import load_custom_runtime; \
-print(load_custom_runtime('runtimes', '<id>').command)"
+python3 -c "from pathlib import Path; from starbench.runner.custom_runtime import load_custom_runtime; \
+print(load_custom_runtime(Path('runtimes'), '<id>').command)"
 # then a real run:
 starbench-run --tasks-dir examples/tasks --task demo_python_cli --runs-dir runs \
   --run-id smoke_<id> --runtimes-dir runtimes \
@@ -88,7 +88,7 @@ from `list_builtin()` — you do not touch `gui/agents.py`, `gui/library.py`,
 `gui/experiments.py`, `gui/launcher.py`, or `runner/cli.py`. If `docker_capable`,
 add a `docker/<id>.Dockerfile` + a `Makefile` `docker-images` line. If the
 runtime introduces a *new* provider protocol/kind, extend `PROVIDER_KINDS` and
-`KIND_TO_AGENT` in `gui/providers.py`.
+`KIND_TO_CLI_AGENT` in `gui/providers.py`.
 
 **Test to add:** `tests/adapters/test_<id>.py` — assert the registry resolves it
 and pin its `RuntimeInfo` facts:
@@ -162,7 +162,7 @@ single list.
 },
 ```
 
-`kind` ∈ `PROVIDER_KINDS`; `KIND_TO_AGENT` maps it to the runtime that drives it.
+`kind` ∈ `PROVIDER_KINDS`; `KIND_TO_CLI_AGENT` maps it to the runtime that drives it.
 The console never stores keys — only the *name* of the env var. An empty
 `models` list is fine; the catalog is refreshed from the provider's models API.
 

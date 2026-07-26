@@ -1,7 +1,7 @@
 # StarBench Artifact Contracts 草案
 
 > Draft v1. 本文描述 StarBench task packages 与 run artifacts 的公开制品契约。
-> 当前版本是非强制草案，用来固定语义、字段边界和后续 schema/test 落点；
+> 当前版本用来固定语义、字段边界和 schema/test 落点；
 > 它不表示所有历史 artifact 都已经携带 `schema_version`。
 
 ## 1. Scope
@@ -32,7 +32,8 @@ StarBench artifacts 分为四类。
 
 ## 3. Versioning policy
 
-Public artifacts should carry `schema_version` once enforcement begins.
+Public run artifacts carry `schema_version`; task package inputs are not required
+to declare one yet.
 
 Current draft rule:
 
@@ -43,8 +44,10 @@ Current draft rule:
 - Consumers should ignore unknown fields unless a schema explicitly forbids them.
 - Unknown future versions should produce a clear warning or fail-fast depending on the consumer role.
 
-This first draft keeps `schema_version` optional in JSON Schema so current examples
-and existing run outputs remain valid while the contract is being introduced.
+Most schemas keep `schema_version` optional so current examples and existing run
+outputs remain valid while the contract is being introduced. The exceptions
+require it: `profile_snapshot`, `run_plan`, `run_state`, and
+`schemas/starbench/v2/judge_aggregate.schema.json`.
 
 ## 4. Task package contract
 
@@ -250,8 +253,9 @@ Current aggregates carry an explicit `outcome`:
 - `agent_pass` and `agent_fail` are valid HSW samples;
 - `inconclusive_judge` means the response was missing, malformed, or incomplete
   and must not enter HSW pass-rate denominators;
-- `inconclusive_executor` and `invalid_task` are reserved non-scoring outcomes
-  for the corresponding lifecycle boundaries.
+- `inconclusive_executor` is written when the executor produced no valid sample,
+  and `invalid_task` is reserved for the task-validation boundary; neither is a
+  scoring outcome.
 
 For an inconclusive aggregate, `overall_pass` is `null` and missing rubric rows
 carry `answer: null` and `passed: null`. This is deliberately different from
@@ -287,8 +291,10 @@ Consumers should:
 
 ## 8. Implementation status
 
-This document is the first public contract draft. The current schemas are
-reference schemas and are not yet enforced by the runner or GUI.
+This document is the first public contract draft. The schemas are no longer
+reference-only: the runner and the GUI both validate against them through
+`starbench.contracts`, while run output artifacts are checked by the contract
+tests rather than at write time.
 
 Implemented in this branch:
 

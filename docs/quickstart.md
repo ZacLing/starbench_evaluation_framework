@@ -56,9 +56,14 @@ Then run Starbench with:
 Environment-variable mode is also supported:
 
 ```bash
-export CODEX_API_KEY="your-key-here"
+export OPENAI_API_KEY="your-key-here"
 starbench-run ... --auth-mode env
 ```
+
+`OPENAI_API_KEY` is the credential StarBench declares for the `codex` runtime,
+and it is the one the console's preflight checks before it will let you launch.
+`CODEX_API_KEY` and `OPENAI_BASE_URL` are also forwarded into the container when
+set, but StarBench does not treat them as the credential on their own.
 
 Do not commit real keys.
 

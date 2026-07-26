@@ -44,8 +44,9 @@ Every figure must still come from `runs/` on disk.
 
 ## Design Principles
 
-1. **Verdict first.** Pass/fail/timeout is readable before any prose: glyph + color,
-   never color alone. The eye lands on the verdict, then the detail.
+1. **Verdict first.** Pass/fail/inconclusive/timeout is readable before any prose:
+   glyph + color, never color alone. An unanswered measurement reads as
+   inconclusive, never as an agent failure. The eye lands on the verdict, then the detail.
 2. **Evidence one gesture away.** Every rubric score expands to the judge's evidence;
    every task run links to its trace, final message, and artifacts.
 3. **The file system is the truth.** The GUI renders `runs/` as it exists on disk.
