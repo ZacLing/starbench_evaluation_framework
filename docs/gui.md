@@ -1,7 +1,7 @@
 # StarBench Console (GUI)
 
 `starbench-gui` serves a local web console over a runs directory. It renders what
-exists on disk (`runs/<run_id>/…`) and can launch new `starbench-run` processes on
+exists on disk (`<runs-dir>/<run_id>/…`) and can launch new `starbench-run` processes on
 the same machine. It never keeps its own database: delete a run directory and it
 disappears from the console; copy one in and it shows up.
 

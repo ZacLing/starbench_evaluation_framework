@@ -9,7 +9,7 @@
 StarBench 的 artifact contract 覆盖两类文件级接口：
 
 - 输入制品：任务作者、平台或 GUI 提供给 `starbench-run` 的 task package。
-- 输出制品：`starbench-run` 写入 `runs/<run_id>/` 的结果目录。
+- 输出制品：`starbench-run` 写入 `<runs-dir>/<run_id>/`（默认 `$STARBENCH_HOME/runs`）的结果目录。
 
 不在本契约范围内：
 
@@ -151,7 +151,7 @@ Schema: `schemas/starbench/v1/executor_skills.schema.json`.
 The stable run layout starts at:
 
 ```text
-runs/<run_id>/
+<runs-dir>/<run_id>/
   summary.json
   progress_events.jsonl
   <task_run_id>/
