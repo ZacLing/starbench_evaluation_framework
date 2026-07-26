@@ -51,7 +51,8 @@ starbench-gui --no-browser          # do not open a browser tab
 Every directory flag defaults to the StarBench home layout — explicit flag >
 `$STARBENCH_HOME` > `~/.starbench` — never to the working directory. A fresh
 home has an empty task library until it is seeded; see the README Quick
-Start for `cp -r examples/tasks/* ~/.starbench/tasks/`.
+Start for `mkdir -p ~/.starbench/tasks` followed by
+`cp -r examples/tasks/* ~/.starbench/tasks/`.
 
 The server is standard-library only and binds to `127.0.0.1` by default. It is a
 single-operator tool; do not expose it to a network.
