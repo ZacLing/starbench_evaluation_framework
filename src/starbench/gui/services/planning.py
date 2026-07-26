@@ -330,6 +330,10 @@ def plan_experiment(
 
         launch_payload = {
             "run_id": run_id,
+            # The experiment name IS the batch label: one spelling, handed both
+            # to the runner (which records it in run_config.json as a
+            # measurement fact) and to the supervisor's run_state.json.
+            "batch": name,
             "tasks_dir": payload.get("tasks_dir"),
             "tasks": payload.get("tasks") or [],
             "runtimes_dir": str(runtimes_dir),

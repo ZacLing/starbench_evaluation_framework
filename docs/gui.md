@@ -17,9 +17,12 @@ variable). The agents are coding-agent CLIs — the five built-in runtimes
 runtime** registered as a `runtimes/<id>.json` spec — each configured with a
 model drawn from an AI provider; the model is configuration, the runtime is the
 subject being measured. Launching a batch orchestrates one plain
-`starbench-run` per contender with identical tasks, judge, and seed; each run's
-`run_state.json` carries the batch name, and cross-run comparison is computed
-statelessly from artifacts (`/api/compare?runs=…`). **Profiles**
+`starbench-run` per contender with identical tasks, judge, and seed; the batch
+name rides each launch as `--batch`, so the runner records it in the run's
+`run_config.json` (a measurement fact; runs from before this promotion carry it
+only in the supervisor's `run_state.json`, which the read model still falls back
+to), and cross-run comparison is computed statelessly from artifacts
+(`/api/compare?runs=…`). **Profiles**
 (`<runs-dir>/profiles.json`) store the shared configuration plus a declaration
 of which fields each contender fills in individually (model id, credentials,
 gateway); the default profile pre-fills the wizard so repeated evaluations keep

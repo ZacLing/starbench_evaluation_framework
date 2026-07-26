@@ -86,6 +86,21 @@ class ExperimentTest(unittest.TestCase):
             self.assertIn("--seed 7", joined)
             self.assertIn("--evaluator-auth-mode global", joined)
 
+    def test_batch_label_rides_every_contender_launch(self) -> None:
+        # The experiment name IS the batch label, and it must reach the runner
+        # (which records it in run_config.json as a measurement fact) on both
+        # transports: the typed plan, and the argv fallback extra_args forces.
+        plan = experiments.plan_experiment(self.experiment_payload(), runs_dir=self.runs_dir)
+        for item in plan["plans"]:
+            self.assertEqual(item["run_plan"]["batch"], "exp_demo")
+            self.assertIn("--batch exp_demo", launch_flags(item))
+        payload = self.experiment_payload()
+        payload["shared"]["extra_args"] = "--docker-bin podman"
+        argv_plan = experiments.plan_experiment(payload, runs_dir=self.runs_dir)
+        for item in argv_plan["plans"]:
+            self.assertIsNone(item["run_plan"])
+            self.assertIn("--batch exp_demo", launch_flags(item))
+
     def test_shared_advanced_knobs_forward_to_every_contender(self) -> None:
         payload = self.experiment_payload(
             contenders=[

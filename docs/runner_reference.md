@@ -18,6 +18,7 @@ For stable run-output files written by this command, see
 - `--seed INT`: controls task shuffle, batch grouping, and evaluator launch order.
 - `--batch-size N`: number of executor tasks to run concurrently.
 - `--run-id NAME`: stable output directory name.
+- `--batch NAME`: experiment batch label recorded in `run_config.json`. Runs launched together share it, and the console groups and compares them by it. Optional; a run without one is simply unlabelled.
 
 The seed controls Starbench scheduling randomness. It does not claim to make model internals deterministic.
 

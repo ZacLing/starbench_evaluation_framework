@@ -11,6 +11,7 @@ under test:
 """
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -18,7 +19,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from starbench.runner.cli import parse_args
+from starbench.runner.cli import _expand_plan_argv, parse_args
 
 
 def _minimal_snapshot() -> dict:
@@ -90,6 +91,25 @@ class RunPlanTests(unittest.TestCase):
         self.assertEqual(args.repeat, 5)
         self.assertEqual(args.runs_dir, self.tmp.resolve())
         self.assertEqual(args.run_plan_data["run_id"], "plan_run")
+
+    def test_batch_label_rides_the_plan_into_args(self) -> None:
+        # The batch label is a measurement fact the runner records, so it must
+        # survive the plan transport: the contract accepts it and the generic
+        # scalar expansion renders it as --batch <value>.
+        path = self.write_plan(batch="exp_a")
+        expanded, _plan = _expand_plan_argv(
+            ["--plan", str(path), "--runs-dir", str(self.tmp)],
+            argparse.ArgumentParser(),
+        )
+        self.assertEqual(expanded[expanded.index("--batch") + 1], "exp_a")
+        args = parse_args(["--plan", str(path), "--runs-dir", str(self.tmp)])
+        self.assertEqual(args.batch, "exp_a")
+        self.assertEqual(args.run_plan_data["batch"], "exp_a")
+
+    def test_unsafe_batch_label_fails_closed(self) -> None:
+        path = self.write_plan(batch="../escape")
+        message = self.parse_error(["--plan", str(path), "--runs-dir", str(self.tmp)])
+        self.assertIn("run_plan contract", message)
 
     def test_legacy_none_thinking_effort_canonicalizes_to_default(self) -> None:
         # Old plans and scripts spell the do-nothing tier "none"; the parser

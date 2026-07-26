@@ -308,6 +308,8 @@ class ClosedLoopTests(unittest.TestCase):
                 str(runs_dir),
                 "--run-id",
                 "test_run",
+                "--batch",
+                "exp_smoke",
                 "--seed",
                 "123",
                 "--judge-mode",
@@ -326,6 +328,9 @@ class ClosedLoopTests(unittest.TestCase):
             self.assertTrue((task_root / "logs" / "status.json").exists())
             self.assertTrue((task_root / "judges" / "single_aggregate.json").exists())
             run_config = json.loads((runs_dir / "test_run" / "run_config.json").read_text(encoding="utf-8"))
+            # The batch label is a runner fact: --batch lands in run_config.json,
+            # which is where the console read model looks for it first.
+            self.assertEqual(run_config["batch"], "exp_smoke")
             provenance = run_config["runtime_provenance"]
             self.assertEqual(provenance["schema"], 1)
             self.assertEqual(provenance["executor"]["agent"], "codex")

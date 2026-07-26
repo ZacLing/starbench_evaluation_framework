@@ -169,6 +169,14 @@ def parse_args(
     parser.add_argument("--max-evaluator-parallel", type=int, default=4)
     parser.add_argument("--run-id")
     parser.add_argument(
+        "--batch",
+        default=None,
+        help=(
+            "Experiment batch label recorded in run_config.json; runs launched "
+            "together share it and the console groups/compares them by it."
+        ),
+    )
+    parser.add_argument(
         "--tasks-dir",
         type=Path,
         default=None,
@@ -396,6 +404,11 @@ def parse_args(
     if args.run_id is not None:
         try:
             args.run_id = parse_safe_id(args.run_id, kind="run id")
+        except ValueError as error:
+            parser.error(str(error))
+    if args.batch:
+        try:
+            args.batch = parse_safe_id(args.batch, kind="batch label")
         except ValueError as error:
             parser.error(str(error))
     if args.batch_size < 1:

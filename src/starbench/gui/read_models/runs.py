@@ -209,7 +209,14 @@ def progress_snapshot(run_root: Path) -> Optional[Dict[str, Any]]:
 
 
 def _batch_marker(run_root: Path) -> Optional[str]:
-    """The launch batch recorded in run_state.json; None for bare/CLI runs."""
+    """The launch batch this run belongs to. run_config.json (runner fact)
+    is authoritative; legacy runs recorded it only in run_state.json (console
+    supervision file), so fall back for them. None for unlabelled runs."""
+    run_config = _read_json(run_root / "run_config.json")
+    if isinstance(run_config, dict):
+        batch = run_config.get("batch")
+        if isinstance(batch, str) and batch:
+            return batch
     run_state = _read_json(run_root / RUN_STATE_FILENAME)
     if isinstance(run_state, dict):
         batch = run_state.get("batch")

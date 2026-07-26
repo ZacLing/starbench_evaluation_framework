@@ -96,6 +96,16 @@ def _normalized_launch(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, 
         raise LaunchError(f"Run id already exists in {runs_dir}: {run_id}")
     plan["run_id"] = run_id
 
+    # Optional experiment batch label. Console launches set it so the runner can
+    # record it in run_config.json; single runs launch without one.
+    batch = str(payload.get("batch") or "").strip()
+    if batch:
+        if not SAFE_ID.match(batch):
+            raise LaunchError(
+                "Batch label may contain only letters, digits, dot, dash, underscore."
+            )
+        plan["batch"] = batch
+
     tasks_dir = str(payload.get("tasks_dir") or "").strip()
     if not tasks_dir:
         raise LaunchError("Tasks directory is required.")

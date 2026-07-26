@@ -244,6 +244,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "run_id": run_id,
         "seed": args.seed,
         "batch_size": args.batch_size,
+        "batch": args.batch,
         "judge_mode": args.judge_mode,
         "max_evaluator_parallel": args.max_evaluator_parallel,
         "auth_mode": args.auth_mode,
