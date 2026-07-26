@@ -197,7 +197,7 @@ class CliHomeDefaultTests(unittest.TestCase):
         args = parse_args(_BASE, environ={"STARBENCH_HOME": "/tmp/sb-home"})
         self.assertEqual(args.tasks_dir, Path("/tmp/sb-home/tasks"))
         self.assertEqual(args.runs_dir, Path("/tmp/sb-home/runs"))
-        self.assertEqual(args.executor_skills_dir, Path("/tmp/sb-home/skills"))
+        self.assertEqual(args.executor_skill_root, Path("/tmp/sb-home/skills"))
         self.assertEqual(args.runtimes_dir, Path("/tmp/sb-home/runtimes"))
 
     def test_explicit_flag_beats_home(self) -> None:
@@ -249,7 +249,7 @@ DEFAULT_RUNTIMES_DIR = PROJECT_ROOT / "runtimes"
     )
 ```
 
-(same pattern for `--runs-dir` → `runs`, `--executor-skills-dir` → `skills`, `--runtimes-dir` → `runtimes`).
+(same pattern for `--runs-dir` → `runs`, `--executor-skill-root` → `skills`, `--runtimes-dir` → `runtimes`).
 
 5. Give `parse_args` the environ parameter and resolve once, immediately after `args = parser.parse_args(...)` and before any use of the dir attributes:
 
@@ -270,8 +270,8 @@ def parse_args(
         args.tasks_dir = home.tasks
     if args.runs_dir is None:
         args.runs_dir = home.runs
-    if args.executor_skills_dir is None:
-        args.executor_skills_dir = home.skills
+    if args.executor_skill_root is None:
+        args.executor_skill_root = home.skills
     if args.runtimes_dir is None:
         args.runtimes_dir = home.runtimes
 ```
