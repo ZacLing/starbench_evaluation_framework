@@ -123,22 +123,23 @@ single-operator tool; do not expose it to a network.
   and optionally save it back; review the full launch plan (one command per
   agent) and launch. The judge is configured runtime-first — any built-in or
   custom runtime can judge — and the console warns when it shares a model with
-  an agent under test, since self-grading biases scores. Docker isolation
-  covers every built-in runtime — each in its own image, resolved per runtime
-  (`make docker-images`) — and custom runtimes with a Docker image in their
-  spec; the rest run locally and are labeled honestly. The executor and the
-  judge run under isolated environment scopes (the console ships each side's
-  injected variables under a `STARBENCH_EXECUTOR_ENV_*` / `STARBENCH_JUDGE_ENV_*`
-  prefix that the runner unpacks separately), so an agent's injected endpoint no
-  longer reroutes the judge; a variable read by both is surfaced as an amber
-  advisory in the plan, not a rejection. Shared config also carries research
-  experiments — executor skills and a **Prompt assistance** region whose Expert
-  instructions sub-section runs the human-reference sweep (none / selected steps
-  / traverse / ablation) and whose **Rigor requirements** sub-section (off by
-  default) restates selected rubric requirements as hard requirements in every
-  agent's prompt — a controlled experiment that injects into the existing runs
-  without expanding variants. The review step's billing uses the backend
-  execution estimate so any variant fan-out is visible before launch.
+  an agent under test, since self-grading biases scores. Docker isolation covers
+  every built-in runtime except the host-local pi — each in its own image,
+  resolved per runtime (`make docker-images`) — and custom runtimes with a
+  Docker image in their spec; the rest run locally and are labeled honestly.
+  The executor and the judge run under isolated environment scopes (the console
+  ships each side's injected variables under a `STARBENCH_EXECUTOR_ENV_*` /
+  `STARBENCH_JUDGE_ENV_*` prefix that the runner unpacks separately), so an
+  agent's injected endpoint no longer reroutes the judge; a variable read by
+  both is surfaced as an amber advisory in the plan, not a rejection. Shared
+  config also carries research experiments — executor skills and a **Prompt
+  assistance** region whose Expert instructions sub-section runs the
+  human-reference sweep (none / selected steps / traverse / ablation) and whose
+  **Rigor requirements** sub-section (off by default) restates selected rubric
+  requirements as hard requirements in every agent's prompt — a controlled
+  experiment that injects into the existing runs without expanding variants. The
+  review step's billing uses the backend execution estimate so any variant
+  fan-out is visible before launch.
 
 ## Launching runs
 

@@ -118,8 +118,9 @@ def _provider_filter_dict(pf: ProviderFilter) -> Dict[str, Any]:
 
 
 def _builtin_row(info: RuntimeInfo) -> Dict[str, Any]:
-    # Every built-in runtime executes in Docker isolation, each in its own image
-    # (resolved from the adapter registry's RuntimeInfo, the single source).
+    # Docker capability and the image are runtime facts read off the adapter
+    # registry's RuntimeInfo (the single source): every built-in but the
+    # host-local pi carries its own image; pi reports docker_capable=False.
     return {
         "id": info.id,
         "label": info.label,
