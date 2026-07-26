@@ -275,7 +275,8 @@ class GuiDataTest(unittest.TestCase):
         )
         write_json(run_b / "run_config.json", config_b)
 
-        # Different task library: not counted for the selected folder.
+        # A run recorded against some other task directory still counts:
+        # history is global under the single home library.
         run_other = make_run(
             self.runs_dir,
             "run_other",
@@ -283,21 +284,31 @@ class GuiDataTest(unittest.TestCase):
         )
         config_other = json.loads((run_other / "run_config.json").read_text(encoding="utf-8"))
         config_other["tasks_dir"] = str(self.tmp / "other_tasks")
+        config_other["repeat"] = 2
         write_json(run_other / "run_config.json", config_other)
 
-        payload = data.task_history(self.runs_dir, self.tmp / "tasks")
+        payload = data.task_history(self.runs_dir)
         history = payload["tasks"]["demo_task"]
-        self.assertEqual(history["run_count"], 2)
-        self.assertEqual(history["task_run_count"], 3)
+        self.assertEqual(history["run_count"], 3)
+        self.assertEqual(history["task_run_count"], 4)
         self.assertEqual(len(history["configs"]), 2)
         configs = {
             (row["executor_agent"], row["executor_model"]): row
             for row in history["configs"]
         }
-        self.assertEqual(configs[("codex", "gpt-5.5")]["task_run_count"], 2)
-        self.assertEqual(configs[("codex", "gpt-5.5")]["run_count"], 1)
+        self.assertEqual(configs[("codex", "gpt-5.5")]["task_run_count"], 3)
+        self.assertEqual(configs[("codex", "gpt-5.5")]["run_count"], 2)
         self.assertEqual(configs[("codex", "gpt-5.5")]["repeat"], 2)
         self.assertEqual(configs[("claude", "claude-opus-4-8")]["thinking_effort"], "high")
+
+    def test_task_history_takes_no_tasks_dir_filter(self) -> None:
+        import inspect
+
+        from starbench.gui.read_models.runs import task_history
+
+        self.assertEqual(
+            list(inspect.signature(task_history).parameters), ["runs_dir"]
+        )
 
     def test_task_run_detail_reads_all_surfaces(self) -> None:
         make_run(self.runs_dir, "run_pass")

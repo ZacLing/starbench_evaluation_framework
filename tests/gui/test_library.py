@@ -1,4 +1,4 @@
-"""Task-package import, browsing, detail and preflight in ``starbench.gui.library``."""
+"""Task-package import, detail and preflight in ``starbench.gui.library``."""
 from __future__ import annotations
 
 import json
@@ -51,6 +51,23 @@ class LibraryImportTest(unittest.TestCase):
         installed = self.tasks_dir / "uploaded_demo"
         self.assertTrue((installed / "task.json").is_file())
         self.assertTrue((installed / "rubrics.json").is_file())
+
+    def test_install_creates_a_missing_library_directory(self) -> None:
+        # Lazy home: the library materializes on its first write, so importing
+        # into a never-created ~/.starbench/tasks must not fail.
+        fresh = self.tmp / "not_yet" / "tasks"
+        self.assertFalse(fresh.exists())
+        report = library.install_task_package(package_files(), target_dir=fresh)
+        self.assertTrue(report["valid"])
+        self.assertTrue((fresh / "uploaded_demo" / "task.json").is_file())
+
+    def test_dry_run_does_not_create_the_library_directory(self) -> None:
+        fresh = self.tmp / "not_yet" / "tasks"
+        report = library.install_task_package(
+            package_files(), target_dir=fresh, dry_run=True
+        )
+        self.assertTrue(report["valid"])
+        self.assertFalse(fresh.exists())
 
     def test_dragged_folder_common_root_is_stripped(self) -> None:
         report = library.install_task_package(
@@ -130,9 +147,9 @@ class LibraryImportTest(unittest.TestCase):
         self.assertTrue((self.tasks_dir / "zipped" / "prompt.md").is_file())
 
 
-class LibraryBrowseAndDetailTest(unittest.TestCase):
+class LibraryDetailTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_fs_", dir=str(Path.home())))
+        self.tmp = Path(tempfile.mkdtemp(prefix="starbench_gui_fs_"))
         self.tasks_dir = self.tmp / "tasks"
         (self.tasks_dir / "demo").mkdir(parents=True)
         write_json(
@@ -151,18 +168,6 @@ class LibraryBrowseAndDetailTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
-
-    def test_browse_lists_directories_with_task_counts(self) -> None:
-        listing = library.browse_directories(str(self.tmp), cwd=self.tmp)
-        names = {entry["name"]: entry for entry in listing["dirs"]}
-        self.assertIn("tasks", names)
-        self.assertEqual(names["tasks"]["task_count"], 1)
-
-    def test_browse_allows_directories_outside_home_and_cwd(self) -> None:
-        expected = Path("/etc").resolve()
-        listing = library.browse_directories("/etc", cwd=self.tmp)
-        self.assertEqual(listing["path"], str(expected))
-        self.assertEqual(listing["parent"], str(expected.parent))
 
     def test_task_detail_returns_prompt_and_rubrics(self) -> None:
         detail = library.task_package_detail(self.tasks_dir, "demo")

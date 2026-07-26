@@ -850,20 +850,6 @@ export interface LaunchPlanResponse {
   dry_run: true
 }
 
-export interface DirListingEntry {
-  name: string
-  path: string
-  task_count: number
-  is_task_package: boolean
-}
-
-export interface DirListing {
-  path: string
-  parent: string | null
-  task_count: number
-  dirs: DirListingEntry[]
-}
-
 export interface ImportFile {
   path: string
   content_b64: string

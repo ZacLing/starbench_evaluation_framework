@@ -378,19 +378,6 @@ def list_runs(runs_dir: Path, active_run_ids: Optional[set] = None) -> List[Dict
     return rows
 
 
-def _matches_tasks_dir(config: Dict[str, Any], tasks_dir: Optional[Path]) -> bool:
-    if tasks_dir is None:
-        return True
-    recorded = config.get("tasks_dir")
-    if not isinstance(recorded, str) or not recorded.strip():
-        # Older/corrupt run configs can still be attributed by task id.
-        return True
-    try:
-        return Path(recorded).expanduser().resolve() == tasks_dir.expanduser().resolve()
-    except OSError:
-        return recorded == str(tasks_dir)
-
-
 def _history_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "executor_agent": config.get("executor_agent"),
@@ -411,13 +398,17 @@ def _history_config_key(config: Dict[str, Any]) -> Tuple[Any, ...]:
     return tuple(shaped.get(key) for key in sorted(shaped))
 
 
-def task_history(runs_dir: Path, tasks_dir: Optional[Path] = None) -> Dict[str, Any]:
+def task_history(runs_dir: Path) -> Dict[str, Any]:
     """Per-task execution history for the New experiment task picker.
 
     This is intentionally narrower than the coverage matrix: it answers
     "has this task been tested, how many executions, and under which launch
     configs?" from artifacts already on disk. Missing identities are skipped
     rather than guessed from directory names.
+
+    History is global: with the single home library there is nothing to
+    attribute a run to but its task ids, so the recorded ``tasks_dir`` of a
+    run config no longer filters anything.
     """
     histories: Dict[str, Dict[str, Any]] = {}
     config_buckets: Dict[str, Dict[Tuple[Any, ...], Dict[str, Any]]] = {}
@@ -428,8 +419,6 @@ def task_history(runs_dir: Path, tasks_dir: Optional[Path] = None) -> Dict[str, 
     for record in _catalog_records(runs_dir):
         config = record.get("config")
         config = config if isinstance(config, dict) else {}
-        if not _matches_tasks_dir(config, tasks_dir):
-            continue
         config_shape = _history_config(config)
         config_key = _history_config_key(config)
 

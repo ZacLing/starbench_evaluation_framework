@@ -1157,20 +1157,6 @@ class LaunchPlanResponse(TypedDict):
     dry_run: Literal[True]
 
 
-class DirListingEntry(TypedDict):
-    name: str
-    path: str
-    task_count: int
-    is_task_package: bool
-
-
-class DirListing(TypedDict):
-    path: str
-    parent: Optional[str]
-    task_count: int
-    dirs: List[DirListingEntry]
-
-
 class ImportFile(TypedDict):
     path: str
     content_b64: str
@@ -1532,8 +1518,6 @@ GENERATED_TYPES = [
     "RawEventsPage",
     "LaunchPayload",
     "LaunchPlanResponse",
-    "DirListingEntry",
-    "DirListing",
     "ImportFile",
     "ImportReportTask",
     "ImportReport",

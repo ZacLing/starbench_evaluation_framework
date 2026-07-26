@@ -112,15 +112,11 @@ class ConsoleApplication:
                 return tasks_dir
         raise library.LibraryError(f"Not a registered task directory: {raw}")
 
-    def task_history(self, tasks_dir_arg: Optional[str]) -> Dict[str, Any]:
-        tasks_dir = self.registered_dir(tasks_dir_arg) if tasks_dir_arg else None
-        return data.task_history(self.runs_dir, tasks_dir)
+    def task_history(self) -> Dict[str, Any]:
+        return data.task_history(self.runs_dir)
 
     def task_package_detail(self, tasks_dir: str, name: str) -> Dict[str, Any]:
         return library.task_package_detail(self.registered_dir(tasks_dir), name)
-
-    def browse_directories(self, path: Optional[str]) -> Dict[str, Any]:
-        return library.browse_directories(path, cwd=self.cwd)
 
     def preflight(self, params: Mapping[str, str]) -> Dict[str, Any]:
         def value(name: str, default: str = "") -> str:
@@ -298,16 +294,6 @@ class ConsoleApplication:
 
     def refresh_provider_models(self, provider_id: str) -> Any:
         return providers.refresh_provider_models(self.runs_dir, provider_id)
-
-    def register_tasks_dir(self, raw: str) -> Dict[str, Any]:
-        if not raw:
-            raise library.LibraryError("`dir` is required.")
-        path = Path(raw).expanduser().resolve()
-        if not path.is_dir():
-            raise library.LibraryError(f"Not a directory: {path}")
-        if path not in self.tasks_dirs:
-            self.tasks_dirs.append(path)
-        return {"libraries": self.libraries()}
 
     def _custom_meta(self, agent: str) -> Optional[Dict[str, Any]]:
         if not agent.startswith("custom:"):

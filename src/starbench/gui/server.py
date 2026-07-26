@@ -155,8 +155,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 self._handle_stop(segments[2])
             elif segments == ["api", "tasks", "import"]:
                 self._handle_task_import()
-            elif segments == ["api", "tasklib", "dirs"]:
-                self._handle_register_tasks_dir()
             elif segments == ["api", "launches"]:
                 self._handle_launch_batch()
             elif segments == ["api", "profiles"]:
@@ -244,16 +242,15 @@ class ConsoleHandler(BaseHTTPRequestHandler):
         elif segments == ["tasklib"]:
             self._send_json({"libraries": app.libraries()})
         elif segments == ["tasklib", "history"]:
-            tasks_dir_arg = query.get("dir", [None])[0]
-            self._send_json(app.task_history(tasks_dir_arg))
+            # Legacy ?dir= is accepted and ignored: history is global under
+            # the single home library.
+            self._send_json(app.task_history())
         elif segments == ["tasklib", "task"]:
             self._send_json(
                 app.task_package_detail(
                     query.get("dir", [""])[0], query.get("name", [""])[0]
                 )
             )
-        elif segments == ["fs", "list"]:
-            self._send_json(app.browse_directories(query.get("path", [None])[0]))
         elif segments == ["preflight"]:
             params = {
                 key: str(values[0]) if values else "" for key, values in query.items()
@@ -353,13 +350,6 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             raise AgentError("Request body must be a JSON object.")
         agent_id = str(payload.get("agent_id") or "").strip()
         self._send_json(self.state.application.install_agent(agent_id))
-
-    def _handle_register_tasks_dir(self) -> None:
-        payload = self._read_body()
-        if payload is None:
-            raise LibraryError("Request body must be a JSON object.")
-        raw = str(payload.get("dir") or "").strip()
-        self._send_json(self.state.application.register_tasks_dir(raw))
 
 
 def make_handler(state: ConsoleState) -> type:

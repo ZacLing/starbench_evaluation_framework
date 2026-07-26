@@ -1,5 +1,5 @@
-"""Task-library services for the console: browse directories, validate and
-install task packages, and run environment preflight checks."""
+"""Task-library services for the console: validate and install task packages,
+read package detail, and run environment preflight checks."""
 
 from __future__ import annotations
 
@@ -29,59 +29,10 @@ from .data import (
 )
 
 MAX_IMPORT_BYTES = 20 * 1024 * 1024
-MAX_DIR_ENTRIES = 200
 
 
 class LibraryError(ValueError):
     pass
-
-
-# ---------------------------------------------------------------------------
-# Directory browsing (server-side folder picker)
-# ---------------------------------------------------------------------------
-
-def browse_directories(raw_path: Optional[str], *, cwd: Path) -> Dict[str, Any]:
-    path = Path(raw_path).expanduser() if raw_path else Path.home()
-    try:
-        path = path.resolve()
-    except OSError:
-        raise LibraryError(f"Cannot resolve path: {raw_path}")
-    if not path.is_dir():
-        raise LibraryError(f"Not a directory: {path}")
-
-    entries: List[Dict[str, Any]] = []
-    try:
-        children = sorted(path.iterdir(), key=lambda item: item.name.lower())
-    except OSError as error:
-        raise LibraryError(f"Cannot list {path}: {error}")
-    for child in children:
-        if len(entries) >= MAX_DIR_ENTRIES:
-            break
-        if not child.is_dir() or child.name.startswith("."):
-            continue
-        task_count = 0
-        try:
-            for sub in child.iterdir():
-                if sub.is_dir() and (sub / "task.json").is_file():
-                    task_count += 1
-        except OSError:
-            pass
-        entries.append(
-            {
-                "name": child.name,
-                "path": str(child),
-                "task_count": task_count,
-                "is_task_package": (child / "task.json").is_file(),
-            }
-        )
-
-    parent = path.parent if path != path.parent else None
-    return {
-        "path": str(path),
-        "parent": str(parent) if parent else None,
-        "task_count": sum(1 for entry in entries if entry["is_task_package"]),
-        "dirs": entries,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -291,8 +242,13 @@ def install_task_package(
     if dry_run or not report["valid"]:
         return report
 
-    if not target_dir.is_dir():
-        raise LibraryError(f"Task directory not found: {target_dir}")
+    # Lazy home: the single task library materializes on its first write, so an
+    # absent library directory is created here rather than rejected. Reads
+    # already tolerate absence (an empty library, ``exists: false``).
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise LibraryError(f"Could not create the task directory: {error}")
     package_dir = safe_child(target_dir, report["task"]["id"], kind="task id")
     if package_dir.exists() or package_dir.is_symlink():
         raise LibraryError(
@@ -528,7 +484,6 @@ def preflight(
 
 __all__ = [
     "LibraryError",
-    "browse_directories",
     "install_task_package",
     "validate_task_package",
     "task_package_detail",
