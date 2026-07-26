@@ -59,7 +59,9 @@ headless 友好的多 provider 编码代理，形态完全落在本仓适配器�
   消费点为 `gui/injection.py` 的一个新分支：把所选 provider 的 kind 映射为 pi 的
   `--provider` 名与该 provider 的 key 环境变量。
 - `thinking_channel="native_config"`；`thinking_efforts=("default", "off", "minimal",
-  "low", "medium", "high", "xhigh", "max")`。`"default"` 表示不加后缀、留 CLI 默认。
+  "low", "medium", "high", "xhigh", "max")`。`"default"` 表示不传旗标、留 CLI 默认。
+  （计划阶段勘误：pi 有专用 `--thinking <level>` 旗标——`cli/args.ts:130`——比模型
+  后缀更干净，采用旗标。）
 - `judge_sensitive_env`：各 provider key 环境变量全集，外加 `PI_CODING_AGENT_DIR`、
   `PI_CODING_AGENT_SESSION_DIR`——参赛者注入这两个变量可重定向评审侧配置，必须列管。
 - `credential_env_keys=()`：与 OpenCode 同策——凭证按所选 provider 经 wiring 旋钮
@@ -129,17 +131,17 @@ headless 友好的多 provider 编码代理，形态完全落在本仓适配器�
 真机冒烟（可选跟进，非验收项）：安装 pi CLI 后以指定 provider key 跑一个最小任务，
 验证 CLI 行为假设与真实世界一致。安装动作发生前先获操作者确认。
 
-## 待核实项（计划阶段消解，全部读 pi 源码或本仓源码，不装 CLI）
+## 待核实项（计划阶段已消解，2026-07-26，全部读源码，未装 CLI）
 
-1. `RuntimeInfo.protocol` 字段在本仓的全部消费点——pi 是多协议运行时，取值
-   （候选 `"multi"`）须先枚举消费面再定，避免撞上按协议特判的旧路径。
-2. pi 无位置参数时对 stdin 的消费行为（`-p` 与 `--mode json` 组合下 stdin 是否
-   作为完整 prompt）——读 pi CLI 入口源码确认；若必须给位置参数，改为短位置
-   参数 + stdin 正文的组合并在 fake 测试中钉住。
-3. pi 是否存在可由运行器强制的 web-search 开关（决定 `enforces_web_search`）。
-4. `--model` 的 `:<effort>` 后缀与 `--provider` 分列旗标的组合语义（后缀挂在
-   pattern 上时 provider 前缀是否可省）。
-5. R2 前置：`models.json` 的 `apiKey` 是否支持环境变量引用。
+1. ✅ `protocol="multi"` 安全：内置运行时的 protocol 仅作 `/api/agents` 展示元数据
+   （前端未知值优雅回退；providerless 特判仅走 custom 路径），匹配走 `provider_filter`。
+2. ✅ stdin 单独即构成完整 prompt（`cli/initial-message.ts` 的 `buildInitialMessage`：
+   stdin + @file + 位置消息拼接，位置消息可缺省）。无需位置参数。
+3. ✅ pi 无内置 web-search 工具（`core/tools/` 仅 bash/edit/find/grep/ls 族）；
+   `enforces_web_search=False` 定案。
+4. ✅ 思考档改用专用 `--thinking <level>` 旗标（`cli/args.ts:130`），与
+   `--provider`/`--model` 正交，后缀语义问题不再存在。
+5. （R2 前置，保持开放）`models.json` 的 `apiKey` 是否支持环境变量引用。
 
 ## 触达面
 
