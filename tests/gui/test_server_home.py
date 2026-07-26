@@ -53,13 +53,39 @@ class BuildStateHomeTests(unittest.TestCase):
             self.assertEqual(from_flag.skills_dir, from_home.skills_dir)
 
 
-class MainHomeErrorTests(unittest.TestCase):
+class MainHomeTests(unittest.TestCase):
+    """main's startup path. ThreadingHTTPServer is always mocked: an unmocked
+    main would bind the operator's real port and block in serve_forever(), so a
+    regression in the guards below would hang the suite instead of failing it."""
+
     def test_relative_home_is_a_parser_error(self) -> None:
         stderr = io.StringIO()
-        with mock.patch.dict(os.environ, {"STARBENCH_HOME": "not/absolute"}):
-            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+        with (
+            mock.patch.dict(os.environ, {"STARBENCH_HOME": "not/absolute"}),
+            mock.patch("starbench.gui.server.ThreadingHTTPServer") as server_cls,
+            contextlib.redirect_stderr(stderr),
+        ):
+            with self.assertRaises(SystemExit):
                 main(["--no-browser"])
         self.assertIn("STARBENCH_HOME must be an absolute path", stderr.getvalue())
+        # The guard must fire before anything is bound or served.
+        server_cls.assert_not_called()
+
+    def test_zero_flag_startup_serves_the_home_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stdout = io.StringIO()
+            with (
+                mock.patch.dict(os.environ, {"STARBENCH_HOME": tmp}),
+                mock.patch("starbench.gui.server.ThreadingHTTPServer") as server_cls,
+                contextlib.redirect_stdout(stdout),
+            ):
+                self.assertEqual(main(["--no-browser"]), 0)
+            # main hands the server a handler class carrying the state it built.
+            handler = server_cls.call_args.args[1]
+            self.assertEqual(handler.state.runs_dir, _resolved(tmp, "runs"))
+            self.assertEqual(handler.state.tasks_dirs, [_resolved(tmp, "tasks")])
+            self.assertEqual(handler.state.runtimes_dir, _resolved(tmp, "runtimes"))
+            self.assertEqual(handler.state.skills_dir, _resolved(tmp, "skills"))
 
 
 if __name__ == "__main__":

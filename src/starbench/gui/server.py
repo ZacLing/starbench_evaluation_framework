@@ -377,11 +377,12 @@ def build_state(
     """Assemble console state; every omitted location comes from the home layout.
 
     Precedence per directory: explicit argument > ``$STARBENCH_HOME`` >
-    ``~/.starbench``. The environment is read here (or via an injected
-    ``environ``) and nowhere inward. Home-derived and argument-derived paths go
-    through the same absolutize-then-``resolve()`` treatment, so two spellings
-    of the same directory compare equal downstream. Raises ``ValueError`` when
-    ``$STARBENCH_HOME`` is set to a relative path.
+    ``~/.starbench``. Home is resolved here and nowhere inward — the read itself
+    lives in :mod:`starbench.home`, off ``os.environ`` or an injected ``environ``
+    — so everything downstream sees explicit paths. Home-derived and
+    argument-derived paths go through the same absolutize-then-``resolve()``
+    treatment, so two spellings of the same directory compare equal downstream.
+    Raises ``ValueError`` when ``$STARBENCH_HOME`` is set to a relative path.
     """
     cwd = (cwd or Path.cwd()).resolve()
     home = HomeLayout(resolve_home(environ))
