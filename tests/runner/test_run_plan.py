@@ -111,6 +111,23 @@ class RunPlanTests(unittest.TestCase):
         message = self.parse_error(["--plan", str(path), "--runs-dir", str(self.tmp)])
         self.assertIn("run_plan contract", message)
 
+    def test_unsafe_batch_label_on_argv_fails_closed(self) -> None:
+        # Same guard, exercised on the direct-argv transport: --batch runs
+        # through parse_safe_id inside parse_args, so an unsafe label is
+        # rejected at parse time regardless of whether it arrived via --plan
+        # or a bare flag.
+        message = self.parse_error(
+            [
+                "--tasks-dir",
+                str(self.tmp),
+                "--runs-dir",
+                str(self.tmp),
+                "--batch",
+                "../escape",
+            ]
+        )
+        self.assertIn("Invalid batch label", message)
+
     def test_legacy_none_thinking_effort_canonicalizes_to_default(self) -> None:
         # Old plans and scripts spell the do-nothing tier "none"; the parser
         # folds it so everything downstream sees only "default".

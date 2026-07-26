@@ -28,9 +28,23 @@ class CliHomeDefaultTests(unittest.TestCase):
         self.assertEqual(args.runtimes_dir, _under_home("runtimes"))
 
     def test_explicit_flag_beats_home(self) -> None:
-        args = parse_args([*_BASE, "--tasks-dir", "/elsewhere/tasks"], environ=_ENV)
-        self.assertEqual(args.tasks_dir, Path("/elsewhere/tasks"))
-        self.assertEqual(args.runs_dir, _under_home("runs"))
+        # Each of the four dir flags overrides its own home-derived default
+        # without disturbing the other three, which still resolve under home.
+        cases = [
+            ("--tasks-dir", "tasks_dir", "tasks"),
+            ("--runs-dir", "runs_dir", "runs"),
+            ("--executor-skill-root", "executor_skill_root", "skills"),
+            ("--runtimes-dir", "runtimes_dir", "runtimes"),
+        ]
+        for flag, attr, home_name in cases:
+            with self.subTest(flag=flag):
+                explicit = f"/elsewhere/{home_name}"
+                args = parse_args([*_BASE, flag, explicit], environ=_ENV)
+                self.assertEqual(getattr(args, attr), Path(explicit))
+                for other_flag, other_attr, other_home_name in cases:
+                    if other_attr == attr:
+                        continue
+                    self.assertEqual(getattr(args, other_attr), _under_home(other_home_name))
 
     def test_relative_home_is_a_parser_error(self) -> None:
         stderr = io.StringIO()

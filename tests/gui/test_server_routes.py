@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 from starbench.gui.server import build_state, serve
+from helpers import make_run
 
 
 class SingleLibraryRouteTests(unittest.TestCase):
@@ -36,7 +37,7 @@ class SingleLibraryRouteTests(unittest.TestCase):
             headers={"Content-Type": "application/json"} if body is not None else {},
         )
         try:
-            with urllib.request.urlopen(request) as response:
+            with urllib.request.urlopen(request, timeout=5) as response:
                 return response.status, json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             with error:
@@ -44,10 +45,18 @@ class SingleLibraryRouteTests(unittest.TestCase):
 
     def test_history_tolerates_a_legacy_dir_query(self) -> None:
         # A stale frontend still sends ?dir=; history is global now, so the
-        # query is accepted and ignored rather than answered with a 500.
+        # query is accepted and ignored rather than answered with a 500. Seed
+        # a run so the plain vs. ?dir= comparison exercises a non-empty
+        # payload instead of two empty dicts trivially matching.
+        make_run(
+            self.home / "runs",
+            "run_a",
+            task_specs=(("demo_task__baseline_01", "success", True),),
+        )
         plain = self._probe("/api/tasklib/history")
         legacy = self._probe("/api/tasklib/history?dir=/nowhere/tasks")
-        self.assertEqual(plain, (200, {"tasks": {}}))
+        self.assertEqual(plain[0], 200)
+        self.assertIn("demo_task", plain[1]["tasks"])
         self.assertEqual(legacy, plain)
 
     def test_directory_browser_and_registration_routes_are_gone(self) -> None:
