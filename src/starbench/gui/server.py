@@ -416,7 +416,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--tasks-dir",
         type=Path,
         action="append",
-        help="Task package directory offered in the launcher. Repeatable. "
+        help="The console's single task library. Pass at most once. "
         "Defaults to $STARBENCH_HOME/tasks (~/.starbench/tasks).",
     )
     parser.add_argument(
@@ -437,6 +437,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--port", type=int, default=8321)
     parser.add_argument("--no-browser", action="store_true", help="Do not open a browser tab.")
     args = parser.parse_args(argv)
+
+    # The console serves one library, and the GUI shows exactly that one. Accepting
+    # a second --tasks-dir here would silently drop it from every surface, so the
+    # flag stays `append`-shaped for the plumbing and refuses the extra dir instead.
+    if args.tasks_dir and len(args.tasks_dir) > 1:
+        parser.error(
+            "the console serves a single task library; pass at most one --tasks-dir "
+            "(default: $STARBENCH_HOME/tasks)"
+        )
 
     try:
         state = build_state(

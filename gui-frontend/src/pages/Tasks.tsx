@@ -44,6 +44,7 @@ export default function Tasks() {
           <span className="font-mono text-xs" title={library.dir}>
             {shortDir(library.dir)}
           </span>
+          {!library.exists && " — not created yet; the first import will create it"}
         </p>
       </div>
 

@@ -46,10 +46,10 @@ export default function NewRun() {
   const refetchAgentStatus = agentStatusQuery.refetch
   const agentStatusRetryCount = useRef(0)
   const skillsQuery = useQuery({ queryKey: ["skills"], queryFn: api.skills })
-  const libraries = useMemo(
-    () => (tasklib.data?.libraries ?? []).filter((library) => library.exists),
-    [tasklib.data],
-  )
+  /* The console's one library, kept even when its directory does not exist yet:
+     a fresh home has no tasks/ until the first import creates it, and the wizard
+     must still offer that import rather than stall on an empty list. */
+  const libraries = useMemo(() => tasklib.data?.libraries ?? [], [tasklib.data])
   const providers = providersQuery.data?.providers ?? []
   const agentStatuses = agentStatusQuery.data?.statuses ?? {}
   const customRuntimes = useMemo(
