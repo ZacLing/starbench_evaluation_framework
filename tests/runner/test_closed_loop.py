@@ -1,4 +1,4 @@
-"""End-to-end closed-loop runs against fake codex/gemini/custom runtimes."""
+"""End-to-end closed-loop runs against fake codex/gemini/pi/custom runtimes."""
 from __future__ import annotations
 
 import json
@@ -134,14 +134,21 @@ class ClosedLoopTests(unittest.TestCase):
         )
         return script
 
-    def make_fake_pi(self, directory: Path) -> Path:
+    def make_fake_pi(self, directory: Path) -> tuple[Path, Path]:
         """Fake pi that serves both roles: executor turn, and judge verdict JSON.
 
         Both roles assert pi's headless contract (``--mode json``, ``--no-skills``,
         forced ``PI_OFFLINE``, isolated ``PI_CODING_AGENT_DIR``, prompt on stdin);
         the judge role additionally asserts the judge command carries no
         ``--skill``, so an executor skill can never ride into the evaluator.
+
+        Each role also dumps its argv and its ``PI_CODING_AGENT_DIR`` to
+        ``<argv-dir>/<role>.json``, so the test can check both commands from the
+        outside instead of trusting the in-fake asserts alone. Returns the
+        script path and that dump directory.
         """
+        argv_dir = directory / "pi_calls"
+        argv_dir.mkdir(parents=True, exist_ok=True)
         script = directory / "fake_pi.py"
         script.write_text(
             textwrap.dedent(
@@ -151,6 +158,8 @@ class ClosedLoopTests(unittest.TestCase):
                 import re
                 import sys
                 from pathlib import Path
+
+                CALL_DIR = Path(r"__CALL_DIR__")
 
                 def emit(event):
                     print(json.dumps(event), flush=True)
@@ -168,9 +177,14 @@ class ClosedLoopTests(unittest.TestCase):
                 prompt = sys.stdin.read()
                 assert prompt.strip(), "prompt must arrive on stdin"
 
+                role = "judge" if "Return only one JSON value" in prompt else "executor"
+                (CALL_DIR / (role + ".json")).write_text(
+                    json.dumps({"argv": args, "pi_home": home}), encoding="utf-8"
+                )
+
                 emit({"type": "session", "version": 3, "id": "fake", "timestamp": "t", "cwd": os.getcwd()})
                 emit({"type": "agent_start"})
-                if "Return only one JSON value" in prompt:
+                if role == "judge":
                     assert "--skill" not in args, args
                     text = json.dumps({
                         "mode": "single",
@@ -185,6 +199,7 @@ class ClosedLoopTests(unittest.TestCase):
                         "overall_notes": "fake ok"
                     })
                 else:
+                    assert "--skill" in args, args
                     cwd = Path(os.getcwd())
                     outputs = cwd / "outputs" / "demo"
                     outputs.mkdir(parents=True, exist_ok=True)
@@ -205,10 +220,54 @@ class ClosedLoopTests(unittest.TestCase):
                 })
                 emit({"type": "agent_end", "messages": []})
                 '''
+            ).replace("__CALL_DIR__", str(argv_dir)),
+            encoding="utf-8",
+        )
+        return script, argv_dir
+
+    def add_executor_skill(self, task_dir: Path, skill_id: str) -> None:
+        """Give a copied task package one minimal executor skill.
+
+        Mirrors what ``install_executor_skills`` validates: a real directory
+        (no symlinks) holding a SKILL.md, declared in the task's
+        ``executor_skills.json``.
+        """
+        task_config = json.loads((task_dir / "task.json").read_text(encoding="utf-8"))
+        task_config["executor_skills"] = "executor_skills.json"
+        (task_dir / "task.json").write_text(json.dumps(task_config), encoding="utf-8")
+        skill_dir = task_dir / "skills" / skill_id
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            textwrap.dedent(
+                f"""\
+                ---
+                name: {skill_id}
+                description: Closed-loop fixture skill.
+                ---
+
+                # Closed Loop Skill
+
+                Write the deliverable under ./outputs/.
+                """
             ),
             encoding="utf-8",
         )
-        return script
+        (task_dir / "executor_skills.json").write_text(
+            json.dumps(
+                {
+                    "skills": [
+                        {
+                            "id": skill_id,
+                            "path": f"skills/{skill_id}",
+                            "activation": f"Use `{skill_id}` before writing the deliverable.",
+                            "description": "Closed-loop fixture skill.",
+                            "leakage_level": "S0",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def make_fake_garbage_codex(self, directory: Path) -> Path:
         """Fake codex: judge calls succeed, executor calls dump non-JSON stdout and fail."""
@@ -465,7 +524,13 @@ class ClosedLoopTests(unittest.TestCase):
             tasks_dir = tmp_path / "tasks"
             runs_dir = tmp_path / "runs"
             shutil.copytree(DEMO_TASK, tasks_dir / "demo_python_cli")
-            fake_pi = self.make_fake_pi(tmp_path)
+            skill_id = "closed-loop-skill"
+            self.add_executor_skill(tasks_dir / "demo_python_cli", skill_id)
+            fake_pi, pi_calls = self.make_fake_pi(tmp_path)
+            # The shared skill registry defaults to ~/.starbench/skills; point it
+            # at an empty tempdir so the run reads nothing from the real home.
+            shared_skill_root = tmp_path / "shared_skills"
+            shared_skill_root.mkdir()
 
             cmd = [
                 sys.executable,
@@ -493,13 +558,19 @@ class ClosedLoopTests(unittest.TestCase):
                 "pi",
                 "--pi-bin",
                 f"{sys.executable} {fake_pi}",
+                "--executor-skill",
+                skill_id,
+                "--executor-skill-root",
+                str(shared_skill_root),
                 "--no-progress",
             ]
             completed = subprocess.run(
                 cmd, cwd=ROOT, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
             )
             self.assertEqual(completed.returncode, 0, msg=completed.stderr)
-            task_root = runs_dir / "test_pi_run" / "demo_python_cli"
+            task_root = runs_dir / "test_pi_run" / f"demo_python_cli__skill_{skill_id}"
+            status = json.loads((task_root / "logs" / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["status"], "success")
 
             final = (task_root / "logs" / "final.md").read_text(encoding="utf-8")
             self.assertEqual(final, "Fake pi finished the task.")
@@ -520,13 +591,32 @@ class ClosedLoopTests(unittest.TestCase):
                 "wrote outputs/demo/result.txt",
             )
 
+            executor_call = json.loads((pi_calls / "executor.json").read_text(encoding="utf-8"))
+            judge_call = json.loads((pi_calls / "judge.json").read_text(encoding="utf-8"))
+
             executor_home = task_root / "agent_home" / "pi_executor"
             judge_home = task_root / "agent_home" / "judge_single_pi"
             self.assertTrue(executor_home.is_dir())
-            # The judge gets its own PI_CODING_AGENT_DIR, so a contender that
-            # poisoned the executor's pi config cannot reach the evaluator.
             self.assertTrue(judge_home.is_dir())
-            self.assertNotEqual(judge_home, executor_home)
+            # The judge ran under its own PI_CODING_AGENT_DIR, so a contender
+            # that poisoned the executor's pi config cannot reach the evaluator.
+            self.assertEqual(Path(executor_call["pi_home"]).resolve(), executor_home.resolve())
+            self.assertEqual(Path(judge_call["pi_home"]).resolve(), judge_home.resolve())
+
+            # The run installs one executor skill, so the judge-side assertion
+            # below has something real to leak: pi passes each installed skill
+            # explicitly with --skill.
+            installed_skill = task_root / "workspace" / ".starbench" / "executor_skills" / skill_id
+            self.assertTrue((installed_skill / "SKILL.md").is_file())
+            executor_argv = executor_call["argv"]
+            self.assertIn("--skill", executor_argv)
+            self.assertEqual(
+                Path(executor_argv[executor_argv.index("--skill") + 1]).resolve(),
+                installed_skill.resolve(),
+            )
+            # ...and it must stop at the executor: a skill the contender chose
+            # must never coach the evaluator that grades it.
+            self.assertNotIn("--skill", judge_call["argv"])
 
             aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
             self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
