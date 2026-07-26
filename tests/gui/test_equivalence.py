@@ -43,10 +43,11 @@ class AgentsRegistrySnapshotTest(unittest.TestCase):
     def test_builtin_carries_old_fields_plus_provider_filter(self) -> None:
         listing = agents.list_agents(agents.DEFAULT_RUNTIMES_DIR)
         by_id = {agent["id"]: agent for agent in listing["builtin"]}
-        # Historical display order preserved.
+        # Historical display order preserved; runtimes registered later are
+        # appended alphabetically after it, so the prefix never shifts.
         self.assertEqual(
             [a["id"] for a in listing["builtin"]],
-            ["claude", "codex", "gemini", "grok", "opencode"],
+            ["claude", "codex", "gemini", "grok", "opencode", "pi"],
         )
         # Every historical field intact.
         codex = by_id["codex"]

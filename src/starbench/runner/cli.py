@@ -312,7 +312,10 @@ def parse_args(
         help=(
             "Image used when --executor-backend docker is selected. Defaults to the "
             "runtime's own image ("
-            + ", ".join(DEFAULT_DOCKER_IMAGES[a.info.id] for a in list_builtin())
+            # Host-local-only runtimes (docker_image None) have no default to name.
+            + ", ".join(
+                DEFAULT_DOCKER_IMAGES[a.info.id] for a in list_builtin() if a.info.docker_capable
+            )
             + "); custom runtimes take theirs from the spec's docker section."
         ),
     )
@@ -451,7 +454,7 @@ def parse_args(
             "Docker isolation needs a docker section in the custom runtime spec."
         )
     if args.docker_image is None:
-        args.docker_image = DEFAULT_DOCKER_IMAGES.get(args.executor_agent, "")
+        args.docker_image = DEFAULT_DOCKER_IMAGES.get(args.executor_agent) or ""
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
 

@@ -343,7 +343,7 @@ def plan_experiment(
             # Each runtime gets its own image; custom runtimes carry theirs
             # in the spec, so no --docker-image is passed for them.
             "docker_image": (
-                DEFAULT_DOCKER_IMAGES.get(agent, "") if effective_backend == "docker" else ""
+                (DEFAULT_DOCKER_IMAGES.get(agent) or "") if effective_backend == "docker" else ""
             ),
             "auth_mode": str(contender.get("auth_mode") or "env"),
             "thinking_effort": _validated_thinking_effort(agent, contender, label),
@@ -522,7 +522,7 @@ def plan_experiment(
             docker_image = (
                 str(custom_meta.get("docker_image") or "")
                 if custom_meta
-                else DEFAULT_DOCKER_IMAGES.get(agent, "")
+                else DEFAULT_DOCKER_IMAGES.get(agent) or ""
             )
         plans.append(
             {

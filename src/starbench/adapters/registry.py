@@ -1,12 +1,15 @@
 """Runtime adapter registry — the one lookup from an agent id to an adapter.
 
 ``resolve(agent_id, ...)`` returns the adapter the runner drives: one of the
-five built-in singletons, or a :class:`SpecAdapter` for ``custom:<id>`` (loaded
+built-in singletons, or a :class:`SpecAdapter` for ``custom:<id>`` (loaded
 from ``runtimes/<id>.json`` unless an already-parsed spec is supplied).
 
 ``DEFAULT_DOCKER_IMAGES`` is *derived* here from the built-in adapters'
 ``RuntimeInfo`` — there is no longer a hand-maintained image table to keep in
 sync. It is re-exported through ``runner.codex_process`` for existing importers.
+A host-local-only runtime (``docker_image=None``) maps to ``None`` rather than
+being dropped, so the table stays a complete roster; callers that need a string
+read it as ``.get(id) or ""``.
 
 To add a built-in runtime: write ``adapters/<id>.py`` and add its adapter to
 ``_BUILTIN_ORDER`` below (one line).
@@ -24,24 +27,28 @@ from .codex import CodexAdapter
 from .gemini import GeminiAdapter
 from .grok import GrokAdapter
 from .opencode import OpenCodeAdapter
+from .pi import PiAdapter
 from .spec import SpecAdapter
 
-# Insertion order matters for DEFAULT_DOCKER_IMAGES (kept byte-identical to the
-# historical literal): codex, claude, gemini, grok, opencode.
+# Insertion order matters for DEFAULT_DOCKER_IMAGES: the historical five keep
+# their literal order (codex, claude, gemini, grok, opencode); later runtimes
+# are appended at the tail so the existing prefix never shifts.
 _BUILTIN_ORDER: List[RuntimeAdapter] = [
     CodexAdapter(),
     ClaudeAdapter(),
     GeminiAdapter(),
     GrokAdapter(),
     OpenCodeAdapter(),
+    PiAdapter(),
 ]
 
 _BUILTIN: Dict[str, RuntimeAdapter] = {adapter.info.id: adapter for adapter in _BUILTIN_ORDER}
 
 BUILTIN_AGENTS = set(_BUILTIN)
 
-# Derived, not hand-maintained: one image per built-in runtime.
-DEFAULT_DOCKER_IMAGES: Dict[str, str] = {
+# Derived, not hand-maintained: one image per built-in runtime (None when the
+# runtime is host-local only).
+DEFAULT_DOCKER_IMAGES: Dict[str, str | None] = {
     adapter.info.id: adapter.info.docker_image for adapter in _BUILTIN_ORDER
 }
 

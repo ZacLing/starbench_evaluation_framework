@@ -131,7 +131,7 @@ class ConsoleApplication:
             if executor_meta:
                 docker_image = str(executor_meta.get("docker_image") or "")
             elif not docker_image:
-                docker_image = DEFAULT_DOCKER_IMAGES.get(executor_agent, "")
+                docker_image = DEFAULT_DOCKER_IMAGES.get(executor_agent) or ""
 
         def env_keys(name: str) -> List[str]:
             return [item for item in value(name).split(",") if item]

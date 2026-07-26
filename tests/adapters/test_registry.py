@@ -24,14 +24,22 @@ DOCKER_ENV_WHITELIST_BY_ID = {
     "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"],
     "grok": ["XAI_API_KEY"],
     "opencode": ["OPENAI_API_KEY", "XAI_API_KEY"],
+    # pi never runs in a container, so it forwards nothing into one.
+    "pi": [],
 }
+
+# Built-in runtimes that ship no Docker image and run host-local only.
+HOST_LOCAL_ONLY = {"pi"}
 
 
 class RegistryTests(unittest.TestCase):
-    def test_five_builtins_in_stable_order(self) -> None:
+    def test_builtins_in_stable_order(self) -> None:
         ids = [adapter.info.id for adapter in list_builtin()]
-        self.assertEqual(ids, ["codex", "claude", "gemini", "grok", "opencode"])
-        self.assertEqual(BUILTIN_AGENTS, {"codex", "claude", "gemini", "grok", "opencode"})
+        # The historical five keep their order; later runtimes append at the tail.
+        self.assertEqual(ids, ["codex", "claude", "gemini", "grok", "opencode", "pi"])
+        self.assertEqual(
+            BUILTIN_AGENTS, {"codex", "claude", "gemini", "grok", "opencode", "pi"}
+        )
 
     def test_default_docker_images_are_derived_and_match_gui(self) -> None:
         self.assertEqual(
@@ -42,6 +50,8 @@ class RegistryTests(unittest.TestCase):
                 "gemini": "starbench-gemini-cli:latest",
                 "grok": "starbench-grok:latest",
                 "opencode": "starbench-opencode:latest",
+                # Host-local only: registered in the roster with no image.
+                "pi": None,
             },
         )
         for agent in GUI_BUILTIN_AGENTS:
@@ -57,7 +67,12 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(info.protocol, gui["protocol"])
             self.assertEqual(info.bin, gui["bin"])
             self.assertEqual(info.docker_image, gui["docker_image"])
-            self.assertTrue(info.docker_capable)
+            # Docker capability is a per-runtime fact, not a blanket truth.
+            if info.id in HOST_LOCAL_ONLY:
+                self.assertFalse(info.docker_capable, info.id)
+                self.assertIsNone(info.docker_image, info.id)
+            else:
+                self.assertTrue(info.docker_capable, info.id)
 
     def test_credential_env_keys_match_preflight_table(self) -> None:
         for adapter in list_builtin():
