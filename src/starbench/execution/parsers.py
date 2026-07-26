@@ -1,7 +1,8 @@
 """Output parsers: turn raw agent stdout into ``final.md`` and comparable events.
 
 Runtime-agnostic in the sense that these functions key off an *output format*
-(headless-json, jsonl-events, plain text, Claude stream-json, OpenCode export)
+(headless-json, jsonl-events, plain text, Claude stream-json, OpenCode export,
+pi JSON events)
 rather than a runtime name — several runtimes share a format. Adapters pick the
 right parser for their runtime and call these helpers.
 
@@ -563,3 +564,130 @@ def normalize_custom_events(stdout_path: Path, *, parser: str, provider: str) ->
         "".join(json.dumps(event, ensure_ascii=False) + "\n" for event in events),
         encoding="utf-8",
     )
+
+
+def _pi_assistant_text(message: Dict[str, Any]) -> str:
+    parts = [
+        str(block.get("text") or "")
+        for block in message.get("content") or []
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    return "\n".join(part for part in parts if part).strip()
+
+
+def _read_pi_events(events_path: Path) -> List[Dict[str, Any]]:
+    events: List[Dict[str, Any]] = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def write_pi_final_output(
+    events_path: Path, final_path: Path, *, output_schema: Path | None = None
+) -> None:
+    """Write ``final.md`` from a pi ``--mode json`` event stream.
+
+    The deliverable is the last assistant ``message_end`` text; if the stream
+    never carried one (pi buffered the turn), fall back to the assistant
+    messages replayed in the terminal ``agent_end`` event.
+    """
+    events = _read_pi_events(events_path)
+    text = ""
+    for event in events:
+        if event.get("type") == "message_end":
+            message = event.get("message")
+            message = message if isinstance(message, dict) else {}
+            if message.get("role") == "assistant":
+                candidate = _pi_assistant_text(message)
+                if candidate:
+                    text = candidate
+    if not text:
+        for event in events:
+            if event.get("type") == "agent_end":
+                for message in event.get("messages") or []:
+                    if isinstance(message, dict) and message.get("role") == "assistant":
+                        candidate = _pi_assistant_text(message)
+                        if candidate:
+                            text = candidate
+    if not text:
+        raise ValueError("Pi produced no assistant message")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_schema is None:
+        final_path.write_text(text, encoding="utf-8")
+        return
+    structured = _extract_json_object(text)
+    final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def normalize_pi_events(events_path: Path) -> None:
+    """Append Codex-compat ``item.completed`` events after pi's raw events.
+
+    Idempotent: a stream that already carries compat items is left untouched,
+    so a re-run of finalize cannot double-count items in ``trace_summary``.
+    """
+    events = _read_pi_events(events_path)
+    if any(event.get("type") == "item.completed" for event in events):
+        return
+    compat: List[Dict[str, Any]] = []
+    counter = 0
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "message_end":
+            message = event.get("message")
+            message = message if isinstance(message, dict) else {}
+            if message.get("role") != "assistant":
+                continue
+            for block in message.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                counter += 1
+                if block.get("type") == "text" and block.get("text"):
+                    compat.append(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "agent_message",
+                                "id": f"pi-{counter}",
+                                "text": block.get("text"),
+                            },
+                        }
+                    )
+                elif block.get("type") == "thinking" and block.get("thinking"):
+                    compat.append(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "type": "reasoning",
+                                "id": f"pi-{counter}",
+                                "text": block.get("thinking"),
+                            },
+                        }
+                    )
+        elif event_type == "tool_execution_end":
+            counter += 1
+            is_error = bool(event.get("isError"))
+            compat.append(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "command_execution",
+                        "id": str(event.get("toolCallId") or f"pi-{counter}"),
+                        "command": str(event.get("toolName") or ""),
+                        "status": "failed" if is_error else "completed",
+                        "exit_code": 1 if is_error else 0,
+                        "aggregated_output": json.dumps(event.get("result"), ensure_ascii=False),
+                    },
+                }
+            )
+    compat.append({"type": "turn.completed", "usage": None})
+    with events_path.open("a", encoding="utf-8") as handle:
+        for event in compat:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
