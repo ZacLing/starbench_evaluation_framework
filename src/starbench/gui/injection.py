@@ -39,6 +39,21 @@ DEFAULT_OPENAI_BASE_URLS: Dict[str, str] = {
     "xai": "https://api.x.ai/v1",
 }
 
+# pi drives four native provider kinds; each maps to pi's --provider name and
+# the official API-key env var pi reads for it (pi.dev docs/providers).
+PI_PROVIDER_NAMES: Dict[str, str] = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+    "google": "google",
+    "xai": "xai",
+}
+PI_KEY_VARS: Dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "xai": "XAI_API_KEY",
+}
+
 Settings = Dict[str, Any]
 
 
@@ -104,6 +119,22 @@ def builtin_settings(info: RuntimeInfo, provider: Dict[str, Any]) -> Settings:
                 "base_url": base or None,
                 "api_key_env": str(provider.get("api_key_env") or "") or None,
             },
+        }
+
+    if kind == "pi_gateway":
+        # pi speaks each provider's own API natively, so the only gateway key is
+        # the pi adapter's single declared option (provider); the provider's key
+        # reaches pi through the official env var pi reads for that kind.
+        provider_kind = str(provider.get("kind") or "")
+        env: Dict[str, Any] = {}
+        official_var = PI_KEY_VARS.get(provider_kind, "")
+        source_var = str(provider.get("api_key_env") or "")
+        if official_var and source_var:
+            env[official_var] = {"from_env": source_var}
+        return {
+            "auth_mode": auth_mode,
+            "gateway": {"provider": PI_PROVIDER_NAMES.get(provider_kind)},
+            "env": env or None,
         }
 
     if kind == "codex_config":

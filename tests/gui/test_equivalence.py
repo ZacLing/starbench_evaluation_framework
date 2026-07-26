@@ -341,6 +341,35 @@ class ReferenceShapeEquivalenceTest(unittest.TestCase):
             },
         )
 
+    # -- pi on a native provider (provider flag + official key var) ------------
+    def test_pi_google(self) -> None:
+        self._assert_equivalent(
+            ref_contender={
+                "label": "c",
+                "agent": "pi",
+                "provider_id": "google",
+                "model": "gemini-2.5-pro",
+            },
+            legacy_contender={
+                "label": "c",
+                "agent": "pi",
+                "model": "gemini-2.5-pro",
+                "auth_mode": "env",
+                "provider": "google",
+                "env": {"GEMINI_API_KEY": {"from_env": "GEMINI_API_KEY"}},
+            },
+            ref_shared={
+                "evaluator_agent": "codex",
+                "evaluator_model": "gpt-5.5",
+                "evaluator_provider_id": "openai",
+            },
+            legacy_shared={
+                "evaluator_agent": "codex",
+                "evaluator_model": "gpt-5.5",
+                "evaluator_auth_mode": "env",
+            },
+        )
+
     # -- custom qwen through openrouter (spec-declared env vars) ---------------
     def test_custom_qwen_openrouter(self) -> None:
         self._assert_equivalent(
