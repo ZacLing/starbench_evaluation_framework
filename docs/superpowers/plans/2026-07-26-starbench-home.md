@@ -675,7 +675,8 @@ executor skills — under one home: `~/.starbench`, relocatable with
 `STARBENCH_HOME`. Explicit `--tasks-dir` / `--runs-dir` flags always win.
 
     pip install starbench
-    cp -r examples/tasks/* ~/.starbench/tasks/   # seed the library
+    mkdir -p ~/.starbench/tasks
+    cp -r examples/tasks/* ~/.starbench/tasks/   # seed the library (from a repo checkout)
     starbench-gui                                 # zero-argument console
 
 Migrating an existing checkout:
