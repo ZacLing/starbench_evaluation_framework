@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -142,10 +143,11 @@ class ClosedLoopTests(unittest.TestCase):
         the judge role additionally asserts the judge command carries no
         ``--skill``, so an executor skill can never ride into the evaluator.
 
-        Each role also dumps its argv and its ``PI_CODING_AGENT_DIR`` to
-        ``<argv-dir>/<role>.json``, so the test can check both commands from the
-        outside instead of trusting the in-fake asserts alone. Returns the
-        script path and that dump directory.
+        Each role also dumps its argv, its ``PI_CODING_AGENT_DIR`` and the
+        provider key var it can see (``GEMINI_API_KEY``) to
+        ``<argv-dir>/<role>.json``, so the test can check both commands and both
+        env scopes from the outside instead of trusting the in-fake asserts
+        alone. Returns the script path and that dump directory.
         """
         argv_dir = directory / "pi_calls"
         argv_dir.mkdir(parents=True, exist_ok=True)
@@ -179,7 +181,12 @@ class ClosedLoopTests(unittest.TestCase):
 
                 role = "judge" if "Return only one JSON value" in prompt else "executor"
                 (CALL_DIR / (role + ".json")).write_text(
-                    json.dumps({"argv": args, "pi_home": home}), encoding="utf-8"
+                    json.dumps({
+                        "argv": args,
+                        "pi_home": home,
+                        "gemini_api_key": os.environ.get("GEMINI_API_KEY"),
+                    }),
+                    encoding="utf-8",
                 )
 
                 emit({"type": "session", "version": 3, "id": "fake", "timestamp": "t", "cwd": os.getcwd()})
@@ -558,14 +565,29 @@ class ClosedLoopTests(unittest.TestCase):
                 "pi",
                 "--pi-bin",
                 f"{sys.executable} {fake_pi}",
+                # pi is the only runtime declaring the `off` tier; it rides its
+                # native --thinking switch on both sides of the loop.
+                "--thinking-effort",
+                "off",
                 "--executor-skill",
                 skill_id,
                 "--executor-skill-root",
                 str(shared_skill_root),
                 "--no-progress",
             ]
+            # Console-style env scoping: a provider key injected for the
+            # executor only, with the ambient one stripped so the judge's view
+            # is decided by env_scope and not by the developer's shell.
+            run_env = {k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
+            run_env["STARBENCH_EXECUTOR_ENV_GEMINI_API_KEY"] = "sentinel-executor-only"
             completed = subprocess.run(
-                cmd, cwd=ROOT, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                cmd,
+                cwd=ROOT,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=run_env,
             )
             self.assertEqual(completed.returncode, 0, msg=completed.stderr)
             task_root = runs_dir / "test_pi_run" / f"demo_python_cli__skill_{skill_id}"
@@ -594,6 +616,12 @@ class ClosedLoopTests(unittest.TestCase):
             executor_call = json.loads((pi_calls / "executor.json").read_text(encoding="utf-8"))
             judge_call = json.loads((pi_calls / "judge.json").read_text(encoding="utf-8"))
 
+            # A provider key scoped to the executor reaches the executor and
+            # stops there: the judge's pi process cannot see it, so a contender
+            # cannot reroute the evaluator that grades it through a key var.
+            self.assertEqual(executor_call["gemini_api_key"], "sentinel-executor-only")
+            self.assertIsNone(judge_call["gemini_api_key"])
+
             executor_home = task_root / "agent_home" / "pi_executor"
             judge_home = task_root / "agent_home" / "judge_single_pi"
             self.assertTrue(executor_home.is_dir())
@@ -609,6 +637,14 @@ class ClosedLoopTests(unittest.TestCase):
             installed_skill = task_root / "workspace" / ".starbench" / "executor_skills" / skill_id
             self.assertTrue((installed_skill / "SKILL.md").is_file())
             executor_argv = executor_call["argv"]
+            # `off` rides pi's native --thinking switch. The run-level tier is
+            # not clamped per side, so the judge command carries it too — that
+            # is what the runner does today, and pi accepts the tier on both.
+            thinking_at = executor_argv.index("--thinking")
+            self.assertEqual(executor_argv[thinking_at : thinking_at + 2], ["--thinking", "off"])
+            judge_argv = judge_call["argv"]
+            judge_thinking_at = judge_argv.index("--thinking")
+            self.assertEqual(judge_argv[judge_thinking_at : judge_thinking_at + 2], ["--thinking", "off"])
             self.assertIn("--skill", executor_argv)
             self.assertEqual(
                 Path(executor_argv[executor_argv.index("--skill") + 1]).resolve(),

@@ -18,6 +18,9 @@ Invariants:
 - Output keys: ``auth_mode`` (always), ``gateway`` (always, possibly empty),
   ``codex_bin`` (only codex-config channel), ``env`` (env channels; ``None`` when
   empty, matching the frontend's ``undefined``).
+- ``pi_gateway`` is the first hybrid channel: it returns *both* a gateway (pi's
+  ``--provider`` flag) and an env override (the provider kind's official key
+  var), where every earlier channel filled one or the other.
 - Secrets never appear here: env entries carry either a literal endpoint
   (``{"value": ...}``) or the *name* of the source env var (``{"from_env": ...}``).
 

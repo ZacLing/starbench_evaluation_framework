@@ -4,12 +4,20 @@ from __future__ import annotations
 import unittest
 
 from starbench.adapters.registry import get_builtin
-from starbench.gui.injection import builtin_settings
+from starbench.gui.injection import PI_KEY_VARS, PI_PROVIDER_NAMES, builtin_settings
 
 PI = get_builtin("pi").info
 
 
 class PiGatewayTests(unittest.TestCase):
+    def test_injection_tables_cover_exactly_the_declared_provider_filter(self):
+        # The adapter's provider_filter is the single source for which kinds pi
+        # serves; these two tables are the injection side of the same fact. Add
+        # a kind to one without the others and this fails instead of silently
+        # producing a provider the console offers but cannot wire.
+        self.assertEqual(set(PI_KEY_VARS), set(PI.provider_filter.kinds))
+        self.assertEqual(set(PI_PROVIDER_NAMES), set(PI.provider_filter.kinds))
+
     def test_each_native_kind_maps_to_pi_provider_and_official_key_var(self):
         cases = [
             ("anthropic", "anthropic", "ANTHROPIC_API_KEY"),
@@ -37,9 +45,10 @@ class PiGatewayTests(unittest.TestCase):
         self.assertEqual(settings["gateway"], {"provider": "openai"})
 
     def test_kind_outside_the_provider_filter_does_not_crash(self):
-        # Unreachable through the GUI's provider filter, but the branch must
-        # still degrade quietly: no pi provider name, no env override.
-        provider = {"id": "p", "kind": "openrouter", "api_key_env": "MY_SECRET_KEY"}
+        # "openai-compatible" is the one ProviderKind pi's filter excludes, so
+        # the GUI never offers it here; the branch must still degrade quietly
+        # rather than crash: no pi provider name, no env override.
+        provider = {"id": "p", "kind": "openai-compatible", "api_key_env": "MY_SECRET_KEY"}
         settings = builtin_settings(PI, provider)
         self.assertEqual(settings["gateway"], {"provider": None})
         self.assertIsNone(settings["env"])

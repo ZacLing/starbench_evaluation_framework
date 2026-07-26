@@ -650,11 +650,16 @@ def write_pi_final_output(
 def normalize_pi_events(events_path: Path) -> None:
     """Append Codex-compat ``item.completed`` events after pi's raw events.
 
-    Idempotent: a stream that already carries compat items is left untouched,
-    so a re-run of finalize cannot double-count items in ``trace_summary``.
+    Idempotent twice over: a stream that already carries compat items is left
+    untouched, and so is one that already ends on the compat terminator, so a
+    re-run of finalize cannot double-count items in ``trace_summary``. An
+    item-less turn yields no compat items and is left exactly as pi wrote it —
+    a turn with nothing in it gets no lone ``turn.completed`` either.
     """
     events = _read_pi_events(events_path)
     if any(event.get("type") == "item.completed" for event in events):
+        return
+    if events and events[-1].get("type") == "turn.completed":
         return
     compat: List[Dict[str, Any]] = []
     counter = 0
@@ -707,6 +712,10 @@ def normalize_pi_events(events_path: Path) -> None:
                     },
                 }
             )
+    if not compat:
+        # Nothing to terminate: an item-less stream is left exactly as pi wrote
+        # it (same early return the custom jsonl-events parser takes).
+        return
     compat.append({"type": "turn.completed", "usage": None})
     with events_path.open("a", encoding="utf-8") as handle:
         for event in compat:

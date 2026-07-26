@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,6 +48,7 @@ def _pi_events(final_text: str = "All done.") -> list:
 class PiFinalOutputTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.events = self.dir / "events.jsonl"
         self.final = self.dir / "final.md"
 
@@ -104,6 +106,7 @@ class PiFinalOutputTests(unittest.TestCase):
 class PiNormalizeTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.events = self.dir / "events.jsonl"
 
     def _normalized(self):
@@ -218,6 +221,20 @@ class PiNormalizeTests(unittest.TestCase):
         once = self.events.read_text(encoding="utf-8")
         normalize_pi_events(self.events)
         self.assertEqual(self.events.read_text(encoding="utf-8"), once)
+
+    def test_item_less_stream_gains_no_lone_terminator_and_stays_idempotent(self):
+        # A turn that died before any message_end / tool_execution_end produces
+        # no compat items, so there is nothing to terminate: the stream is left
+        # byte-for-byte as pi wrote it, and a second pass cannot stack up
+        # `turn.completed` lines on it either.
+        header = [{"type": "session", "version": 3, "id": "s1", "timestamp": "t", "cwd": "/w"}]
+        _write_events(self.events, header)
+        original = self.events.read_text(encoding="utf-8")
+        normalize_pi_events(self.events)
+        self.assertEqual(self.events.read_text(encoding="utf-8"), original)
+        normalize_pi_events(self.events)
+        self.assertEqual(self.events.read_text(encoding="utf-8"), original)
+        self.assertNotIn("turn.completed", original)
 
 
 if __name__ == "__main__":

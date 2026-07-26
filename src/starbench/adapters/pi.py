@@ -83,6 +83,9 @@ def prepare_pi_env(
             "Pi agent supports --auth-mode env only; the operator's ~/.pi OAuth "
             "login must not carry benchmark traffic"
         )
+    # Deliberate divergence from the sibling adapters' ``os.environ.copy()``
+    # fallback: with no base env supplied, pi starts from nothing rather than
+    # from the operator's environment, so isolation never depends on the caller.
     env = dict(base_env) if base_env is not None else {}
     pi_home.mkdir(parents=True, exist_ok=True)
     env["PI_CODING_AGENT_DIR"] = str(pi_home)
