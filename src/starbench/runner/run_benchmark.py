@@ -15,21 +15,18 @@ script ``starbench-run = starbench.runner.run_benchmark:main`` stays valid via
 the ``main`` re-export. New callers should import from the module that owns the
 symbol; this shim is scheduled for removal a release after the split settles.
 
+One exception: the cwd-anchored ``PROJECT_ROOT`` / ``DEFAULT_*_DIR`` constants are
+gone rather than re-exported. Directory defaults now come from the StarBench home
+layout (``starbench.home``), resolved inside ``parse_args``; a module-level alias
+would only advertise the working directory as an anchor again.
+
 改什么来这里: nothing — add code to the owning module above and re-export it here.
 """
 
 from __future__ import annotations
 
 # -- CLI ---------------------------------------------------------------------
-from .cli import (  # noqa: F401
-    DEFAULT_EXECUTOR_SKILLS_DIR,
-    DEFAULT_RUNS_DIR,
-    DEFAULT_RUNTIMES_DIR,
-    DEFAULT_TASKS_DIR,
-    PROJECT_ROOT,
-    main,
-    parse_args,
-)
+from .cli import main, parse_args  # noqa: F401
 
 # -- executor side -----------------------------------------------------------
 from .executor import (  # noqa: F401

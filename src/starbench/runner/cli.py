@@ -9,6 +9,10 @@ Invariants:
 - Defaults live here only; the orchestrator trusts ``args`` to be complete
   (e.g. ``executor_backend`` and ``docker_image`` are always resolved by the
   time ``run_benchmark`` runs).
+- Data directories default to the StarBench home layout (``$STARBENCH_HOME``,
+  else ``~/.starbench``), never to the working directory: an explicit flag wins,
+  otherwise ``parse_args`` fills the gap from :mod:`starbench.home`. The process
+  environment is read here (or via an injected ``environ``) and nowhere inward.
 - ``main`` is the console-script entry point (``starbench-run``) and the target
   of ``python -m starbench.runner.run_benchmark`` via the compat shim.
 
@@ -22,7 +26,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..adapters import (
     BUILTIN_AGENTS,
@@ -40,14 +44,9 @@ from ..domain import (
     canonical_thinking_effort,
     parse_safe_id,
 )
+from ..home import HomeLayout, resolve_home
 from .custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .orchestrator import run_benchmark
-
-PROJECT_ROOT = Path.cwd()
-DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks"
-DEFAULT_RUNS_DIR = PROJECT_ROOT / "runs"
-DEFAULT_EXECUTOR_SKILLS_DIR = PROJECT_ROOT / "executor_skills"
-DEFAULT_RUNTIMES_DIR = PROJECT_ROOT / "runtimes"
 
 
 # Plan fields that expand to repeated flags; every other plan key maps
@@ -149,7 +148,11 @@ def _expand_plan_argv(
     return expanded + retained, plan
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def parse_args(
+    argv: Sequence[str] | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run StarBench benchmark tasks and rubric judges.",
         epilog=(
@@ -165,8 +168,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--judge-mode", choices=["both", "single", "parallel"], default="both")
     parser.add_argument("--max-evaluator-parallel", type=int, default=4)
     parser.add_argument("--run-id")
-    parser.add_argument("--tasks-dir", type=Path, default=DEFAULT_TASKS_DIR)
-    parser.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
+    parser.add_argument(
+        "--tasks-dir",
+        type=Path,
+        default=None,
+        help="Task package library. Defaults to $STARBENCH_HOME/tasks (~/.starbench/tasks).",
+    )
+    parser.add_argument(
+        "--runs-dir",
+        type=Path,
+        default=None,
+        help="Run artifact root. Defaults to $STARBENCH_HOME/runs (~/.starbench/runs).",
+    )
     parser.add_argument("--task", action="append", help="Task id or task directory name to include. Repeatable.")
     parser.add_argument("--repeat", type=int, default=1, help="Repeat the selected task list N times.")
     # One --<id>-bin flag per built-in runtime, derived from the adapter
@@ -210,8 +223,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--runtimes-dir",
         type=Path,
-        default=DEFAULT_RUNTIMES_DIR,
-        help="Directory containing custom runtime configs (<id>.json) for custom:<id> agents.",
+        default=None,
+        help=(
+            "Directory containing custom runtime configs (<id>.json) for custom:<id> agents. "
+            "Defaults to $STARBENCH_HOME/runtimes (~/.starbench/runtimes)."
+        ),
     )
     parser.add_argument(
         "--thinking-effort",
@@ -331,8 +347,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--executor-skill-root",
         type=Path,
-        default=DEFAULT_EXECUTOR_SKILLS_DIR,
-        help="Shared executor skill registry root containing registry.json and skill directories.",
+        default=None,
+        help=(
+            "Shared executor skill registry root containing registry.json and skill "
+            "directories. Defaults to $STARBENCH_HOME/skills (~/.starbench/skills)."
+        ),
     )
     parser.add_argument(
         "--profile-snapshot",
@@ -357,6 +376,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         tokens, run_plan_data = _expand_plan_argv(tokens, parser)
     args = parser.parse_args(tokens)
     args.run_plan_data = run_plan_data
+    # Dir defaults come from the StarBench home layout, resolved once here so
+    # everything downstream sees absolute paths and never reads the environment.
+    try:
+        home = HomeLayout(resolve_home(environ))
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.tasks_dir is None:
+        args.tasks_dir = home.tasks
+    if args.runs_dir is None:
+        args.runs_dir = home.runs
+    if args.executor_skill_root is None:
+        args.executor_skill_root = home.skills
+    if args.runtimes_dir is None:
+        args.runtimes_dir = home.runtimes
     # Legacy spelling: old plans/scripts say "none"; everything downstream
     # (adapters, artifacts, validation) sees only the canonical "default".
     args.thinking_effort = canonical_thinking_effort(args.thinking_effort)
