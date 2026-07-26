@@ -134,6 +134,82 @@ class ClosedLoopTests(unittest.TestCase):
         )
         return script
 
+    def make_fake_pi(self, directory: Path) -> Path:
+        """Fake pi that serves both roles: executor turn, and judge verdict JSON.
+
+        Both roles assert pi's headless contract (``--mode json``, ``--no-skills``,
+        forced ``PI_OFFLINE``, isolated ``PI_CODING_AGENT_DIR``, prompt on stdin);
+        the judge role additionally asserts the judge command carries no
+        ``--skill``, so an executor skill can never ride into the evaluator.
+        """
+        script = directory / "fake_pi.py"
+        script.write_text(
+            textwrap.dedent(
+                r'''
+                import json
+                import os
+                import re
+                import sys
+                from pathlib import Path
+
+                def emit(event):
+                    print(json.dumps(event), flush=True)
+
+                def rubric_ids(prompt):
+                    ids = re.findall(r'"id":\s*"([A-Z]\d+)"', prompt)
+                    return ids or ["R001"]
+
+                args = sys.argv[1:]
+                assert "--mode" in args and args[args.index("--mode") + 1] == "json", args
+                assert "--no-skills" in args, args
+                assert os.environ.get("PI_OFFLINE") == "1", "PI_OFFLINE must be forced"
+                home = os.environ.get("PI_CODING_AGENT_DIR", "")
+                assert home, "PI_CODING_AGENT_DIR must be set"
+                prompt = sys.stdin.read()
+                assert prompt.strip(), "prompt must arrive on stdin"
+
+                emit({"type": "session", "version": 3, "id": "fake", "timestamp": "t", "cwd": os.getcwd()})
+                emit({"type": "agent_start"})
+                if "Return only one JSON value" in prompt:
+                    assert "--skill" not in args, args
+                    text = json.dumps({
+                        "mode": "single",
+                        "results": [
+                            {
+                                "rubric_id": rid,
+                                "answer": False if rid in ("R015", "R016", "U016") else True,
+                                "evidence": f"fake evidence for {rid}"
+                            }
+                            for rid in rubric_ids(prompt)
+                        ],
+                        "overall_notes": "fake ok"
+                    })
+                else:
+                    cwd = Path(os.getcwd())
+                    outputs = cwd / "outputs" / "demo"
+                    outputs.mkdir(parents=True, exist_ok=True)
+                    (outputs / "result.txt").write_text("done")
+                    emit({
+                        "type": "tool_execution_end",
+                        "toolCallId": "call-1",
+                        "toolName": "write",
+                        "result": {
+                            "content": [{"type": "text", "text": "wrote outputs/demo/result.txt"}],
+                            "details": {},
+                        },
+                    })
+                    text = "Fake pi finished the task."
+                emit({
+                    "type": "message_end",
+                    "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
+                })
+                emit({"type": "agent_end", "messages": []})
+                '''
+            ),
+            encoding="utf-8",
+        )
+        return script
+
     def make_fake_garbage_codex(self, directory: Path) -> Path:
         """Fake codex: judge calls succeed, executor calls dump non-JSON stdout and fail."""
         script = directory / "fake_garbage_codex.py"
@@ -382,6 +458,83 @@ class ClosedLoopTests(unittest.TestCase):
             self.assertEqual(summary["agent_messages"][0]["text"], final)
             aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
             self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
+
+    def test_closed_loop_with_fake_pi(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tasks_dir = tmp_path / "tasks"
+            runs_dir = tmp_path / "runs"
+            shutil.copytree(DEMO_TASK, tasks_dir / "demo_python_cli")
+            fake_pi = self.make_fake_pi(tmp_path)
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "starbench.runner.run_benchmark",
+                "--tasks-dir",
+                str(tasks_dir),
+                "--runs-dir",
+                str(runs_dir),
+                "--run-id",
+                "test_pi_run",
+                "--seed",
+                "123",
+                "--judge-mode",
+                "single",
+                # pi refuses every other auth mode: the operator's ~/.pi OAuth
+                # login must never carry benchmark traffic.
+                "--auth-mode",
+                "env",
+                "--executor-backend",
+                "local",
+                "--executor-agent",
+                "pi",
+                "--evaluator-agent",
+                "pi",
+                "--pi-bin",
+                f"{sys.executable} {fake_pi}",
+                "--no-progress",
+            ]
+            completed = subprocess.run(
+                cmd, cwd=ROOT, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+            task_root = runs_dir / "test_pi_run" / "demo_python_cli"
+
+            final = (task_root / "logs" / "final.md").read_text(encoding="utf-8")
+            self.assertEqual(final, "Fake pi finished the task.")
+            events = [
+                json.loads(line)
+                for line in (task_root / "logs" / "events.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            # normalize_pi_events appends the Codex-compat tail, so the trace
+            # readers downstream see the same turn terminator as every runtime.
+            self.assertEqual(events[-1]["type"], "turn.completed")
+            summary = json.loads((task_root / "logs" / "trace_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["agent_messages"][0]["text"], final)
+            self.assertEqual(
+                summary["command_executions"][0]["aggregated_output"],
+                "wrote outputs/demo/result.txt",
+            )
+
+            executor_home = task_root / "agent_home" / "pi_executor"
+            judge_home = task_root / "agent_home" / "judge_single_pi"
+            self.assertTrue(executor_home.is_dir())
+            # The judge gets its own PI_CODING_AGENT_DIR, so a contender that
+            # poisoned the executor's pi config cannot reach the evaluator.
+            self.assertTrue(judge_home.is_dir())
+            self.assertNotEqual(judge_home, executor_home)
+
+            aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
+            self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
+            provenance = json.loads(
+                (runs_dir / "test_pi_run" / "run_config.json").read_text(encoding="utf-8")
+            )["runtime_provenance"]
+            self.assertEqual(provenance["executor"]["agent"], "pi")
+            self.assertEqual(provenance["evaluator"]["agent"], "pi")
 
     def test_closed_loop_ablation_with_repeats_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -326,6 +326,27 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(calls[0][0][:4], ["npm", "install", "-g", "@qwen-code/qwen-code@latest"])
         self.assertEqual(calls[0][1], agents.INSTALL_TIMEOUT_SECONDS)
 
+    def test_pi_installs_its_npm_package_without_lifecycle_scripts(self) -> None:
+        original_run = agents._run
+        calls = []
+
+        def fake_run(command, *, timeout):
+            calls.append(list(command))
+            return subprocess.CompletedProcess(command, 0, "installed\n", "")
+
+        agents._run = fake_run
+        try:
+            result = agents.install_agent("pi")
+        finally:
+            agents._run = original_run
+
+        self.assertEqual(result["status"], "installed")
+        self.assertEqual(
+            calls[0][:4], ["npm", "install", "-g", "@earendil-works/pi-coding-agent@latest"]
+        )
+        self.assertIn("--ignore-scripts", calls[0])
+        self.assertNotIn("--ignore-scripts", agents.INSTALL_SPECS["codex"]["install_command"])
+
     def test_install_agent_rejects_unknown_runtime(self) -> None:
         with self.assertRaisesRegex(agents.AgentError, "No built-in installer"):
             agents.install_agent("custom:unknown")

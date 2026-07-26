@@ -57,12 +57,23 @@ _NPM_LATEST_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
 _INSTALL_LOCK = threading.Lock()
 
 
-def _npm_spec(package: str, docs_url: str = "") -> Dict[str, Any]:
+def _npm_spec(
+    package: str, docs_url: str = "", *, extra_args: Sequence[str] = ()
+) -> Dict[str, Any]:
+    command = [
+        "npm",
+        "install",
+        "-g",
+        f"{package}@latest",
+        "--no-fund",
+        "--no-audit",
+        *extra_args,
+    ]
     return {
         "manager": "npm",
         "name": package,
-        "install_command": ["npm", "install", "-g", f"{package}@latest", "--no-fund", "--no-audit"],
-        "update_command": ["npm", "install", "-g", f"{package}@latest", "--no-fund", "--no-audit"],
+        "install_command": list(command),
+        "update_command": list(command),
         "docs_url": docs_url,
     }
 
@@ -79,6 +90,14 @@ INSTALL_SPECS: Dict[str, Dict[str, Any]] = {
     ),
     "grok": _npm_spec("@xai-official/grok", "https://www.npmjs.com/package/@xai-official/grok"),
     "opencode": _npm_spec("opencode-ai", "https://opencode.ai/docs"),
+    # pi pulls an optional native dependency; the console triggers this install
+    # on the operator's own machine, so no package lifecycle script from the
+    # resolved tree gets to run here.
+    "pi": _npm_spec(
+        "@earendil-works/pi-coding-agent",
+        "https://pi.dev/docs",
+        extra_args=("--ignore-scripts",),
+    ),
     "custom:qwen-code": _npm_spec(
         "@qwen-code/qwen-code",
         "https://qwenlm.github.io/qwen-code-docs/en/users/features/headless/",
