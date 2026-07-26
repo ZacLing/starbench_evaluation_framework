@@ -575,6 +575,26 @@ def _pi_assistant_text(message: Dict[str, Any]) -> str:
     return "\n".join(part for part in parts if part).strip()
 
 
+def _pi_tool_output_text(result: Any) -> str | None:
+    """Return the model-visible text of a pi tool result, or ``None``.
+
+    ``AgentToolResult`` (pi ``packages/agent/src/types.ts:355``): text lives in
+    ``result.content`` as ``{"type": "text", "text": ...}`` blocks, while
+    ``result.details`` holds arbitrary structured data. Returning ``None``
+    rather than a JSON dump keeps the empty case aligned with the other compat
+    producers, so the renderer's empty-output guard skips the card.
+    """
+    if not isinstance(result, dict):
+        return None
+    parts = [
+        str(block.get("text") or "")
+        for block in result.get("content") or []
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    text = "\n".join(part for part in parts if part)
+    return text or None
+
+
 def _read_pi_events(events_path: Path) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
     for line in events_path.read_text(encoding="utf-8").splitlines():
@@ -683,7 +703,7 @@ def normalize_pi_events(events_path: Path) -> None:
                         "command": str(event.get("toolName") or ""),
                         "status": "failed" if is_error else "completed",
                         "exit_code": 1 if is_error else 0,
-                        "aggregated_output": json.dumps(event.get("result"), ensure_ascii=False),
+                        "aggregated_output": _pi_tool_output_text(event.get("result")),
                     },
                 }
             )

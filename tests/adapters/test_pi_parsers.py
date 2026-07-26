@@ -32,7 +32,8 @@ def _pi_events(final_text: str = "All done.") -> list:
             "type": "tool_execution_end",
             "toolCallId": "t1",
             "toolName": "bash",
-            "result": {"output": "ok"},
+            # AgentToolResult (pi packages/agent/src/types.ts:355)
+            "result": {"content": [{"type": "text", "text": "ok"}], "details": {}},
             "isError": False,
         },
         {
@@ -74,6 +75,24 @@ class PiFinalOutputTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             write_pi_final_output(self.events, self.final)
 
+    def test_final_excludes_thinking_blocks(self):
+        events = _pi_events("unused")
+        events[-2] = {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "secret chain of thought"},
+                    {"type": "text", "text": "Graded answer."},
+                ],
+            },
+        }
+        _write_events(self.events, events)
+        write_pi_final_output(self.events, self.final)
+        final_text = self.final.read_text(encoding="utf-8")
+        self.assertEqual(final_text, "Graded answer.")
+        self.assertNotIn("secret chain of thought", final_text)
+
     def test_schema_mode_extracts_json_object(self):
         _write_events(self.events, _pi_events('Result: {"verdict": "pass"} trailing'))
         schema = self.dir / "schema.json"
@@ -95,7 +114,12 @@ class PiNormalizeTests(unittest.TestCase):
         normalize_pi_events(self.events)
         events = self._normalized()
         types = [e.get("type") for e in events]
-        self.assertIn("message_end", types)  # 原始事件保留在前
+        # 原始事件保留在前：最后一条原始 message_end 早于第一条 compat item
+        self.assertIn("message_end", types)
+        self.assertIn("item.completed", types)
+        last_raw = len(types) - 1 - types[::-1].index("message_end")
+        first_compat = types.index("item.completed")
+        self.assertLess(last_raw, first_compat)
         items = [e["item"] for e in events if e.get("type") == "item.completed"]
         item_types = [i["type"] for i in items]
         self.assertIn("reasoning", item_types)
@@ -120,9 +144,54 @@ class PiNormalizeTests(unittest.TestCase):
                 "command": "bash",
                 "status": "completed",
                 "exit_code": 0,
-                "aggregated_output": json.dumps({"output": "ok"}, ensure_ascii=False),
+                "aggregated_output": "ok",
             },
         )
+
+    def test_command_execution_output_is_none_without_text_blocks(self):
+        for result in ({"content": [], "details": {"exit": 0}}, {"details": {}}, None, "raw"):
+            with self.subTest(result=result):
+                events = _pi_events("done")
+                events[4] = {
+                    "type": "tool_execution_end",
+                    "toolCallId": "t3",
+                    "toolName": "bash",
+                    "result": result,
+                    "isError": False,
+                }
+                _write_events(self.events, events)
+                normalize_pi_events(self.events)
+                item = next(
+                    e["item"]
+                    for e in self._normalized()
+                    if e.get("type") == "item.completed" and e["item"].get("type") == "command_execution"
+                )
+                self.assertIsNone(item["aggregated_output"])
+
+    def test_command_execution_joins_multiple_text_blocks(self):
+        events = _pi_events("done")
+        events[4] = {
+            "type": "tool_execution_end",
+            "toolCallId": "t4",
+            "toolName": "bash",
+            "result": {
+                "content": [
+                    {"type": "text", "text": "line one"},
+                    {"type": "image", "data": "…"},
+                    {"type": "text", "text": "line two"},
+                ],
+                "details": {},
+            },
+            "isError": False,
+        }
+        _write_events(self.events, events)
+        normalize_pi_events(self.events)
+        item = next(
+            e["item"]
+            for e in self._normalized()
+            if e.get("type") == "item.completed" and e["item"].get("type") == "command_execution"
+        )
+        self.assertEqual(item["aggregated_output"], "line one\nline two")
 
     def test_command_execution_marks_tool_errors(self):
         events = _pi_events("done")
@@ -130,7 +199,7 @@ class PiNormalizeTests(unittest.TestCase):
             "type": "tool_execution_end",
             "toolCallId": "t2",
             "toolName": "bash",
-            "result": {"output": "boom"},
+            "result": {"content": [{"type": "text", "text": "boom"}], "details": {}},
             "isError": True,
         }
         _write_events(self.events, events)
