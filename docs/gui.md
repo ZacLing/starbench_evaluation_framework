@@ -124,7 +124,7 @@ single-operator tool; do not expose it to a network.
   agent) and launch. The judge is configured runtime-first — any built-in or
   custom runtime can judge — and the console warns when it shares a model with
   an agent under test, since self-grading biases scores. Docker isolation covers
-  every built-in runtime except the host-local pi — each in its own image,
+  every built-in runtime — each in its own image,
   resolved per runtime (`make docker-images`) — and custom runtimes with a
   Docker image in their spec; the rest run locally and are labeled honestly.
   The executor and the judge run under isolated environment scopes (the console

@@ -302,8 +302,8 @@ def parse_args(
         help=(
             "Run executor directly on the host or inside a per-task Docker container. "
             "Defaults to docker for the codex runtime and local for other runtimes; "
-            "docker can be selected for every built-in except the host-local pi, and "
-            "for custom runtimes whose spec declares a docker section."
+            "docker can be selected for every built-in, and for custom runtimes "
+            "whose spec declares a docker section."
         ),
     )
     parser.add_argument("--docker-bin", default="docker", help="Docker executable or shell-like command prefix.")

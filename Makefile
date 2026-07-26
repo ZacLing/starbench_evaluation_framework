@@ -26,6 +26,7 @@ docker-images: docker-build
 	docker build -t starbench-gemini-cli:latest -f docker/gemini-cli.Dockerfile .
 	docker build -t starbench-grok:latest -f docker/grok.Dockerfile .
 	docker build -t starbench-opencode:latest -f docker/opencode.Dockerfile .
+	docker build -t starbench-pi:latest -f docker/pi.Dockerfile .
 
 # Images for the bundled runtime definitions (Qwen Code, Kimi Code, Trae Agent).
 docker-images-custom:

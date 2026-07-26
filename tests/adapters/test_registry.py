@@ -24,12 +24,13 @@ DOCKER_ENV_WHITELIST_BY_ID = {
     "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GEMINI_BASE_URL"],
     "grok": ["XAI_API_KEY"],
     "opencode": ["OPENAI_API_KEY", "XAI_API_KEY"],
-    # pi never runs in a container, so it forwards nothing into one.
-    "pi": [],
+    "pi": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY"],
 }
 
 # Built-in runtimes that ship no Docker image and run host-local only.
-HOST_LOCAL_ONLY = {"pi"}
+# Empty today — every built-in has its own image — kept so the next imageless
+# runtime lands as one entry here instead of a weakened assertion.
+HOST_LOCAL_ONLY: set = set()
 
 
 class RegistryTests(unittest.TestCase):
@@ -50,8 +51,7 @@ class RegistryTests(unittest.TestCase):
                 "gemini": "starbench-gemini-cli:latest",
                 "grok": "starbench-grok:latest",
                 "opencode": "starbench-opencode:latest",
-                # Host-local only: registered in the roster with no image.
-                "pi": None,
+                "pi": "starbench-pi:latest",
             },
         )
         for agent in GUI_BUILTIN_AGENTS:

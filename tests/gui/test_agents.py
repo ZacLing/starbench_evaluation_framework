@@ -12,7 +12,8 @@ from starbench.gui import agents
 from starbench.gui.launcher import LaunchError, build_run_argv
 
 # Built-in runtimes that ship no Docker image and run host-local only.
-HOST_LOCAL_ONLY = {"pi"}
+# Empty today — every built-in has its own image.
+HOST_LOCAL_ONLY: set = set()
 
 
 class AgentRegistryTest(unittest.TestCase):
@@ -52,8 +53,8 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(
             sorted(by_id), ["claude", "codex", "gemini", "grok", "opencode", "pi"]
         )
-        # Docker capability is reported per runtime, not assumed for all: the
-        # imaged runtimes name a starbench- image; pi is host-local only.
+        # Docker capability is reported per runtime, not assumed for all;
+        # every current built-in ships its own starbench- image.
         for agent_id, meta in by_id.items():
             if agent_id in HOST_LOCAL_ONLY:
                 self.assertFalse(meta["docker_capable"], agent_id)

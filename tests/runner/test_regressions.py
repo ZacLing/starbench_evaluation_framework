@@ -298,25 +298,21 @@ class RegressionFixTests(unittest.TestCase):
             self.assertEqual(args.docker_image, "starbench-grok:latest")
 
     def test_docker_backend_error_names_the_right_remedy(self) -> None:
-        # A builtin with no image is host-local by design: there is no runtime
-        # spec to add a docker section to, so the message must not send the
-        # operator looking for one. Custom runtimes keep that advice.
+        # Every built-in now ships its own image, so pi + docker parses and
+        # resolves starbench-pi:latest; only a custom runtime without a docker
+        # section still gets the add-a-docker-section advice.
         import contextlib
         import io
 
         with tempfile.TemporaryDirectory() as tmp:
-            stderr = io.StringIO()
-            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
-                parse_args(
-                    [
-                        "--tasks-dir", tmp, "--runs-dir", tmp,
-                        "--executor-agent", "pi", "--executor-backend", "docker",
-                    ]
-                )
-            message = stderr.getvalue()
-            self.assertIn("pi does not support --executor-backend docker", message)
-            self.assertIn("host-local runtime", message)
-            self.assertNotIn("custom runtime spec", message)
+            args = parse_args(
+                [
+                    "--tasks-dir", tmp, "--runs-dir", tmp,
+                    "--executor-agent", "pi", "--executor-backend", "docker",
+                ]
+            )
+            self.assertEqual(args.executor_backend, "docker")
+            self.assertEqual(args.docker_image, "starbench-pi:latest")
 
             runtimes = Path(tmp) / "runtimes"
             runtimes.mkdir()

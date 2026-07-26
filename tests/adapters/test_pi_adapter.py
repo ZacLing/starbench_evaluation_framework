@@ -6,7 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from starbench.adapters.pi import PiAdapter, build_pi_command, prepare_pi_env
+from starbench.adapters.pi import (
+    PiAdapter,
+    build_pi_command,
+    build_pi_docker_command,
+    prepare_pi_env,
+)
 from starbench.adapters.registry import get_builtin, list_builtin
 
 
@@ -113,12 +118,65 @@ class PiJudgeTests(unittest.TestCase):
         self.assertTrue(judge_home.is_dir())
 
 
+class PiDockerCommandTests(unittest.TestCase):
+    def _command(self, **kwargs):
+        defaults = dict(
+            pi_bin="pi",
+            docker_bin="docker",
+            docker_image="starbench-pi:latest",
+            workspace=Path("/tmp/ws"),
+            auth_env={"ANTHROPIC_API_KEY": "k", "STARBENCH_RUN_ID": "run1"},
+        )
+        defaults.update(kwargs)
+        return build_pi_docker_command(**defaults)
+
+    def test_wraps_headless_pi_in_the_shared_docker_harness(self):
+        command = self._command(provider="anthropic", model="m", thinking="high")
+        self.assertEqual(command[:2], ["docker", "run"])
+        self.assertIn("starbench-pi:latest", command)
+        # Inner command tail keeps the exact host shape.
+        image_at = command.index("starbench-pi:latest")
+        inner = command[image_at + 1 :]
+        self.assertEqual(inner[:3], ["pi", "--mode", "json"])
+        self.assertIn("--no-skills", inner)
+        self.assertEqual(inner[inner.index("--thinking") + 1], "high")
+
+    def test_isolation_env_lands_inside_the_workspace_mount(self):
+        command = self._command()
+        pairs = [command[i + 1] for i, a in enumerate(command) if a == "-e"]
+        self.assertIn("HOME=/workspace/.runner/pi_home", pairs)
+        self.assertIn("PI_CODING_AGENT_DIR=/workspace/.runner/pi_home/agent", pairs)
+        self.assertIn(
+            "PI_CODING_AGENT_SESSION_DIR=/workspace/.runner/pi_home/agent/sessions", pairs
+        )
+        self.assertIn("PI_OFFLINE=1", pairs)
+        self.assertIn("PI_SKIP_VERSION_CHECK=1", pairs)
+
+    def test_provider_keys_forward_by_name_only_when_present(self):
+        command = self._command()
+        pairs = [command[i + 1] for i, a in enumerate(command) if a == "-e"]
+        # Present key is whitelisted by NAME (value never on argv); absent keys are not.
+        self.assertIn("ANTHROPIC_API_KEY", pairs)
+        self.assertNotIn("OPENAI_API_KEY", pairs)
+        self.assertFalse(any("=k" in p for p in pairs))
+
+    def test_skill_paths_are_container_side(self):
+        from pathlib import PurePosixPath
+
+        command = self._command(
+            skill_paths=(PurePosixPath("/workspace/.starbench/executor_skills/s1"),)
+        )
+        self.assertEqual(
+            command[command.index("--skill") + 1], "/workspace/.starbench/executor_skills/s1"
+        )
+
+
 class PiInfoTests(unittest.TestCase):
     def test_registered_as_builtin_with_expected_facts(self):
         adapter = get_builtin("pi")
         info = adapter.info
         self.assertEqual(info.id, "pi")
-        self.assertIsNone(info.docker_image)
+        self.assertEqual(info.docker_image, "starbench-pi:latest")
         self.assertEqual(info.injection.kind, "pi_gateway")
         self.assertEqual(info.provider_filter.kinds, ("anthropic", "openai", "google", "xai"))
         self.assertEqual(info.thinking_channel, "native_config")

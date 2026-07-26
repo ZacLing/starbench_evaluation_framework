@@ -1,4 +1,4 @@
-"""Pi adapter (pi.dev multi-provider coding agent, host-local).
+"""Pi adapter (pi.dev multi-provider coding agent).
 
 Pi is headless-friendly: ``--mode json`` streams JSONL events to stdout and a
 prompt piped on stdin is the whole initial message (``cli/initial-message.ts``).
@@ -11,19 +11,22 @@ Invariants:
   personal OAuth identity and must never carry benchmark traffic.
 - ``PI_CODING_AGENT_DIR`` / ``PI_CODING_AGENT_SESSION_DIR`` / ``PI_OFFLINE`` /
   ``PI_SKIP_VERSION_CHECK`` are hard-set (not setdefault): isolation must
-  survive injected base envs.
+  survive injected base envs. In docker they point into the workspace mount
+  (the container rootfs is read-only), same pattern as the siblings' HOME.
 - Pi tool events map to ``command_execution`` only; a ``file_change`` mapping
   waits on live-stream verification of the tool-argument payload (an optional
   real-CLI smoke), so ``trace_summary.file_changes`` is empty for pi.
 
-"改什么来这里": pi command shape, env isolation, provider flag wiring.
+"改什么来这里": pi command shape, env isolation, provider flag wiring, docker.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
+import uuid
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Sequence
 
+from ..execution.docker import build_docker_agent_command, kill_container_on_timeout
 from ..execution.parsers import normalize_pi_events, write_pi_final_output
 from ..execution.process import run_cli_process, split_command
 from ..runner.models import ProcessResult, TaskRunSpec
@@ -50,6 +53,26 @@ PI_JUDGE_SENSITIVE_ENV = (
     "PI_CODING_AGENT_DIR",
     "PI_CODING_AGENT_SESSION_DIR",
 )
+
+# Provider keys forwarded (by name, when present) into pi's container.
+PI_DOCKER_ENV_WHITELIST = [
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "XAI_API_KEY",
+]
+
+# In-container isolation home; lives inside the workspace mount because the
+# container rootfs is read-only (same convention as the siblings' HOME).
+_PI_CONTAINER_HOME = PurePosixPath("/workspace/.runner/pi_home")
+
+
+def _require_env_auth(auth_mode: str) -> None:
+    if auth_mode != "env":
+        raise ValueError(
+            "Pi agent supports --auth-mode env only; the operator's ~/.pi OAuth "
+            "login must not carry benchmark traffic"
+        )
 
 
 def build_pi_command(
@@ -78,11 +101,7 @@ def build_pi_command(
 def prepare_pi_env(
     pi_home: Path, auth_mode: str, *, base_env: Dict[str, str] | None = None
 ) -> Dict[str, str]:
-    if auth_mode != "env":
-        raise ValueError(
-            "Pi agent supports --auth-mode env only; the operator's ~/.pi OAuth "
-            "login must not carry benchmark traffic"
-        )
+    _require_env_auth(auth_mode)
     # Deliberate divergence from the sibling adapters' ``os.environ.copy()``
     # fallback: with no base env supplied, pi starts from nothing rather than
     # from the operator's environment, so isolation never depends on the caller.
@@ -101,6 +120,99 @@ def _installed_skill_paths(install_root: Path) -> List[Path]:
     return sorted(path for path in install_root.iterdir() if path.is_dir())
 
 
+def _container_skill_paths(install_root: Path) -> List[PurePosixPath]:
+    """Installed skills as the container sees them (workspace-mounted)."""
+    return [
+        PurePosixPath("/workspace/.starbench/executor_skills") / path.name
+        for path in _installed_skill_paths(install_root)
+    ]
+
+
+def build_pi_docker_command(
+    *,
+    pi_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    auth_env: Dict[str, str],
+    provider: str | None = None,
+    model: str | None = None,
+    thinking: str = "default",
+    skill_paths: Sequence[PurePosixPath] = (),
+    container_name: str | None = None,
+) -> List[str]:
+    inner_command = build_pi_command(
+        pi_bin,
+        provider=provider,
+        model=model,
+        thinking=thinking,
+        skill_paths=skill_paths,
+    )
+    extra_env = {
+        "HOME": str(_PI_CONTAINER_HOME),
+        "PI_CODING_AGENT_DIR": str(_PI_CONTAINER_HOME / "agent"),
+        "PI_CODING_AGENT_SESSION_DIR": str(_PI_CONTAINER_HOME / "agent" / "sessions"),
+        "PI_OFFLINE": "1",
+        "PI_SKIP_VERSION_CHECK": "1",
+    }
+    return build_docker_agent_command(
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        inner_command=inner_command,
+        env_whitelist=list(PI_DOCKER_ENV_WHITELIST),
+        auth_env=auth_env,
+        container_name=container_name,
+        extra_env=extra_env,
+    )
+
+
+async def run_pi_process_in_docker(
+    *,
+    pi_bin: str,
+    docker_bin: str,
+    docker_image: str,
+    workspace: Path,
+    prompt: str,
+    stdout_path: Path,
+    stderr_path: Path,
+    timeout_seconds: int,
+    auth_mode: str,
+    provider: str | None = None,
+    model: str | None = None,
+    thinking: str = "default",
+    skill_paths: Sequence[PurePosixPath] = (),
+    base_env: Dict[str, str] | None = None,
+) -> ProcessResult:
+    _require_env_auth(auth_mode)
+    (workspace / ".runner" / "pi_home").mkdir(parents=True, exist_ok=True)
+    auth_env = dict(base_env) if base_env is not None else {}
+    container_name = f"starbench-{uuid.uuid4().hex[:12]}"
+    command = build_pi_docker_command(
+        pi_bin=pi_bin,
+        docker_bin=docker_bin,
+        docker_image=docker_image,
+        workspace=workspace,
+        auth_env=auth_env,
+        provider=provider,
+        model=model,
+        thinking=thinking,
+        skill_paths=skill_paths,
+        container_name=container_name,
+    )
+    result = await run_cli_process(
+        command,
+        cwd=workspace,
+        prompt=prompt,
+        env=auth_env,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+    )
+    kill_container_on_timeout(result, docker_bin, container_name)
+    return result
+
+
 class PiAdapter(RuntimeAdapter):
     info = RuntimeInfo(
         id="pi",
@@ -108,7 +220,8 @@ class PiAdapter(RuntimeAdapter):
         description="Multi-provider coding agent (pi.dev)",
         protocol="multi",
         bin="pi",
-        docker_image=None,
+        docker_image="starbench-pi:latest",
+        docker_env_whitelist=tuple(PI_DOCKER_ENV_WHITELIST),
         credential_env_keys=(),
         judge_sensitive_env=PI_JUDGE_SENSITIVE_ENV,
         default_executor_backend="local",
@@ -137,32 +250,47 @@ class PiAdapter(RuntimeAdapter):
     ) -> ProcessResult:
         task = task_run.task
         logs = paths["logs"]
-        if ctx.executor_backend != "local":
-            raise ValueError("pi executor supports --executor-backend local only")
         prompt = build_executor_prompt(
             task_run, executor_skill_location=self.executor_skill_prompt_location()
         )
-        command = build_pi_command(
-            ctx.bins["pi"],
-            provider=ctx.options.get("provider"),
-            model=ctx.model,
-            thinking=ctx.thinking_effort,
-            skill_paths=_installed_skill_paths(
-                self.executor_skill_install_root(paths, ctx.executor_backend)
-            ),
-        )
-        env = prepare_pi_env(
-            paths["agent_home"] / "pi_executor", ctx.auth_mode, base_env=ctx.base_env
-        )
-        result = await run_cli_process(
-            command,
-            cwd=paths["workspace"],
-            prompt=prompt,
-            env=env,
-            stdout_path=logs / "events.jsonl",
-            stderr_path=logs / "stderr.log",
-            timeout_seconds=task.timeout_seconds,
-        )
+        install_root = self.executor_skill_install_root(paths, ctx.executor_backend)
+        if ctx.executor_backend == "docker":
+            result = await run_pi_process_in_docker(
+                pi_bin="pi",
+                docker_bin=ctx.docker_bin,
+                docker_image=ctx.docker_image,
+                workspace=paths["workspace"],
+                prompt=prompt,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+                auth_mode=ctx.auth_mode,
+                provider=ctx.options.get("provider"),
+                model=ctx.model,
+                thinking=ctx.thinking_effort,
+                skill_paths=_container_skill_paths(install_root),
+                base_env=ctx.base_env,
+            )
+        else:
+            command = build_pi_command(
+                ctx.bins["pi"],
+                provider=ctx.options.get("provider"),
+                model=ctx.model,
+                thinking=ctx.thinking_effort,
+                skill_paths=_installed_skill_paths(install_root),
+            )
+            env = prepare_pi_env(
+                paths["agent_home"] / "pi_executor", ctx.auth_mode, base_env=ctx.base_env
+            )
+            result = await run_cli_process(
+                command,
+                cwd=paths["workspace"],
+                prompt=prompt,
+                env=env,
+                stdout_path=logs / "events.jsonl",
+                stderr_path=logs / "stderr.log",
+                timeout_seconds=task.timeout_seconds,
+            )
 
         def _post() -> None:
             # Compat pass first: extraction raises on an empty turn and
