@@ -41,6 +41,7 @@ import { AgentIcon, CUSTOM_ICON_CHOICES, compatibleProviders } from "@/component
 import { ErrorNote } from "@/components/error-note"
 import {
   api,
+  type AgentPackage,
   type AgentTemplate,
   type AgentRuntimeStatus,
   type AiProvider,
@@ -67,7 +68,8 @@ const PARSER_NOTES: Record<string, string> = {
 export default function Agents() {
   const queryClient = useQueryClient()
   const agentsQuery = useQuery({ queryKey: ["agents"], queryFn: api.agents })
-  /* Every visit to this page re-probes with an update check: the npm hop is
+  /* Every visit to this page re-probes with an update check: the network hop
+     (npm registry / GitHub releases, per each runtime's channel) is
      rate-limited by the server's own cache (10 min TTL), so switching tabs is
      cheap while the version column never shows yesterday's answer. staleTime 0
      + refetchOnMount "always" is what makes tab switches refresh. */
@@ -329,14 +331,23 @@ function RuntimeCard({
           </span>
           <VersionLine status={status} loading={statusLoading} />
         </div>
+        <ChannelWarnings status={status} />
         <div className="flex items-center gap-1.5">
           <IsolationBadge dockerImage={dockerImage} />
+          <ChannelBadge pkg={status?.package} />
           {(showInstall || showUpdate) && (
             <Button
               variant="outline"
               size="sm"
               className="ml-auto h-7 gap-1.5 text-xs"
-              title={status?.package ? status.package.install_command.join(" ") : undefined}
+              title={
+                status?.package
+                  ? (showUpdate
+                      ? status.package.update_command
+                      : status.package.install_command
+                    ).join(" ")
+                  : undefined
+              }
               disabled={installing}
               onClick={onInstall}
             >
@@ -426,11 +437,42 @@ function BuiltinDetails({
                 <VersionLine status={status} />
               </DetailRow>
               {status?.package && (
+                <DetailRow label="Install channel">
+                  <span className="text-xs">
+                    {status.package.channel === "standalone" ? (
+                      <>
+                        standalone — the vendor's official installer script,
+                        fetched from{" "}
+                        <span className="font-mono">{status.package.script_domain}</span>{" "}
+                        and run in your shell
+                      </>
+                    ) : (
+                      <>
+                        npm — official package{" "}
+                        <span className="font-mono">{status.package.name}</span>
+                      </>
+                    )}
+                  </span>
+                </DetailRow>
+              )}
+              {status?.package && (
                 <DetailRow label="Install">
                   <div className="grid gap-2">
                     <code className="break-all rounded bg-muted px-1.5 py-1 font-mono text-xs">
                       {status.package.install_command.join(" ")}
                     </code>
+                    {status.package.update_command.join(" ") !==
+                      status.package.install_command.join(" ") && (
+                      <>
+                        <p className="text-xs text-muted-foreground">
+                          Updates run the CLI's own updater (it detects its
+                          install channel and swaps versions atomically):
+                        </p>
+                        <code className="break-all rounded bg-muted px-1.5 py-1 font-mono text-xs">
+                          {status.package.update_command.join(" ")}
+                        </code>
+                      </>
+                    )}
                     {(!status.present || status.update_available === true) && (
                       <Button
                         size="sm"
@@ -452,6 +494,11 @@ function BuiltinDetails({
                 </DetailRow>
               )}
             </dl>
+            {status?.channel_warnings?.length ? (
+              <div className="px-4 pb-4">
+                <ChannelWarnings status={status} />
+              </div>
+            ) : null}
           </>
         )}
       </SheetContent>
@@ -464,6 +511,55 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
     <div className="grid grid-cols-[10rem_1fr] items-baseline gap-2">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd>{children}</dd>
+    </div>
+  )
+}
+
+/* The official install channel, with the trust surface spelled out: a
+   standalone channel runs a remote script, so its source domain is shown
+   right on the badge instead of hiding in a tooltip. */
+function ChannelBadge({ pkg }: { pkg?: AgentPackage | null }) {
+  if (!pkg) return null
+  return pkg.channel === "standalone" ? (
+    <Badge
+      variant="outline"
+      className="gap-1 text-[11px]"
+      title={`Official standalone installer — runs an install script fetched from ${pkg.script_domain}`}
+    >
+      standalone · {pkg.script_domain}
+    </Badge>
+  ) : (
+    <Badge
+      variant="outline"
+      className="gap-1 text-[11px]"
+      title={`Official npm package ${pkg.name}`}
+    >
+      npm
+    </Badge>
+  )
+}
+
+/* Shadowing diagnosis: which copies of the CLI exist, which one PATH runs,
+   and what to do about it. Rendered only when the backend flagged a channel
+   mismatch or coexisting installs — a healthy machine never sees this. */
+function ChannelWarnings({ status }: { status?: AgentRuntimeStatus }) {
+  if (!status?.channel_warnings?.length) return null
+  return (
+    <div className="grid gap-1.5 rounded-md border border-warn-ink/40 bg-warn-soft p-2 text-xs text-warn-ink">
+      {status.channel_warnings.map((warning) => (
+        <div key={warning.kind} className="flex items-start gap-1.5">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <span>{warning.message}</span>
+        </div>
+      ))}
+      <ul className="grid gap-0.5 pl-5 font-mono text-[11px]">
+        {status.installations.map((copy) => (
+          <li key={copy.real_path} className="truncate" title={copy.real_path}>
+            {copy.channel} {copy.version ?? "?"} — {copy.path}
+            {copy.active ? " (PATH)" : ""}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -502,7 +598,11 @@ function VersionLine({
     return (
       <span className="text-[11px]">
         not installed
-        {status.package ? ` · ${status.package.manager} package ${status.package.name}` : ""}
+        {status.package
+          ? status.package.channel === "npm"
+            ? ` · npm package ${status.package.name}`
+            : ` · official installer from ${status.package.script_domain}`
+          : ""}
       </span>
     )
   }
