@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,25 +41,33 @@ PROTOCOL_CHOICES = ("openai", "anthropic", "gemini", "none")
 
 CLI_VERSION_TIMEOUT_SECONDS = 3
 NPM_VIEW_TIMEOUT_SECONDS = 8
+GITHUB_LATEST_TIMEOUT_SECONDS = 8
 INSTALL_TIMEOUT_SECONDS = 300
 STATUS_PROBE_MAX_WORKERS = 8
 
 # Local `--version` probes are cheap but not free (a subprocess per runtime);
-# npm lookups hit the network. Cache both so the Agents page stays fast and
-# an offline machine does not stall on every paint. Keyed by (agent_id, bin).
+# latest-version lookups hit the network (npm registry or the GitHub releases
+# API, whose anonymous quota is 60 requests/hour — the cache is what keeps the
+# console under it). Cache both so the Agents page stays fast and an offline
+# machine does not stall on every paint. Keyed by (agent_id, bin).
 LOCAL_STATUS_TTL_SECONDS = 60.0
-NPM_LATEST_TTL_SECONDS = 600.0
+LATEST_TTL_SECONDS = 600.0
 _STATUS_CACHE_LOCK = threading.Lock()
 _LOCAL_STATUS_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
-_NPM_LATEST_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
+_LATEST_CACHE: Dict[Tuple[str, str], Tuple[float, Dict[str, Any]]] = {}
 
 # Two concurrent `npm install -g` runs write into the same global prefix;
 # serialize installs and reject the second click instead of queueing it.
 _INSTALL_LOCK = threading.Lock()
 
 
+def _script_domain(script: str) -> Optional[str]:
+    match = re.search(r"https?://([^/\s]+)", script)
+    return match.group(1) if match else None
+
+
 def _npm_spec(
-    package: str, docs_url: str = "", *, extra_args: Sequence[str] = ()
+    package: str, bin_name: str, docs_url: str = "", *, extra_args: Sequence[str] = ()
 ) -> Dict[str, Any]:
     command = [
         "npm",
@@ -70,40 +79,104 @@ def _npm_spec(
         *extra_args,
     ]
     return {
-        "manager": "npm",
+        "channel": "npm",
         "name": package,
+        "bin": bin_name,
         "install_command": list(command),
         "update_command": list(command),
+        "latest_source": {"npm": package},
+        "script_domain": None,
         "docs_url": docs_url,
     }
 
 
+def _standalone_spec(
+    bin_name: str,
+    script: str,
+    github_repo: str,
+    docs_url: str = "",
+    *,
+    update_command: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """A runtime installed through the vendor's own installer script.
+
+    ``update_command`` is the CLI's self-updater when it has one — preferred
+    over re-running the script because the CLI identifies its own install
+    channel and swaps binaries atomically. Without one, updating re-runs the
+    official installer.
+    """
+    install = ["bash", "-lc", script]
+    return {
+        "channel": "standalone",
+        "name": None,
+        "bin": bin_name,
+        "install_command": list(install),
+        "update_command": list(update_command) if update_command else list(install),
+        "latest_source": {"github": github_repo},
+        "script_domain": _script_domain(script),
+        "docs_url": docs_url,
+    }
+
+
+# Each runtime installs through the channel its vendor officially recommends —
+# standalone installer scripts where they exist, npm where npm *is* the
+# official channel. A console that installs through a different channel than
+# the one already on the operator's machine produces shadowed installs that
+# never take effect (the incident that motivated this table).
 INSTALL_SPECS: Dict[str, Dict[str, Any]] = {
-    "claude": _npm_spec(
-        "@anthropic-ai/claude-code",
+    "claude": _standalone_spec(
+        "claude",
+        "curl -fsSL https://claude.ai/install.sh | bash",
+        "anthropics/claude-code",
         "https://docs.anthropic.com/en/docs/claude-code/setup",
+        update_command=("claude", "update"),
     ),
-    "codex": _npm_spec("@openai/codex", "https://developers.openai.com/codex/cli"),
+    "codex": _standalone_spec(
+        "codex",
+        "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+        "openai/codex",
+        "https://developers.openai.com/codex/cli",
+        update_command=("codex", "update"),
+    ),
+    # npm is the Gemini CLI's officially recommended channel (its Homebrew
+    # formula carries a deprecation notice).
     "gemini": _npm_spec(
         "@google/gemini-cli",
+        "gemini",
         "https://github.com/google-gemini/gemini-cli",
     ),
-    "grok": _npm_spec("@xai-official/grok", "https://www.npmjs.com/package/@xai-official/grok"),
-    "opencode": _npm_spec("opencode-ai", "https://opencode.ai/docs"),
+    # x.ai serves its curl installer behind a Cloudflare challenge that blocks
+    # non-browser fetches; npm is the reliable official channel.
+    "grok": _npm_spec(
+        "@xai-official/grok", "grok", "https://www.npmjs.com/package/@xai-official/grok"
+    ),
+    "opencode": _standalone_spec(
+        "opencode",
+        "curl -fsSL https://opencode.ai/install | bash",
+        "anomalyco/opencode",
+        "https://opencode.ai/docs",
+        update_command=("opencode", "upgrade"),
+    ),
     # pi pulls an optional native dependency; the console triggers this install
     # on the operator's own machine, so no package lifecycle script from the
     # resolved tree gets to run here.
     "pi": _npm_spec(
         "@earendil-works/pi-coding-agent",
+        "pi",
         "https://pi.dev/docs",
         extra_args=("--ignore-scripts",),
     ),
     "custom:qwen-code": _npm_spec(
         "@qwen-code/qwen-code",
+        "qwen",
         "https://qwenlm.github.io/qwen-code-docs/en/users/features/headless/",
     ),
-    "custom:kimi-code": _npm_spec(
-        "@moonshot-ai/kimi-code",
+    # kimi-code has no self-update subcommand; re-running the installer is the
+    # official update path (it fetches the latest release into ~/.kimi-code).
+    "custom:kimi-code": _standalone_spec(
+        "kimi",
+        "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+        "MoonshotAI/kimi-code",
         "https://moonshotai.github.io/kimi-cli/en/customization/print-mode.html",
     ),
 }
@@ -263,6 +336,58 @@ def _latest_npm_version(package: str) -> Dict[str, Optional[str]]:
     }
 
 
+def _fetch_json(url: str, *, timeout: float) -> Any:
+    # Thin seam over urllib (tests monkeypatch this; nothing else hits HTTP).
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "starbench-console",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _latest_github_version(repo: str) -> Dict[str, Optional[str]]:
+    """Newest published version from GitHub's releases/latest endpoint.
+
+    Release tags are vendor-shaped (`rust-v0.146.0`, `v2.1.220`,
+    `@moonshot-ai/kimi-code@0.30.0`); ``extract_version`` digs the semver out
+    of ``tag_name`` first, then the release ``name``. Failures degrade to an
+    error string — the endpoint must never take the status API down with it.
+    """
+    checked_at = datetime.now(timezone.utc).isoformat()
+    url = f"https://api.github.com/repos/{repo}/releases/latest"
+    try:
+        data = _fetch_json(url, timeout=GITHUB_LATEST_TIMEOUT_SECONDS)
+    except (OSError, ValueError) as error:
+        return {
+            "latest_version": None,
+            "latest_checked_at": checked_at,
+            "latest_error": f"Could not check GitHub releases for {repo}: {error}",
+        }
+    tag = str(data.get("tag_name") or "") if isinstance(data, dict) else ""
+    name = str(data.get("name") or "") if isinstance(data, dict) else ""
+    version = extract_version(tag) or extract_version(name)
+    return {
+        "latest_version": version,
+        "latest_checked_at": checked_at,
+        "latest_error": (
+            None if version else f"GitHub release tag {tag!r} did not include a semver."
+        ),
+    }
+
+
+def _latest_version_for(spec: Dict[str, Any]) -> Dict[str, Optional[str]]:
+    source = spec.get("latest_source") or {}
+    if "npm" in source:
+        return _latest_npm_version(source["npm"])
+    if "github" in source:
+        return _latest_github_version(source["github"])
+    return dict(_LATEST_NOT_CHECKED)
+
+
 def _runtime_targets(runtimes_dir: Path) -> List[Dict[str, str]]:
     targets = [
         {"id": agent["id"], "bin": agent["bin"]}
@@ -293,7 +418,7 @@ def _clear_status_caches() -> None:
     """Drop cached probe results (used by tests and nowhere else)."""
     with _STATUS_CACHE_LOCK:
         _LOCAL_STATUS_CACHE.clear()
-        _NPM_LATEST_CACHE.clear()
+        _LATEST_CACHE.clear()
 
 
 def _cached_local_status(agent_id: str, bin_name: str) -> Dict[str, Any]:
@@ -310,21 +435,23 @@ def _cached_local_status(agent_id: str, bin_name: str) -> Dict[str, Any]:
     return status
 
 
-def _cached_npm_latest(agent_id: str, bin_name: str, package_name: str) -> Dict[str, Any]:
-    cached = _npm_latest_from_cache(agent_id, bin_name)
+def _cached_latest(agent_id: str, bin_name: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+    cached = _latest_from_cache(agent_id, bin_name)
     if cached is not None:
         return cached
-    latest = _latest_npm_version(package_name)
+    latest = _latest_version_for(spec)
+    # Errors are cached at the same TTL on purpose: a failing GitHub lookup
+    # retried on every paint would burn the anonymous 60 req/h quota.
     with _STATUS_CACHE_LOCK:
-        _NPM_LATEST_CACHE[(agent_id, bin_name)] = (time.monotonic(), dict(latest))
+        _LATEST_CACHE[(agent_id, bin_name)] = (time.monotonic(), dict(latest))
     return latest
 
 
-def _npm_latest_from_cache(agent_id: str, bin_name: str) -> Optional[Dict[str, Any]]:
-    """A still-fresh npm answer, or None. Never touches the network."""
+def _latest_from_cache(agent_id: str, bin_name: str) -> Optional[Dict[str, Any]]:
+    """A still-fresh latest-version answer, or None. Never touches the network."""
     with _STATUS_CACHE_LOCK:
-        cached = _NPM_LATEST_CACHE.get((agent_id, bin_name))
-        if cached and time.monotonic() - cached[0] < NPM_LATEST_TTL_SECONDS:
+        cached = _LATEST_CACHE.get((agent_id, bin_name))
+        if cached and time.monotonic() - cached[0] < LATEST_TTL_SECONDS:
             return dict(cached[1])
     return None
 
@@ -332,26 +459,28 @@ def _npm_latest_from_cache(agent_id: str, bin_name: str) -> Optional[Dict[str, A
 def agent_statuses(
     runtimes_dir: Path, *, check_updates: bool = False
 ) -> "contracts.AgentStatusPayload":
-    """Probe every runtime's local CLI; optionally check npm for updates.
+    """Probe every runtime's local CLI; optionally check for updates.
 
     Probes run in parallel (a serial pass over ~8 runtimes at multi-second
-    timeouts kept the page hostage), and npm — the only network hop — runs
-    only when the caller explicitly asks for an update check. When it did not
-    ask, a still-fresh cached npm answer is served anyway (the console already
-    knows it; hiding it just made pages forget updates on reload), and only
-    with a cold cache do the `latest_*` fields stay None, which the UI renders
-    as "not checked", distinct from a failed check.
+    timeouts kept the page hostage), and the latest-version lookup — the only
+    network hop (npm registry or GitHub releases, per the spec's
+    ``latest_source``) — runs only when the caller explicitly asks for an
+    update check. When it did not ask, a still-fresh cached answer is served
+    anyway (the console already knows it; hiding it just made pages forget
+    updates on reload), and only with a cold cache do the `latest_*` fields
+    stay None, which the UI renders as "not checked", distinct from a failed
+    check.
     """
 
     def probe(target: Dict[str, str]) -> Dict[str, Any]:
         local = _cached_local_status(target["id"], target["bin"])
         package = INSTALL_SPECS.get(target["id"])
-        if package and package.get("manager") == "npm":
+        if package:
             if check_updates:
-                latest = _cached_npm_latest(target["id"], target["bin"], package["name"])
+                latest = _cached_latest(target["id"], target["bin"], package)
             else:
                 latest = (
-                    _npm_latest_from_cache(target["id"], target["bin"])
+                    _latest_from_cache(target["id"], target["bin"])
                     or dict(_LATEST_NOT_CHECKED)
                 )
         else:
@@ -395,7 +524,12 @@ def install_agent(agent_id: str) -> "contracts.AgentInstallResult":
 def _install_agent_locked(
     agent_id: str, package: Dict[str, Any]
 ) -> "contracts.AgentInstallResult":
-    command = list(package["install_command"])
+    # A CLI already on PATH gets the spec's update command — for self-updating
+    # CLIs (codex/claude/opencode) that is the binary's own updater, which
+    # knows its install channel and swaps versions atomically. A missing CLI
+    # gets the official install command.
+    present = bool(shutil.which(str(package.get("bin") or "")))
+    command = list(package["update_command"] if present else package["install_command"])
     try:
         result = _run(command, timeout=INSTALL_TIMEOUT_SECONDS)
     except FileNotFoundError as error:

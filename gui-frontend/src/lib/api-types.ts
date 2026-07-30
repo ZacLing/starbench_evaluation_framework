@@ -12,7 +12,7 @@ export type ModelsSource = "api" | "catalog" | "cli_cache"
 
 export type CliAuthStatusKind = "ok" | "api_key" | "warn" | "fail" | "unknown"
 
-export type PackageManager = "npm"
+export type InstallChannel = "standalone" | "npm"
 
 export type AgentInstallStatusKind = "installed" | "failed"
 
@@ -33,10 +33,13 @@ export interface RuntimeCli {
 }
 
 export interface AgentPackage {
-  manager: "npm"
-  name: string
+  channel: "standalone" | "npm"
+  name: string | null
+  bin: string
   install_command: string[]
   update_command: string[]
+  latest_source: Record<string, string>
+  script_domain: string | null
   docs_url: string
 }
 

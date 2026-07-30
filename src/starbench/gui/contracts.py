@@ -31,7 +31,9 @@ RuntimeProtocol = Literal["openai", "anthropic", "gemini", "xai", "multi", "none
 AuthKind = Literal["api_key", "cli_login"]
 ModelsSource = Literal["api", "catalog", "cli_cache"]
 CliAuthStatusKind = Literal["ok", "api_key", "warn", "fail", "unknown"]
-PackageManager = Literal["npm"]
+# The install channel a runtime's vendor officially recommends: "standalone"
+# is the vendor's own installer script, "npm" a global npm package.
+InstallChannel = Literal["standalone", "npm"]
 AgentInstallStatusKind = Literal["installed", "failed"]
 # How --thinking-effort reaches a runtime: a real reasoning switch on the CLI
 # itself, or a prompt-level instruction.
@@ -60,10 +62,22 @@ class RuntimeCli(TypedDict):
 
 
 class AgentPackage(TypedDict):
-    manager: PackageManager
-    name: str
+    """How a runtime's CLI is installed and updated — the vendor's official
+    channel, not a console-invented one. ``name`` is the npm package for the
+    npm channel and null for standalone installers; ``script_domain`` is the
+    host the standalone install script is fetched from (surfaced in the UI
+    because running a remote script is a bigger trust grant than npm).
+    ``update_command`` differs from ``install_command`` for CLIs that ship
+    their own self-updater. ``latest_source`` names where the newest published
+    version is read: {"npm": "<package>"} or {"github": "<owner>/<repo>"}."""
+
+    channel: InstallChannel
+    name: Optional[str]
+    bin: str
     install_command: List[str]
     update_command: List[str]
+    latest_source: Dict[str, str]
+    script_domain: Optional[str]
     docs_url: str
 
 
@@ -1422,7 +1436,7 @@ GENERATED_TYPES = [
     "AuthKind",
     "ModelsSource",
     "CliAuthStatusKind",
-    "PackageManager",
+    "InstallChannel",
     "AgentInstallStatusKind",
     "ThinkingChannel",
     "WebSearchMode",

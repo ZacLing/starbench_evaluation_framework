@@ -168,24 +168,68 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(by_id["kimi-code"]["docker"]["image"], "starbench-kimi:latest")
         self.assertEqual(by_id["kimi-code"]["protocol"], "openai")
 
-    def test_agent_status_reports_versions_and_updates(self) -> None:
+    def test_install_specs_follow_each_vendors_official_channel(self) -> None:
+        by_id = agents.INSTALL_SPECS
+        for agent_id, spec in by_id.items():
+            self.assertIn(spec["channel"], ("standalone", "npm"), agent_id)
+            self.assertTrue(spec["bin"], agent_id)
+            self.assertTrue(spec["install_command"], agent_id)
+            self.assertTrue(spec["update_command"], agent_id)
+            if spec["channel"] == "standalone":
+                # Vendor installer scripts run through a login shell; the
+                # script's source domain is surfaced to the operator.
+                self.assertEqual(spec["install_command"][:2], ["bash", "-lc"], agent_id)
+                self.assertIsNone(spec["name"], agent_id)
+                self.assertTrue(spec["script_domain"], agent_id)
+                self.assertIn("github", spec["latest_source"], agent_id)
+            else:
+                self.assertEqual(spec["install_command"][:2], ["npm", "install"], agent_id)
+                self.assertEqual(spec["latest_source"], {"npm": spec["name"]}, agent_id)
+                self.assertIsNone(spec["script_domain"], agent_id)
+        # Self-updating CLIs update through their own updater, not a reinstall.
+        self.assertEqual(by_id["codex"]["update_command"], ["codex", "update"])
+        self.assertEqual(by_id["claude"]["update_command"], ["claude", "update"])
+        self.assertEqual(by_id["opencode"]["update_command"], ["opencode", "upgrade"])
+        # kimi-code has no self-updater: update re-runs the official installer.
+        self.assertEqual(
+            by_id["custom:kimi-code"]["update_command"],
+            by_id["custom:kimi-code"]["install_command"],
+        )
+        self.assertEqual(by_id["codex"]["script_domain"], "chatgpt.com")
+        self.assertEqual(by_id["claude"]["script_domain"], "claude.ai")
+        self.assertEqual(by_id["codex"]["latest_source"], {"github": "openai/codex"})
+        self.assertEqual(
+            by_id["opencode"]["latest_source"], {"github": "anomalyco/opencode"}
+        )
+        # npm stays the official channel where the vendor recommends npm.
+        self.assertEqual(by_id["gemini"]["channel"], "npm")
+        self.assertEqual(by_id["grok"]["channel"], "npm")
+        self.assertEqual(by_id["pi"]["channel"], "npm")
+        self.assertEqual(by_id["custom:qwen-code"]["channel"], "npm")
+
+    def test_agent_status_reports_versions_and_updates_via_github(self) -> None:
         original_which = agents.shutil.which
         original_run = agents._run
+        original_fetch = agents._fetch_json
+        fetched_urls = []
 
         def fake_which(name: str):
-            if name in {"codex", "npm"}:
-                return f"/bin/{name}"
+            if name == "codex":
+                return "/bin/codex"
             return None
 
         def fake_run(command, *, timeout):
             if command[:2] == ["/bin/codex", "--version"]:
-                return subprocess.CompletedProcess(command, 0, "codex 0.141.0\n", "")
-            if command[:3] == ["npm", "view", "@openai/codex"]:
-                return subprocess.CompletedProcess(command, 0, "0.142.5\n", "")
+                return subprocess.CompletedProcess(command, 0, "codex 0.134.0\n", "")
             return subprocess.CompletedProcess(command, 1, "", "not found")
+
+        def fake_fetch(url, *, timeout):
+            fetched_urls.append(url)
+            return {"tag_name": "rust-v0.146.0", "name": "0.146.0"}
 
         agents.shutil.which = fake_which
         agents._run = fake_run
+        agents._fetch_json = fake_fetch
         try:
             status = agents.agent_statuses(self.runtimes_dir, check_updates=True)[
                 "statuses"
@@ -193,16 +237,83 @@ class AgentRegistryTest(unittest.TestCase):
         finally:
             agents.shutil.which = original_which
             agents._run = original_run
+            agents._fetch_json = original_fetch
 
         self.assertTrue(status["present"])
-        self.assertEqual(status["version"], "0.141.0")
-        self.assertEqual(status["latest_version"], "0.142.5")
+        self.assertEqual(status["version"], "0.134.0")
+        self.assertEqual(status["latest_version"], "0.146.0")
         self.assertTrue(status["update_available"])
-        self.assertEqual(status["package"]["name"], "@openai/codex")
+        self.assertEqual(status["package"]["channel"], "standalone")
+        self.assertIn(
+            "https://api.github.com/repos/openai/codex/releases/latest", fetched_urls
+        )
 
-    def test_agent_statuses_default_path_never_calls_npm(self) -> None:
+    def test_agent_status_reports_versions_and_updates_via_npm(self) -> None:
         original_which = agents.shutil.which
         original_run = agents._run
+        original_fetch = agents._fetch_json
+
+        def fake_which(name: str):
+            if name in {"gemini", "npm"}:
+                return f"/bin/{name}"
+            return None
+
+        def fake_run(command, *, timeout):
+            if command[:2] == ["/bin/gemini", "--version"]:
+                return subprocess.CompletedProcess(command, 0, "0.9.0\n", "")
+            if command[:3] == ["npm", "view", "@google/gemini-cli"]:
+                return subprocess.CompletedProcess(command, 0, "0.10.2\n", "")
+            return subprocess.CompletedProcess(command, 1, "", "not found")
+
+        agents.shutil.which = fake_which
+        agents._run = fake_run
+        # GitHub-sourced runtimes are probed in the same sweep; stub the fetch
+        # so no test ever leaves the process.
+        agents._fetch_json = lambda url, *, timeout: {"tag_name": "v0.0.1"}
+        try:
+            status = agents.agent_statuses(self.runtimes_dir, check_updates=True)[
+                "statuses"
+            ]["gemini"]
+        finally:
+            agents.shutil.which = original_which
+            agents._run = original_run
+            agents._fetch_json = original_fetch
+
+        self.assertTrue(status["present"])
+        self.assertEqual(status["version"], "0.9.0")
+        self.assertEqual(status["latest_version"], "0.10.2")
+        self.assertTrue(status["update_available"])
+        self.assertEqual(status["package"]["name"], "@google/gemini-cli")
+
+    def test_latest_github_version_degrades_without_raising(self) -> None:
+        original_fetch = agents._fetch_json
+
+        def failing_fetch(url, *, timeout):
+            raise OSError("HTTP Error 403: rate limit exceeded")
+
+        agents._fetch_json = failing_fetch
+        try:
+            latest = agents._latest_github_version("openai/codex")
+        finally:
+            agents._fetch_json = original_fetch
+
+        self.assertIsNone(latest["latest_version"])
+        self.assertIn("rate limit", latest["latest_error"])
+        self.assertTrue(latest["latest_checked_at"])
+
+        # A release without any readable semver is an error, not a crash.
+        agents._fetch_json = lambda url, *, timeout: {"tag_name": "nightly", "name": ""}
+        try:
+            latest = agents._latest_github_version("openai/codex")
+        finally:
+            agents._fetch_json = original_fetch
+        self.assertIsNone(latest["latest_version"])
+        self.assertIn("did not include a semver", latest["latest_error"])
+
+    def test_agent_statuses_default_path_never_checks_latest(self) -> None:
+        original_which = agents.shutil.which
+        original_run = agents._run
+        original_fetch = agents._fetch_json
         commands = []
 
         def fake_which(name: str):
@@ -214,17 +325,22 @@ class AgentRegistryTest(unittest.TestCase):
             commands.append(list(command))
             return subprocess.CompletedProcess(command, 0, "codex 0.141.0\n", "")
 
+        def forbidden_fetch(url, *, timeout):
+            raise AssertionError(f"default status path must not fetch {url}")
+
         agents.shutil.which = fake_which
         agents._run = fake_run
+        agents._fetch_json = forbidden_fetch
         try:
             payload = agents.agent_statuses(self.runtimes_dir)
         finally:
             agents.shutil.which = original_which
             agents._run = original_run
+            agents._fetch_json = original_fetch
 
         self.assertFalse(
-            [command for command in commands if command and command[0] == "npm"],
-            f"default status path must not hit npm, got: {commands}",
+            [command for command in commands if command[:2] == ["npm", "view"]],
+            f"default status path must not query the npm registry, got: {commands}",
         )
         status = payload["statuses"]["codex"]
         # "not checked", not "check failed": all latest_* fields stay None.
@@ -234,12 +350,15 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertIsNone(status["update_available"])
         self.assertEqual(status["version"], "0.141.0")
 
-    def test_default_path_serves_still_fresh_npm_answers_from_cache(self) -> None:
+    def test_default_path_serves_still_fresh_latest_answers_from_cache(self) -> None:
         """A reload without check_updates must not forget an update the console
-        already learned — the cached npm answer is served, npm is not called."""
+        already learned — the cached answer is served, the network is not hit.
+        The same cache is what keeps GitHub's anonymous 60 req/h quota safe."""
         original_which = agents.shutil.which
         original_run = agents._run
-        npm_calls = []
+        original_fetch = agents._fetch_json
+        fetched_urls = []
+        codex_url = "https://api.github.com/repos/openai/codex/releases/latest"
 
         def fake_which(name: str):
             if name in {"codex", "npm"}:
@@ -249,22 +368,25 @@ class AgentRegistryTest(unittest.TestCase):
         def fake_run(command, *, timeout):
             if command[:2] == ["/bin/codex", "--version"]:
                 return subprocess.CompletedProcess(command, 0, "codex 0.141.0\n", "")
-            if command[:3] == ["npm", "view", "@openai/codex"]:
-                npm_calls.append(list(command))
-                return subprocess.CompletedProcess(command, 0, "0.142.5\n", "")
             return subprocess.CompletedProcess(command, 1, "", "not found")
+
+        def fake_fetch(url, *, timeout):
+            fetched_urls.append(url)
+            return {"tag_name": "rust-v0.146.0", "name": "0.146.0"}
 
         agents.shutil.which = fake_which
         agents._run = fake_run
+        agents._fetch_json = fake_fetch
         try:
             agents.agent_statuses(self.runtimes_dir, check_updates=True)
             status = agents.agent_statuses(self.runtimes_dir)["statuses"]["codex"]
         finally:
             agents.shutil.which = original_which
             agents._run = original_run
+            agents._fetch_json = original_fetch
 
-        self.assertEqual(len(npm_calls), 1, npm_calls)
-        self.assertEqual(status["latest_version"], "0.142.5")
+        self.assertEqual(fetched_urls.count(codex_url), 1, fetched_urls)
+        self.assertEqual(status["latest_version"], "0.146.0")
         self.assertTrue(status["update_available"])
 
     def test_agent_statuses_caches_local_probes(self) -> None:
@@ -326,6 +448,32 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(result["status"], "installed")
         self.assertEqual(calls[0][0][:4], ["npm", "install", "-g", "@qwen-code/qwen-code@latest"])
         self.assertEqual(calls[0][1], agents.INSTALL_TIMEOUT_SECONDS)
+
+    def test_install_agent_prefers_self_update_when_cli_is_present(self) -> None:
+        original_run = agents._run
+        original_which = agents.shutil.which
+        calls = []
+
+        def fake_run(command, *, timeout):
+            calls.append(list(command))
+            return subprocess.CompletedProcess(command, 0, "ok\n", "")
+
+        agents._run = fake_run
+        agents.shutil.which = lambda name: "/bin/codex" if name == "codex" else None
+        try:
+            present = agents.install_agent("codex")
+            agents.shutil.which = lambda name: None
+            absent = agents.install_agent("codex")
+        finally:
+            agents._run = original_run
+            agents.shutil.which = original_which
+
+        # Present: the CLI's own updater (it knows its install channel and
+        # swaps atomically). Absent: the official installer script.
+        self.assertEqual(present["command"], ["codex", "update"])
+        self.assertEqual(absent["command"][:2], ["bash", "-lc"])
+        self.assertIn("chatgpt.com/codex/install.sh", absent["command"][2])
+        self.assertEqual(calls, [present["command"], absent["command"]])
 
     def test_pi_installs_its_npm_package_without_lifecycle_scripts(self) -> None:
         original_run = agents._run
