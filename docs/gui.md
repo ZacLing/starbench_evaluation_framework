@@ -69,7 +69,21 @@ single-operator tool; do not expose it to a network.
   one is set.
 - **Agents** — the runtime resource side. Built-in runtime cards show wire
   protocol, compatible-provider count, Docker capability, and whether the CLI
-  is on PATH. Custom runtimes are created and edited here as
+  is on PATH. Install/Update goes through each runtime's *official* channel:
+  the vendor's standalone installer script for Codex, Claude Code, opencode,
+  and Kimi Code (the card badge names the script's source domain, because
+  running a remote script is a bigger trust grant than npm; updates prefer the
+  CLI's own self-updater — `codex update`, `claude update`, `opencode
+  upgrade` — which detects its install channel and swaps atomically), and the
+  official npm package for Gemini CLI, Grok, Pi, and Qwen Code. Latest
+  versions come from the channel's own source of truth (npm registry or
+  GitHub releases), cached server-side. The status probe classifies every
+  discovered copy of a CLI by realpath — the PATH hit plus each runtime's
+  known install drop points and the npm global bin — and the card shows a
+  warning with per-copy channel/version/path evidence whenever copies from
+  different channels coexist or PATH runs a different channel than the
+  official one (the way a stale standalone binary silently shadows an
+  npm-installed update). Custom runtimes are created and edited here as
   `runtimes/<id>.json` specs — the exact files the CLI consumes via
   `--executor-agent custom:<id>` / `--runtimes-dir`, validated by the runner's
   own loader so the console and CLI can never disagree. The form covers the
