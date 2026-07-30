@@ -14,6 +14,10 @@ export type CliAuthStatusKind = "ok" | "api_key" | "warn" | "fail" | "unknown"
 
 export type InstallChannel = "standalone" | "npm"
 
+export type DetectedChannel = "standalone" | "npm" | "homebrew" | "unknown"
+
+export type ChannelWarningKind = "channel_mismatch" | "shadowed_copies"
+
 export type AgentInstallStatusKind = "installed" | "failed"
 
 export type ThinkingChannel = "native_config" | "prompt"
@@ -43,6 +47,19 @@ export interface AgentPackage {
   docs_url: string
 }
 
+export interface ChannelInstallation {
+  channel: "standalone" | "npm" | "homebrew" | "unknown"
+  path: string
+  real_path: string
+  version: string | null
+  active: boolean
+}
+
+export interface ChannelWarning {
+  kind: "channel_mismatch" | "shadowed_copies"
+  message: string
+}
+
 export interface AgentRuntimeStatus {
   id: string
   bin: string
@@ -57,6 +74,10 @@ export interface AgentRuntimeStatus {
   latest_error: string | null
   update_available: boolean | null
   installable: boolean
+  official_channel: "standalone" | "npm" | null
+  active_channel: "standalone" | "npm" | "homebrew" | "unknown" | null
+  installations: ChannelInstallation[]
+  channel_warnings: ChannelWarning[]
 }
 
 export interface AgentStatusPayload {

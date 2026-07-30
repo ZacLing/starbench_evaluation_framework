@@ -22,8 +22,13 @@ class AgentRegistryTest(unittest.TestCase):
         self.runtimes_dir = self.tmp / "runtimes"
         self.runtimes_dir.mkdir()
         agents._clear_status_caches()
+        # The shadow scan probes real install drop points (~/.local/bin/…);
+        # point it at nothing so tests never observe this machine's installs.
+        self._original_probe_paths = agents._STANDALONE_PROBE_PATHS
+        agents._STANDALONE_PROBE_PATHS = {}
 
     def tearDown(self) -> None:
+        agents._STANDALONE_PROBE_PATHS = self._original_probe_paths
         shutil.rmtree(self.tmp, ignore_errors=True)
         agents._clear_status_caches()
 
@@ -284,6 +289,135 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertEqual(status["latest_version"], "0.10.2")
         self.assertTrue(status["update_available"])
         self.assertEqual(status["package"]["name"], "@google/gemini-cli")
+
+    def test_classify_channel_recognizes_install_layouts(self) -> None:
+        classify = agents.classify_channel
+        self.assertEqual(
+            classify("/Users/op/.codex/packages/standalone/codex-0.134.0/codex"),
+            "standalone",
+        )
+        self.assertEqual(
+            classify("/Users/op/.local/share/claude/versions/2.1.220/claude"),
+            "standalone",
+        )
+        self.assertEqual(classify("/Users/op/.opencode/bin/opencode"), "standalone")
+        self.assertEqual(classify("/Users/op/.kimi-code/bin/kimi"), "standalone")
+        self.assertEqual(
+            classify("/opt/homebrew/lib/node_modules/@google/gemini-cli/bin/gemini"),
+            "npm",
+        )
+        # npm-under-Homebrew: node_modules must win over the Homebrew prefix.
+        self.assertEqual(
+            classify("/opt/homebrew/Cellar/node/23.1/lib/node_modules/x/bin/x"),
+            "npm",
+        )
+        self.assertEqual(classify("/opt/homebrew/Cellar/foo/1.0.0/bin/foo"), "homebrew")
+        self.assertEqual(classify("/usr/local/bin/foo"), "unknown")
+
+    def test_classify_channel_resolves_symlinked_launchers(self) -> None:
+        home = self.tmp / "home"
+        target = home / ".codex" / "packages" / "standalone" / "codex-0.134.0" / "codex"
+        target.parent.mkdir(parents=True)
+        target.write_text("#!/bin/sh\n", encoding="utf-8")
+        link = home / ".local" / "bin" / "codex"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(target)
+        self.assertEqual(agents.classify_channel(str(link)), "standalone")
+
+    def _two_channel_codex_layout(self) -> tuple:
+        """A codex installed twice: standalone (official) and npm."""
+        home = self.tmp / "home"
+        standalone_real = (
+            home / ".codex" / "packages" / "standalone" / "codex-0.134.0" / "codex"
+        )
+        standalone_real.parent.mkdir(parents=True)
+        standalone_real.write_text("", encoding="utf-8")
+        standalone_link = home / ".local" / "bin" / "codex"
+        standalone_link.parent.mkdir(parents=True)
+        standalone_link.symlink_to(standalone_real)
+        npm_real = (
+            home / "npm" / "lib" / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+        )
+        npm_real.parent.mkdir(parents=True)
+        npm_real.write_text("", encoding="utf-8")
+        npm_link = home / "npm" / "bin" / "codex"
+        npm_link.parent.mkdir(parents=True)
+        npm_link.symlink_to(npm_real)
+        return home, standalone_link, npm_link
+
+    def _scan_codex(self, home: Path, path_hit: Path, standalone_link: Path):
+        """Run agent_statuses against the fake layout with `path_hit` on PATH."""
+        original_which = agents.shutil.which
+        original_run = agents._run
+
+        def fake_which(name: str):
+            if name == "codex":
+                return str(path_hit)
+            if name == "npm":
+                return str(home / "npm" / "bin" / "npm")
+            return None
+
+        def fake_run(command, *, timeout):
+            if command == ["npm", "prefix", "-g"]:
+                return subprocess.CompletedProcess(command, 0, f"{home / 'npm'}\n", "")
+            if command[1:] == ["--version"] and "/.local/bin/" in command[0]:
+                return subprocess.CompletedProcess(command, 0, "codex 0.134.0\n", "")
+            if command[1:] == ["--version"] and "/npm/bin/" in command[0]:
+                return subprocess.CompletedProcess(command, 0, "codex 0.146.0\n", "")
+            return subprocess.CompletedProcess(command, 1, "", "not found")
+
+        agents.shutil.which = fake_which
+        agents._run = fake_run
+        agents._STANDALONE_PROBE_PATHS = {"codex": (str(standalone_link),)}
+        try:
+            return agents.agent_statuses(self.runtimes_dir)["statuses"]["codex"]
+        finally:
+            agents.shutil.which = original_which
+            agents._run = original_run
+
+    def test_shadowed_npm_copy_is_reported_with_evidence(self) -> None:
+        home, standalone_link, npm_link = self._two_channel_codex_layout()
+        status = self._scan_codex(home, path_hit=standalone_link, standalone_link=standalone_link)
+
+        self.assertEqual(status["official_channel"], "standalone")
+        self.assertEqual(status["active_channel"], "standalone")
+        self.assertEqual(
+            [(i["channel"], i["version"], i["active"]) for i in status["installations"]],
+            [("standalone", "0.134.0", True), ("npm", "0.146.0", False)],
+        )
+        self.assertEqual(
+            [w["kind"] for w in status["channel_warnings"]], ["shadowed_copies"]
+        )
+        message = status["channel_warnings"][0]["message"]
+        self.assertIn("0.146.0", message)
+        self.assertIn(str(npm_link), message)
+        self.assertIn("remove", message)
+
+    def test_path_hitting_wrong_channel_is_a_mismatch_warning(self) -> None:
+        home, standalone_link, npm_link = self._two_channel_codex_layout()
+        status = self._scan_codex(home, path_hit=npm_link, standalone_link=standalone_link)
+
+        self.assertEqual(status["official_channel"], "standalone")
+        self.assertEqual(status["active_channel"], "npm")
+        self.assertEqual(
+            [(i["channel"], i["active"]) for i in status["installations"]],
+            [("npm", True), ("standalone", False)],
+        )
+        self.assertEqual(
+            [w["kind"] for w in status["channel_warnings"]], ["channel_mismatch"]
+        )
+        message = status["channel_warnings"][0]["message"]
+        self.assertIn("official channel is standalone", message)
+        self.assertIn(str(standalone_link), message)
+
+    def test_single_official_install_raises_no_warning(self) -> None:
+        home, standalone_link, npm_link = self._two_channel_codex_layout()
+        npm_link.unlink()
+        status = self._scan_codex(home, path_hit=standalone_link, standalone_link=standalone_link)
+
+        self.assertEqual(status["active_channel"], "standalone")
+        self.assertEqual(len(status["installations"]), 1)
+        self.assertEqual(status["channel_warnings"], [])
 
     def test_latest_github_version_degrades_without_raising(self) -> None:
         original_fetch = agents._fetch_json

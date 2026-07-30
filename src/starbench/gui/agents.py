@@ -15,6 +15,7 @@ the CLI accepts.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import shutil
@@ -182,6 +183,78 @@ INSTALL_SPECS: Dict[str, Dict[str, Any]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Channel identity. Several install channels can coexist on one machine and
+# silently shadow each other through PATH order (the incident this exists
+# for: a stale standalone codex shadowing every npm-installed update, so
+# updating "succeeded" forever without taking effect). Classification is by
+# realpath markers observed in each channel's install layout; shadow
+# detection scans each runtime's known install drop points in addition to
+# the PATH hit and reports coexistence instead of trusting a single lookup.
+# ---------------------------------------------------------------------------
+
+_STANDALONE_REALPATH_MARKERS = (
+    "/.codex/packages/standalone/",  # codex official installer
+    "/.local/share/claude/versions/",  # Claude Code native installer
+    "/.opencode/bin/",  # opencode installer
+    "/.kimi-code/",  # kimi-code installer (KIMI_INSTALL_DIR default)
+)
+
+# Launch points each standalone installer drops beyond whatever PATH says:
+# the entry symlink/binary the installer creates. Keyed like INSTALL_SPECS.
+_STANDALONE_PROBE_PATHS: Dict[str, Tuple[str, ...]] = {
+    "codex": ("~/.local/bin/codex",),
+    "claude": ("~/.local/bin/claude",),
+    "opencode": ("~/.opencode/bin/opencode",),
+    "custom:kimi-code": ("~/.kimi-code/bin/kimi",),
+}
+
+
+def _classify_real_path(real_path: str) -> str:
+    for marker in _STANDALONE_REALPATH_MARKERS:
+        if marker in real_path:
+            return "standalone"
+    # node_modules must be tested before the Homebrew prefix: an
+    # npm-under-Homebrew global binary also resolves below /opt/homebrew.
+    if "/node_modules/" in real_path:
+        return "npm"
+    if "/Cellar/" in real_path:
+        return "homebrew"
+    return "unknown"
+
+
+def classify_channel(path: str) -> str:
+    """Which install channel the binary at ``path`` belongs to, by realpath."""
+    return _classify_real_path(os.path.realpath(os.path.expanduser(path)))
+
+
+# `npm prefix -g` is a subprocess whose answer effectively never changes
+# within a console session; probe it once per process (tests reset it).
+_NPM_PREFIX_UNSET = object()
+_npm_global_bin_cache: Any = _NPM_PREFIX_UNSET
+
+
+def _npm_global_bin() -> Optional[Path]:
+    global _npm_global_bin_cache
+    with _STATUS_CACHE_LOCK:
+        if _npm_global_bin_cache is not _NPM_PREFIX_UNSET:
+            return _npm_global_bin_cache
+    bin_dir: Optional[Path] = None
+    if shutil.which("npm"):
+        try:
+            result = _run(["npm", "prefix", "-g"], timeout=NPM_VIEW_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        if result is not None and result.returncode == 0:
+            lines = [line.strip() for line in (result.stdout or "").splitlines()]
+            prefix = next((line for line in lines if line), "")
+            if prefix:
+                bin_dir = Path(prefix) / "bin"
+    with _STATUS_CACHE_LOCK:
+        _npm_global_bin_cache = bin_dir
+    return bin_dir
+
+
 def _provider_filter_dict(pf: ProviderFilter) -> Dict[str, Any]:
     return {
         "kinds": list(pf.kinds),
@@ -305,6 +378,145 @@ def _local_version(cli: Dict[str, Any]) -> Dict[str, Optional[str]]:
     }
 
 
+def _binary_version(path: str) -> Optional[str]:
+    try:
+        result = _run([path, "--version"], timeout=CLI_VERSION_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+    return extract_version(output)
+
+
+def _install_scan(
+    agent_id: str, bin_name: str, cli: Dict[str, Any], version: Optional[str]
+) -> Dict[str, Any]:
+    """Channel identity for the PATH hit plus every known install drop point.
+
+    The PATH hit alone lied during the shadowing incident; scanning the
+    runtime's standalone launch point and the npm global bin as well (the
+    collapsed form of cc-switch's candidate enumeration) is what lets the
+    console see two copies where `shutil.which` sees one. Copies are
+    deduplicated by realpath, so a launch point that *is* the PATH hit does
+    not show up twice.
+    """
+    spec = INSTALL_SPECS.get(agent_id)
+    installations: List[Dict[str, Any]] = []
+    seen = set()
+    if cli.get("present") and cli.get("path"):
+        real = os.path.realpath(str(cli["path"]))
+        seen.add(real)
+        installations.append(
+            {
+                "channel": _classify_real_path(real),
+                "path": str(cli["path"]),
+                "real_path": real,
+                "version": version,
+                "active": True,
+            }
+        )
+    if spec:
+        candidates = [
+            Path(probe).expanduser()
+            for probe in _STANDALONE_PROBE_PATHS.get(agent_id, ())
+        ]
+        npm_bin = _npm_global_bin()
+        if npm_bin is not None:
+            candidates.append(npm_bin.expanduser() / bin_name)
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            real = os.path.realpath(str(candidate))
+            if real in seen:
+                continue
+            seen.add(real)
+            installations.append(
+                {
+                    "channel": _classify_real_path(real),
+                    "path": str(candidate),
+                    "real_path": real,
+                    "version": _binary_version(str(candidate)),
+                    "active": False,
+                }
+            )
+    active_channel = (
+        installations[0]["channel"]
+        if installations and installations[0]["active"]
+        else None
+    )
+    return {
+        "official_channel": spec["channel"] if spec else None,
+        "active_channel": active_channel,
+        "installations": installations,
+        "channel_warnings": _shadow_warnings(bin_name, spec, installations),
+    }
+
+
+def _channel_phrase(channel: str) -> str:
+    return {
+        "standalone": "the standalone installer",
+        "npm": "npm",
+        "homebrew": "Homebrew",
+    }.get(channel, "an unrecognized channel")
+
+
+def _copy_phrase(installation: Dict[str, Any]) -> str:
+    version = installation.get("version")
+    label = f"{installation['channel']} {version}" if version else installation["channel"]
+    return f"{label} at {installation['path']}"
+
+
+def _shadow_warnings(
+    bin_name: str,
+    spec: Optional[Dict[str, Any]],
+    installations: List[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    """Structured diagnoses of channel coexistence and PATH/channel mismatch.
+
+    Only runtimes with an INSTALL_SPEC are judged (without an official channel
+    there is nothing to mismatch), and only when PATH actually resolves the
+    CLI — a copy sitting off PATH is surfaced in ``installations`` without
+    being escalated to a warning.
+    """
+    if not spec or not installations or not installations[0]["active"]:
+        return []
+    official = spec["channel"]
+    active = installations[0]
+    extras = installations[1:]
+    if active["channel"] != official:
+        message = (
+            f"PATH runs `{bin_name}` from {_channel_phrase(active['channel'])} "
+            f"({_copy_phrase(active)}), but the official channel is {official}."
+        )
+        official_copy = next(
+            (extra for extra in extras if extra["channel"] == official), None
+        )
+        if official_copy:
+            message += (
+                f" The {official} copy ({_copy_phrase(official_copy)}) is shadowed —"
+                f" installs and updates will not take effect until the"
+                f" {active['channel']} copy is removed."
+            )
+        else:
+            message += (
+                f" Console installs use the official {official} channel and would"
+                f" be shadowed by this copy — remove it first."
+            )
+        return [{"kind": "channel_mismatch", "message": message}]
+    if extras:
+        plural = len(extras) > 1
+        shadowed = "; ".join(_copy_phrase(extra) for extra in extras)
+        message = (
+            f"`{bin_name}` is installed through more than one channel. PATH runs"
+            f" {_copy_phrase(active)}; also present: {shadowed}. The shadowed"
+            f" {'copies' if plural else 'copy'} never"
+            f" {'run' if plural else 'runs'} and only confuse"
+            f"{'' if plural else 's'} version checks — remove"
+            f" {'them' if plural else 'it'}."
+        )
+        return [{"kind": "shadowed_copies", "message": message}]
+    return []
+
+
 def _latest_npm_version(package: str) -> Dict[str, Optional[str]]:
     checked_at = datetime.now(timezone.utc).isoformat()
     if not shutil.which("npm"):
@@ -416,9 +628,11 @@ _LATEST_NOT_CHECKED = {
 
 def _clear_status_caches() -> None:
     """Drop cached probe results (used by tests and nowhere else)."""
+    global _npm_global_bin_cache
     with _STATUS_CACHE_LOCK:
         _LOCAL_STATUS_CACHE.clear()
         _LATEST_CACHE.clear()
+        _npm_global_bin_cache = _NPM_PREFIX_UNSET
 
 
 def _cached_local_status(agent_id: str, bin_name: str) -> Dict[str, Any]:
@@ -429,7 +643,9 @@ def _cached_local_status(agent_id: str, bin_name: str) -> Dict[str, Any]:
         if cached and now - cached[0] < LOCAL_STATUS_TTL_SECONDS:
             return dict(cached[1])
     cli = _cli_probe(bin_name)
-    status = {**cli, **_local_version(cli)}
+    local = _local_version(cli)
+    scan = _install_scan(agent_id, bin_name, cli, local["version"])
+    status = {**cli, **local, **scan}
     with _STATUS_CACHE_LOCK:
         _LOCAL_STATUS_CACHE[key] = (time.monotonic(), dict(status))
     return status
@@ -497,6 +713,10 @@ def agent_statuses(
             **latest,
             "update_available": _is_newer(latest.get("latest_version"), local.get("version")),
             "installable": bool(package),
+            "official_channel": local["official_channel"],
+            "active_channel": local["active_channel"],
+            "installations": local["installations"],
+            "channel_warnings": local["channel_warnings"],
         }
 
     targets = _runtime_targets(runtimes_dir)
@@ -854,6 +1074,7 @@ __all__ = [
     "PROTOCOL_CHOICES",
     "agent_statuses",
     "agent_templates",
+    "classify_channel",
     "delete_custom_agent",
     "get_custom_agent",
     "install_agent",

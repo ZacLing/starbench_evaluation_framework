@@ -34,6 +34,11 @@ CliAuthStatusKind = Literal["ok", "api_key", "warn", "fail", "unknown"]
 # The install channel a runtime's vendor officially recommends: "standalone"
 # is the vendor's own installer script, "npm" a global npm package.
 InstallChannel = Literal["standalone", "npm"]
+# Where a discovered binary actually came from, classified by realpath
+# markers; "unknown" is the honest bucket for layouts the console does not
+# recognize (source builds, exotic package managers).
+DetectedChannel = Literal["standalone", "npm", "homebrew", "unknown"]
+ChannelWarningKind = Literal["channel_mismatch", "shadowed_copies"]
 AgentInstallStatusKind = Literal["installed", "failed"]
 # How --thinking-effort reaches a runtime: a real reasoning switch on the CLI
 # itself, or a prompt-level instruction.
@@ -81,6 +86,27 @@ class AgentPackage(TypedDict):
     docs_url: str
 
 
+class ChannelInstallation(TypedDict):
+    """One discovered copy of a runtime's CLI. ``active`` marks the copy PATH
+    actually resolves to; every other listed copy is shadowed by it."""
+
+    channel: DetectedChannel
+    path: str
+    real_path: str
+    version: Optional[str]
+    active: bool
+
+
+class ChannelWarning(TypedDict):
+    """A shadowing diagnosis: multiple install channels coexist for one CLI,
+    or PATH resolves to a different channel than the official one. The row's
+    ``installations`` carry the per-copy channel/version/path evidence;
+    ``message`` summarizes it and says what to do."""
+
+    kind: ChannelWarningKind
+    message: str
+
+
 class AgentRuntimeStatus(TypedDict):
     id: str
     bin: str
@@ -95,6 +121,16 @@ class AgentRuntimeStatus(TypedDict):
     latest_error: Optional[str]
     update_available: Optional[bool]
     installable: bool
+    # The vendor's recommended channel (null when the console has no installer
+    # for this runtime) vs the channel of the copy PATH actually runs (null
+    # when the CLI is not on PATH).
+    official_channel: Optional[InstallChannel]
+    active_channel: Optional[DetectedChannel]
+    # Every copy found: the PATH hit plus the runtime's known install drop
+    # points (standalone launch point, npm global bin), deduplicated by
+    # realpath. Empty when nothing is installed.
+    installations: List[ChannelInstallation]
+    channel_warnings: List[ChannelWarning]
 
 
 class AgentStatusPayload(TypedDict):
@@ -1437,6 +1473,8 @@ GENERATED_TYPES = [
     "ModelsSource",
     "CliAuthStatusKind",
     "InstallChannel",
+    "DetectedChannel",
+    "ChannelWarningKind",
     "AgentInstallStatusKind",
     "ThinkingChannel",
     "WebSearchMode",
@@ -1445,6 +1483,8 @@ GENERATED_TYPES = [
     "PreflightStatus",
     "RuntimeCli",
     "AgentPackage",
+    "ChannelInstallation",
+    "ChannelWarning",
     "AgentRuntimeStatus",
     "AgentStatusPayload",
     "AgentInstallResult",
