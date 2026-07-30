@@ -41,7 +41,6 @@ import { AgentIcon, CUSTOM_ICON_CHOICES, compatibleProviders } from "@/component
 import { ErrorNote } from "@/components/error-note"
 import {
   api,
-  type AgentPackage,
   type AgentTemplate,
   type AgentRuntimeStatus,
   type AiProvider,
@@ -311,12 +310,14 @@ function RuntimeCard({
   return (
     <Card className="py-4">
       <CardContent className="grid gap-2.5 px-4">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2">
           <AgentIcon agent={agentId} icon={icon} size={22} />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold">{label}</span>
           <CliBadge cli={status ?? cli} />
         </div>
-        <div className="grid gap-1 text-xs text-muted-foreground">
+        {/* One type size for the whole fact block: the version and the install
+            source differ by role (mono data, warn ink), never by shrinking. */}
+        <div className="grid min-w-0 gap-1 text-xs text-muted-foreground">
           <span className="truncate" title={description}>
             {description}
           </span>
@@ -330,11 +331,16 @@ function RuntimeCard({
               }`}
           </span>
           <VersionLine status={status} loading={statusLoading} />
+          <ChannelSourceLine status={status} />
         </div>
         <ChannelWarnings status={status} />
-        <div className="flex items-center gap-1.5">
+        {/* Attribute on the left, controls on the right — the row carries no
+            facts of its own, so a long install source can never crowd the
+            button. flex-wrap keeps the row's min-content from widening the
+            card's grid column, which used to push content past the card edge.
+            mt-1 makes the facts/controls break the card's widest gap. */}
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
           <IsolationBadge dockerImage={dockerImage} />
-          <ChannelBadge pkg={status?.package} />
           {(showInstall || showUpdate) && (
             <Button
               variant="outline"
@@ -458,7 +464,7 @@ function BuiltinDetails({
               {status?.package && (
                 <DetailRow label="Install">
                   <div className="grid gap-2">
-                    <code className="break-all rounded bg-muted px-1.5 py-1 font-mono text-xs">
+                    <code className="break-all rounded-md bg-muted px-1.5 py-1 font-mono text-xs">
                       {status.package.install_command.join(" ")}
                     </code>
                     {status.package.update_command.join(" ") !==
@@ -468,7 +474,7 @@ function BuiltinDetails({
                           Updates run the CLI's own updater (it detects its
                           install channel and swaps versions atomically):
                         </p>
-                        <code className="break-all rounded bg-muted px-1.5 py-1 font-mono text-xs">
+                        <code className="break-all rounded-md bg-muted px-1.5 py-1 font-mono text-xs">
                           {status.package.update_command.join(" ")}
                         </code>
                       </>
@@ -515,27 +521,38 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   )
 }
 
-/* The official install channel, with the trust surface spelled out: a
-   standalone channel runs a remote script, so its source domain is shown
-   right on the badge instead of hiding in a tooltip. */
-function ChannelBadge({ pkg }: { pkg?: AgentPackage | null }) {
-  if (!pkg) return null
-  return pkg.channel === "standalone" ? (
-    <Badge
-      variant="outline"
-      className="gap-1 text-[11px]"
-      title={`Official standalone installer — runs an install script fetched from ${pkg.script_domain}`}
+/* The official install channel, and the card's whole trust surface: a
+   standalone channel pipes a script fetched from a remote host into a shell,
+   so that host is visible text on the card, never a tooltip. It states the
+   channel the console would install from — not where the copy on disk came
+   from; ChannelWarnings below is what speaks when those two diverge.
+
+   This is the one place the source appears. The action row underneath carries
+   controls only, so the disclosure and the Install button stop competing for
+   the same 283px at 1280px wide. */
+function ChannelSourceLine({ status }: { status?: AgentRuntimeStatus }) {
+  if (!status) return null
+  const pkg = status.package
+  if (!pkg) {
+    return (
+      <span title="No official one-click install channel is known for this runtime — install its CLI yourself.">
+        no one-click install channel
+      </span>
+    )
+  }
+  const origin = pkg.channel === "standalone" ? pkg.script_domain : pkg.name
+  return (
+    <span
+      className="flex min-w-0 items-baseline gap-1"
+      title={
+        pkg.channel === "standalone"
+          ? `Official install channel: a standalone installer script fetched from ${pkg.script_domain} and run in your shell`
+          : `Official install channel: the npm package ${pkg.name}`
+      }
     >
-      standalone · {pkg.script_domain}
-    </Badge>
-  ) : (
-    <Badge
-      variant="outline"
-      className="gap-1 text-[11px]"
-      title={`Official npm package ${pkg.name}`}
-    >
-      npm
-    </Badge>
+      <span className="shrink-0">{origin ? `${pkg.channel} ·` : pkg.channel}</span>
+      {origin && <span className="truncate font-mono text-foreground">{origin}</span>}
+    </span>
   )
 }
 
@@ -588,24 +605,15 @@ function VersionLine({
 }) {
   if (loading && !status) {
     return (
-      <span className="inline-flex items-center gap-1 text-[11px]">
+      <span className="inline-flex items-center gap-1 text-xs">
         <RefreshCw className="size-3 animate-spin" /> checking versions
       </span>
     )
   }
-  if (!status) return <span className="text-[11px]">version not checked</span>
-  if (!status.present) {
-    return (
-      <span className="text-[11px]">
-        not installed
-        {status.package
-          ? status.package.channel === "npm"
-            ? ` · npm package ${status.package.name}`
-            : ` · official installer from ${status.package.script_domain}`
-          : ""}
-      </span>
-    )
-  }
+  if (!status) return <span className="text-xs">version not checked</span>
+  // The install channel is not repeated here: ChannelSourceLine owns it, on
+  // the very next line, for every state rather than only this one.
+  if (!status.present) return <span className="text-xs">not installed</span>
   const local = status.version ? `v${status.version}` : "version unavailable"
   const latest = status.latest_version ? `latest v${status.latest_version}` : null
   const update = status.update_available === true
@@ -618,7 +626,7 @@ function VersionLine({
   return (
     <span
       className={cn(
-        "truncate text-[11px]",
+        "truncate text-xs",
         update ? "text-warn-ink" : "text-muted-foreground",
       )}
       title={[
