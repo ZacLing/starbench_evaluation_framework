@@ -14,6 +14,7 @@ import {
   OpenAI,
   OpenCode,
   OpenRouter,
+  Pi,
   Qwen,
   Trae,
   Vercel,
@@ -98,6 +99,8 @@ export function AgentIcon({
       return <Grok.Avatar size={size} />
     case "opencode":
       return <OpenCode.Avatar size={size} />
+    case "pi":
+      return <Pi.Avatar size={size} />
   }
   if (agent.startsWith("custom:")) {
     const render = icon ? CUSTOM_ICONS[icon.toLowerCase()] : undefined
