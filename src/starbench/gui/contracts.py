@@ -74,9 +74,13 @@ class AgentPackage(TypedDict):
     because running a remote script is a bigger trust grant than npm).
     ``update_command`` differs from ``install_command`` for CLIs that ship
     their own self-updater. ``latest_source`` names where the newest published
-    version is read: {"npm": "<package>"} or {"github": "<owner>/<repo>"}."""
+    version is read: {"npm": "<package>"} or {"github": "<owner>/<repo>"}.
+    ``artifact_channel`` is the on-disk layout the official installer leaves
+    behind when it differs from the delivery channel (pi's installer script
+    performs a locked npm install); null means the layout matches ``channel``."""
 
     channel: InstallChannel
+    artifact_channel: Optional[InstallChannel]
     name: Optional[str]
     bin: str
     install_command: List[str]

@@ -38,6 +38,7 @@ export interface RuntimeCli {
 
 export interface AgentPackage {
   channel: "standalone" | "npm"
+  artifact_channel: "standalone" | "npm" | null
   name: string | null
   bin: string
   install_command: string[]

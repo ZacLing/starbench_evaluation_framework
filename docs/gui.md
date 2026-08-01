@@ -71,11 +71,13 @@ single-operator tool; do not expose it to a network.
   protocol, compatible-provider count, Docker capability, and whether the CLI
   is on PATH. Install/Update goes through each runtime's *official* channel:
   the vendor's standalone installer script for Codex, Claude Code, opencode,
-  and Kimi Code (the card badge names the script's source domain, because
+  Pi, and Kimi Code (the card badge names the script's source domain, because
   running a remote script is a bigger trust grant than npm; updates prefer the
   CLI's own self-updater — `codex update`, `claude update`, `opencode
   upgrade` — which detects its install channel and swaps atomically), and the
-  official npm package for Gemini CLI, Grok, Pi, and Qwen Code. Latest
+  official npm package for Gemini CLI, Grok, and Qwen Code. Pi's script is a
+  hardened npm install, so its on-disk artifact classifies as npm-layout
+  (`artifact_channel`) and never trips the mismatch warning. Latest
   versions come from the channel's own source of truth (npm registry or
   GitHub releases), cached server-side. The status probe classifies every
   discovered copy of a CLI by realpath — the PATH hit plus each runtime's

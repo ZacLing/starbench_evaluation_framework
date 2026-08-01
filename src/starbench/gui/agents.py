@@ -81,6 +81,7 @@ def _npm_spec(
     ]
     return {
         "channel": "npm",
+        "artifact_channel": None,
         "name": package,
         "bin": bin_name,
         "install_command": list(command),
@@ -109,6 +110,7 @@ def _standalone_spec(
     install = ["bash", "-lc", script]
     return {
         "channel": "standalone",
+        "artifact_channel": None,
         "name": None,
         "bin": bin_name,
         "install_command": list(install),
@@ -158,15 +160,24 @@ INSTALL_SPECS: Dict[str, Dict[str, Any]] = {
         "https://opencode.ai/docs",
         update_command=("opencode", "upgrade"),
     ),
-    # pi pulls an optional native dependency; the console triggers this install
-    # on the operator's own machine, so no package lifecycle script from the
-    # resolved tree gets to run here.
-    "pi": _npm_spec(
-        "@earendil-works/pi-coding-agent",
-        "pi",
-        "https://pi.dev/docs",
-        extra_args=("--ignore-scripts",),
-    ),
+    # pi.dev's homepage leads with the installer script. The script is a
+    # hardened npm install (it bootstraps Node 22.19+ when missing, performs a
+    # shrinkwrap-locked install into the npm global prefix with a ~/.local
+    # fallback, and refuses layouts that would shadow an existing copy), so
+    # the artifact it leaves on disk is npm-layout — hence artifact_channel —
+    # and the npm registry, the script's actual artifact source, is where the
+    # latest version is read.
+    "pi": {
+        **_standalone_spec(
+            "pi",
+            "curl -fsSL https://pi.dev/install.sh | sh",
+            "earendil-works/pi",
+            "https://pi.dev/docs",
+        ),
+        "artifact_channel": "npm",
+        "name": "@earendil-works/pi-coding-agent",
+        "latest_source": {"npm": "@earendil-works/pi-coding-agent"},
+    },
     "custom:qwen-code": _npm_spec(
         "@qwen-code/qwen-code",
         "qwen",
@@ -207,6 +218,9 @@ _STANDALONE_PROBE_PATHS: Dict[str, Tuple[str, ...]] = {
     "claude": ("~/.local/bin/claude",),
     "opencode": ("~/.opencode/bin/opencode",),
     "custom:kimi-code": ("~/.kimi-code/bin/kimi",),
+    # pi's installer targets the npm global prefix (already scanned) but
+    # falls back to ~/.local when that prefix is not writable.
+    "pi": ("~/.local/bin/pi",),
 }
 
 
@@ -480,19 +494,24 @@ def _shadow_warnings(
     if not spec or not installations or not installations[0]["active"]:
         return []
     official = spec["channel"]
+    # Some vendor installers deliver through one channel but leave another
+    # channel's layout on disk (pi's script performs a locked npm install), so
+    # a healthy install is judged against the artifact layout, not the
+    # delivery channel.
+    expected = spec.get("artifact_channel") or official
     active = installations[0]
     extras = installations[1:]
-    if active["channel"] != official:
+    if active["channel"] != expected:
         message = (
             f"PATH runs `{bin_name}` from {_channel_phrase(active['channel'])} "
             f"({_copy_phrase(active)}), but the official channel is {official}."
         )
         official_copy = next(
-            (extra for extra in extras if extra["channel"] == official), None
+            (extra for extra in extras if extra["channel"] == expected), None
         )
         if official_copy:
             message += (
-                f" The {official} copy ({_copy_phrase(official_copy)}) is shadowed —"
+                f" The {expected} copy ({_copy_phrase(official_copy)}) is shadowed —"
                 f" installs and updates will not take effect until the"
                 f" {active['channel']} copy is removed."
             )

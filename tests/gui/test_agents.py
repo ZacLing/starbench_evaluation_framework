@@ -177,6 +177,8 @@ class AgentRegistryTest(unittest.TestCase):
         by_id = agents.INSTALL_SPECS
         for agent_id, spec in by_id.items():
             self.assertIn(spec["channel"], ("standalone", "npm"), agent_id)
+            artifact = spec["artifact_channel"] or spec["channel"]
+            self.assertIn(artifact, ("standalone", "npm"), agent_id)
             self.assertTrue(spec["bin"], agent_id)
             self.assertTrue(spec["install_command"], agent_id)
             self.assertTrue(spec["update_command"], agent_id)
@@ -184,13 +186,18 @@ class AgentRegistryTest(unittest.TestCase):
                 # Vendor installer scripts run through a login shell; the
                 # script's source domain is surfaced to the operator.
                 self.assertEqual(spec["install_command"][:2], ["bash", "-lc"], agent_id)
-                self.assertIsNone(spec["name"], agent_id)
                 self.assertTrue(spec["script_domain"], agent_id)
-                self.assertIn("github", spec["latest_source"], agent_id)
             else:
                 self.assertEqual(spec["install_command"][:2], ["npm", "install"], agent_id)
-                self.assertEqual(spec["latest_source"], {"npm": spec["name"]}, agent_id)
                 self.assertIsNone(spec["script_domain"], agent_id)
+            # An npm-layout artifact always names its package and reads the
+            # latest version from the npm registry; a standalone artifact has
+            # no package name and reads GitHub releases.
+            if artifact == "npm":
+                self.assertEqual(spec["latest_source"], {"npm": spec["name"]}, agent_id)
+            else:
+                self.assertIsNone(spec["name"], agent_id)
+                self.assertIn("github", spec["latest_source"], agent_id)
         # Self-updating CLIs update through their own updater, not a reinstall.
         self.assertEqual(by_id["codex"]["update_command"], ["codex", "update"])
         self.assertEqual(by_id["claude"]["update_command"], ["claude", "update"])
@@ -209,8 +216,17 @@ class AgentRegistryTest(unittest.TestCase):
         # npm stays the official channel where the vendor recommends npm.
         self.assertEqual(by_id["gemini"]["channel"], "npm")
         self.assertEqual(by_id["grok"]["channel"], "npm")
-        self.assertEqual(by_id["pi"]["channel"], "npm")
         self.assertEqual(by_id["custom:qwen-code"]["channel"], "npm")
+        # pi.dev's homepage leads with the installer script, but the script
+        # performs a locked npm install: delivery is standalone, the on-disk
+        # artifact is npm-layout, and updates re-run the script.
+        self.assertEqual(by_id["pi"]["channel"], "standalone")
+        self.assertEqual(by_id["pi"]["artifact_channel"], "npm")
+        self.assertEqual(by_id["pi"]["script_domain"], "pi.dev")
+        self.assertEqual(
+            by_id["pi"]["latest_source"], {"npm": "@earendil-works/pi-coding-agent"}
+        )
+        self.assertEqual(by_id["pi"]["update_command"], by_id["pi"]["install_command"])
 
     def test_agent_status_reports_versions_and_updates_via_github(self) -> None:
         original_which = agents.shutil.which
@@ -609,7 +625,7 @@ class AgentRegistryTest(unittest.TestCase):
         self.assertIn("chatgpt.com/codex/install.sh", absent["command"][2])
         self.assertEqual(calls, [present["command"], absent["command"]])
 
-    def test_pi_installs_its_npm_package_without_lifecycle_scripts(self) -> None:
+    def test_pi_installs_through_the_official_installer_script(self) -> None:
         original_run = agents._run
         calls = []
 
@@ -624,11 +640,59 @@ class AgentRegistryTest(unittest.TestCase):
             agents._run = original_run
 
         self.assertEqual(result["status"], "installed")
-        self.assertEqual(
-            calls[0][:4], ["npm", "install", "-g", "@earendil-works/pi-coding-agent@latest"]
+        self.assertEqual(calls[0][:2], ["bash", "-lc"])
+        self.assertIn("pi.dev/install.sh", calls[0][2])
+
+    def test_pi_script_install_lands_in_npm_layout_without_warning(self) -> None:
+        """pi delivers through its installer script but the script performs a
+        locked npm install, so a healthy install classifies as npm-layout and
+        must not be escalated to a channel mismatch."""
+        home = self.tmp / "home"
+        real = (
+            home
+            / "npm"
+            / "lib"
+            / "node_modules"
+            / "@earendil-works"
+            / "pi-coding-agent"
+            / "dist"
+            / "cli.js"
         )
-        self.assertIn("--ignore-scripts", calls[0])
-        self.assertNotIn("--ignore-scripts", agents.INSTALL_SPECS["codex"]["install_command"])
+        real.parent.mkdir(parents=True)
+        real.write_text("", encoding="utf-8")
+        link = home / "npm" / "bin" / "pi"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(real)
+
+        original_which = agents.shutil.which
+        original_run = agents._run
+
+        def fake_which(name: str):
+            if name == "pi":
+                return str(link)
+            if name == "npm":
+                return "/bin/npm"
+            return None
+
+        def fake_run(command, *, timeout):
+            if command == ["npm", "prefix", "-g"]:
+                return subprocess.CompletedProcess(command, 0, f"{home / 'npm'}\n", "")
+            if command[1:] == ["--version"]:
+                return subprocess.CompletedProcess(command, 0, "pi 0.83.0\n", "")
+            return subprocess.CompletedProcess(command, 1, "", "not found")
+
+        agents.shutil.which = fake_which
+        agents._run = fake_run
+        try:
+            status = agents.agent_statuses(self.runtimes_dir)["statuses"]["pi"]
+        finally:
+            agents.shutil.which = original_which
+            agents._run = original_run
+
+        self.assertEqual(status["official_channel"], "standalone")
+        self.assertEqual(status["active_channel"], "npm")
+        self.assertEqual(status["version"], "0.83.0")
+        self.assertEqual(status["channel_warnings"], [])
 
     def test_install_agent_rejects_unknown_runtime(self) -> None:
         with self.assertRaisesRegex(agents.AgentError, "No built-in installer"):
