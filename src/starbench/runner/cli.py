@@ -57,6 +57,7 @@ PLAN_LIST_FLAGS = {
     "instruction_steps": "--instruction-step",
     "rigors": "--rigor",
     "executor_skills": "--executor-skill",
+    "required_executor_skills": "--required-executor-skill",
     "executor_skill_groups": "--executor-skill-group",
 }
 # Plan keys holding role option boxes; each expands to repeated NAME=VALUE flags.
@@ -349,6 +350,14 @@ def parse_args(
         help=(
             "Executor skill id to install from task executor_skills.json or the shared "
             "executor skill registry. Repeatable."
+        ),
+    )
+    parser.add_argument(
+        "--required-executor-skill",
+        action="append",
+        help=(
+            "Executor skill id to install and require through the executor prompt. "
+            "Repeatable."
         ),
     )
     parser.add_argument(

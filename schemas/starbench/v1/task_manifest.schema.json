@@ -61,8 +61,31 @@
       "items": {
         "type": "string"
       }
+    },
+    "advisory_executor_skill_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "advisory_executor_skills": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "required_executor_skill_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_executor_skills": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
     }
   },
   "required": ["task_id", "task_name", "run_task_id", "rubric_count", "timeout_seconds", "allow_web_search", "input_materials"]
 }
-

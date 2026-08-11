@@ -173,6 +173,7 @@ class TaskRunSpec:
     rigor_mode: str = "none"
     selected_rigors: List[Rigor] | None = None
     selected_executor_skills: List[ExecutorSkill] | None = None
+    required_executor_skill_ids: List[str] | None = None
     variant_label: str | None = None
 
     @property
@@ -223,6 +224,21 @@ class TaskRunSpec:
         return [skill.id for skill in self.selected_executor_skills or []]
 
     @property
+    def advisory_executor_skill_ids(self) -> List[str]:
+        required = set(self.required_executor_skill_ids or [])
+        return [skill.id for skill in self.selected_executor_skills or [] if skill.id not in required]
+
+    @property
+    def advisory_executor_skills(self) -> List[ExecutorSkill]:
+        required = set(self.required_executor_skill_ids or [])
+        return [skill for skill in self.selected_executor_skills or [] if skill.id not in required]
+
+    @property
+    def required_executor_skills(self) -> List[ExecutorSkill]:
+        required = set(self.required_executor_skill_ids or [])
+        return [skill for skill in self.selected_executor_skills or [] if skill.id in required]
+
+    @property
     def executor_skill_label(self) -> str | None:
         if not self.selected_executor_skills:
             return None
@@ -244,6 +260,14 @@ class TaskRunSpec:
             "executor_skill_ids": self.executor_skill_ids,
             "executor_skill_count": len(self.selected_executor_skills or []),
             "executor_skills": [skill.public_metadata() for skill in self.selected_executor_skills or []],
+            "advisory_executor_skill_ids": self.advisory_executor_skill_ids,
+            "advisory_executor_skills": [
+                skill.public_metadata() for skill in self.advisory_executor_skills
+            ],
+            "required_executor_skill_ids": list(self.required_executor_skill_ids or []),
+            "required_executor_skills": [
+                skill.public_metadata() for skill in self.required_executor_skills
+            ],
         }
 
 

@@ -268,11 +268,13 @@ def build_task_runs(
     rigor_mode: str = "none",
     rigor_ids: Sequence[str] | None = None,
     executor_skill_ids: Sequence[str] | None = None,
+    required_executor_skill_ids: Sequence[str] | None = None,
     external_executor_skills: Sequence[ExecutorSkill] | None = None,
 ) -> List[TaskRunSpec]:
     requested_steps = list(instruction_steps or [])
     requested_rigors = list(rigor_ids or [])
     requested_executor_skills = list(executor_skill_ids or [])
+    requested_required_executor_skills = list(required_executor_skill_ids or [])
     if instruction_mode == "none" and requested_steps:
         instruction_mode = "select"
     if rigor_mode == "none" and requested_rigors:
@@ -302,6 +304,24 @@ def build_task_runs(
         raise ValueError(
             f"Duplicate --executor-skill value(s): {', '.join(duplicate_requested_executor_skills)}"
         )
+    duplicate_required_executor_skills = sorted(
+        {
+            skill_id
+            for skill_id in requested_required_executor_skills
+            if requested_required_executor_skills.count(skill_id) > 1
+        }
+    )
+    if duplicate_required_executor_skills:
+        raise ValueError(
+            "Duplicate --required-executor-skill value(s): "
+            + ", ".join(duplicate_required_executor_skills)
+        )
+    requested_installed_executor_skills = list(requested_executor_skills)
+    requested_installed_executor_skills.extend(
+        skill_id
+        for skill_id in requested_required_executor_skills
+        if skill_id not in requested_installed_executor_skills
+    )
     external_executor_skills = list(external_executor_skills or [])
     external_executor_skill_by_id = {skill.id: skill for skill in external_executor_skills}
     if len(external_executor_skill_by_id) != len(external_executor_skills):
@@ -327,7 +347,8 @@ def build_task_runs(
                 f"Executor skill id(s) defined both in task {task.id} and external registry: "
                 f"{', '.join(overlapping_executor_skill_ids)}"
             )
-        requested_executor_skill_set = set(requested_executor_skills)
+        requested_executor_skill_set = set(requested_installed_executor_skills)
+        required_executor_skill_set = set(requested_required_executor_skills)
         selected_rigors: List[Rigor] = []
         selected_executor_skills: List[ExecutorSkill] = []
         if rigor_mode == "select":
@@ -337,10 +358,10 @@ def build_task_runs(
             if missing_rigors:
                 raise ValueError(f"Task {task.id} missing rigor(s): {', '.join(missing_rigors)}")
             selected_rigors = [rigor for rigor in task.rigors if rigor.id in requested_rigor_set]
-        if requested_executor_skills:
+        if requested_installed_executor_skills:
             missing_executor_skills = [
                 skill_id
-                for skill_id in requested_executor_skills
+                for skill_id in requested_installed_executor_skills
                 if skill_id not in executor_skill_by_id and skill_id not in external_executor_skill_by_id
             ]
             if missing_executor_skills:
@@ -353,6 +374,9 @@ def build_task_runs(
                 for skill in external_executor_skills
                 if skill.id in requested_executor_skill_set
             )
+        selected_required_executor_skill_ids = [
+            skill.id for skill in selected_executor_skills if skill.id in required_executor_skill_set
+        ]
         if instruction_mode == "none":
             task_runs.append(
                 TaskRunSpec(
@@ -362,6 +386,7 @@ def build_task_runs(
                     rigor_mode=rigor_mode,
                     selected_rigors=selected_rigors,
                     selected_executor_skills=selected_executor_skills,
+                    required_executor_skill_ids=selected_required_executor_skill_ids,
                 )
             )
         elif instruction_mode == "traverse":
@@ -376,6 +401,7 @@ def build_task_runs(
                         rigor_mode=rigor_mode,
                         selected_rigors=selected_rigors,
                         selected_executor_skills=selected_executor_skills,
+                        required_executor_skill_ids=selected_required_executor_skill_ids,
                     )
                 )
         elif instruction_mode == "select":
@@ -392,6 +418,7 @@ def build_task_runs(
                     rigor_mode=rigor_mode,
                     selected_rigors=selected_rigors,
                     selected_executor_skills=selected_executor_skills,
+                    required_executor_skill_ids=selected_required_executor_skill_ids,
                 )
             )
         elif instruction_mode == "ablation":
@@ -413,6 +440,7 @@ def build_task_runs(
                     rigor_mode=rigor_mode,
                     selected_rigors=selected_rigors,
                     selected_executor_skills=selected_executor_skills,
+                    required_executor_skill_ids=selected_required_executor_skill_ids,
                 )
             )
             for step in steps:
@@ -424,6 +452,7 @@ def build_task_runs(
                         rigor_mode=rigor_mode,
                         selected_rigors=selected_rigors,
                         selected_executor_skills=selected_executor_skills,
+                        required_executor_skill_ids=selected_required_executor_skill_ids,
                     )
                 )
             if len(steps) > 1:
@@ -435,6 +464,7 @@ def build_task_runs(
                         rigor_mode=rigor_mode,
                         selected_rigors=selected_rigors,
                         selected_executor_skills=selected_executor_skills,
+                        required_executor_skill_ids=selected_required_executor_skill_ids,
                         variant_label="all_instructions",
                     )
                 )

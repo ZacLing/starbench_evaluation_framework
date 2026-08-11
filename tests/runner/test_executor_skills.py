@@ -149,6 +149,83 @@ class ExecutorSkillTests(unittest.TestCase):
         self.assertNotIn("Installed executor skills:", prompt)
         self.assertNotIn("$CODEX_HOME/skills", prompt)
 
+    def test_required_executor_skill_is_installed_once_and_prompt_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            task = load_task(self.make_task_with_executor_skill(tmp_path))
+            task_run = build_task_runs(
+                [task],
+                instruction_mode="none",
+                required_executor_skill_ids=["demo-executor-skill"],
+            )[0]
+
+            self.assertEqual(task_run.executor_skill_ids, ["demo-executor-skill"])
+            self.assertEqual(task_run.advisory_executor_skill_ids, [])
+            self.assertEqual(
+                task_run.required_executor_skill_ids,
+                ["demo-executor-skill"],
+            )
+            prompt = build_executor_prompt(
+                task_run,
+                executor_skill_location="./.claude/skills/<skill-id>/",
+            )
+            self.assertIn("Required executor skills:", prompt)
+            self.assertIn("read the complete SKILL.md", prompt)
+            self.assertIn("./.claude/skills/<skill-id>/", prompt)
+            self.assertIn("Do not skip a required skill", prompt)
+
+            paths = materialize_task(
+                task_run,
+                tmp_path / "runs" / "required_skill_run",
+                "demo_python_cli__skill_demo-executor-skill",
+                executor_backend="local",
+            )
+            manifest = json.loads(
+                (paths["task_root"] / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["executor_skill_count"], 1)
+            self.assertEqual(manifest["advisory_executor_skill_ids"], [])
+            self.assertEqual(
+                manifest["required_executor_skill_ids"],
+                ["demo-executor-skill"],
+            )
+            self.assertEqual(
+                [item["id"] for item in manifest["required_executor_skills"]],
+                ["demo-executor-skill"],
+            )
+
+    def test_required_executor_skill_upgrades_ordinary_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = load_task(self.make_task_with_executor_skill(Path(tmp)))
+            task_run = build_task_runs(
+                [task],
+                instruction_mode="none",
+                executor_skill_ids=["demo-executor-skill"],
+                required_executor_skill_ids=["demo-executor-skill"],
+            )[0]
+            self.assertEqual(task_run.executor_skill_ids, ["demo-executor-skill"])
+            self.assertEqual(task_run.advisory_executor_skill_ids, [])
+            self.assertEqual(
+                task_run.required_executor_skill_ids,
+                ["demo-executor-skill"],
+            )
+
+    def test_duplicate_required_executor_skill_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            task = load_task(self.make_task_with_executor_skill(Path(tmp)))
+            with self.assertRaisesRegex(
+                ValueError,
+                "Duplicate --required-executor-skill value",
+            ):
+                build_task_runs(
+                    [task],
+                    instruction_mode="none",
+                    required_executor_skill_ids=[
+                        "demo-executor-skill",
+                        "demo-executor-skill",
+                    ],
+                )
+
     def test_executor_skill_cli_argument_is_repeatable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = parse_args(
@@ -164,6 +241,22 @@ class ExecutorSkillTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(args.executor_skill, ["skill-a", "skill-b"])
+
+    def test_required_executor_skill_cli_argument_is_repeatable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = parse_args(
+                [
+                    "--tasks-dir",
+                    tmp,
+                    "--runs-dir",
+                    tmp,
+                    "--required-executor-skill",
+                    "skill-a",
+                    "--required-executor-skill",
+                    "skill-b",
+                ]
+            )
+            self.assertEqual(args.required_executor_skill, ["skill-a", "skill-b"])
 
     def test_agent_runtime_cli_arguments_can_select_claude(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

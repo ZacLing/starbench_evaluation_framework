@@ -294,6 +294,18 @@ class ArtifactSchemaTests(unittest.TestCase):
         ]["reasoning"]
         self.assertIs(reasoning["x-starbench-private"], True)
 
+    def test_skill_mode_fields_are_public_artifact_contract(self) -> None:
+        expected = {
+            "advisory_executor_skill_ids",
+            "advisory_executor_skills",
+            "required_executor_skill_ids",
+            "required_executor_skills",
+        }
+        manifest_properties = schema("task_manifest.schema.json")["properties"]
+        summary_properties = schema("task_summary.schema.json")["properties"]
+        self.assertTrue(expected.issubset(manifest_properties))
+        self.assertTrue(expected.issubset(summary_properties))
+
     def test_runner_outputs_match_public_artifact_schemas(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

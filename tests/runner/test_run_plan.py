@@ -99,6 +99,15 @@ class RunPlanTests(unittest.TestCase):
         self.assertEqual(args.runs_dir, self.tmp.resolve())
         self.assertEqual(args.run_plan_data["run_id"], "plan_run")
 
+    def test_required_executor_skills_expand_from_plan(self) -> None:
+        path = self.write_plan(required_executor_skills=["skill-a", "skill-b"])
+        args = parse_args(["--plan", str(path), "--runs-dir", str(self.tmp)])
+        self.assertEqual(args.required_executor_skill, ["skill-a", "skill-b"])
+        self.assertEqual(
+            args.run_plan_data["required_executor_skills"],
+            ["skill-a", "skill-b"],
+        )
+
     def test_batch_label_rides_the_plan_into_args(self) -> None:
         # The batch label is a measurement fact the runner records, so it must
         # survive the plan transport: the contract accepts it and the generic

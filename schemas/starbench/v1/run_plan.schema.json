@@ -172,6 +172,13 @@
         "minLength": 1
       }
     },
+    "required_executor_skills": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "executor_skill_groups": {
       "type": "array",
       "items": {

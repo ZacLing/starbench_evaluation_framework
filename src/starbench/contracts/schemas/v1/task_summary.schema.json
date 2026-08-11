@@ -31,6 +31,30 @@
     "instruction_variant": {
       "type": "string"
     },
+    "advisory_executor_skill_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "advisory_executor_skills": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "required_executor_skill_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_executor_skills": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "executor_timing": {
       "type": ["object", "null"]
     },

@@ -179,6 +179,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
     registry_skill_by_id = {skill.id: skill for skill in registry_skills}
     group_skill_ids = expand_skill_groups(args.executor_skill_root, args.executor_skill_group)
     requested_executor_skill_ids = list(args.executor_skill or []) + group_skill_ids
+    requested_required_executor_skill_ids = list(args.required_executor_skill or [])
     duplicate_requested_executor_skill_ids = sorted(
         {
             skill_id
@@ -191,9 +192,27 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
             "Duplicate executor skill selected from ids/groups: "
             + ", ".join(duplicate_requested_executor_skill_ids)
         )
+    duplicate_required_executor_skill_ids = sorted(
+        {
+            skill_id
+            for skill_id in requested_required_executor_skill_ids
+            if requested_required_executor_skill_ids.count(skill_id) > 1
+        }
+    )
+    if duplicate_required_executor_skill_ids:
+        raise ValueError(
+            "Duplicate required executor skill selected: "
+            + ", ".join(duplicate_required_executor_skill_ids)
+        )
+    installed_executor_skill_ids = list(requested_executor_skill_ids)
+    installed_executor_skill_ids.extend(
+        skill_id
+        for skill_id in requested_required_executor_skill_ids
+        if skill_id not in installed_executor_skill_ids
+    )
     external_executor_skills = [
         registry_skill_by_id[skill_id]
-        for skill_id in requested_executor_skill_ids
+        for skill_id in installed_executor_skill_ids
         if skill_id in registry_skill_by_id
     ]
     task_runs = build_task_runs(
@@ -202,7 +221,8 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         instruction_steps=args.instruction_step,
         rigor_mode=args.rigor_mode,
         rigor_ids=args.rigor,
-        executor_skill_ids=requested_executor_skill_ids,
+        executor_skill_ids=installed_executor_skill_ids,
+        required_executor_skill_ids=requested_required_executor_skill_ids,
         external_executor_skills=external_executor_skills,
     )
     rng = random.Random(args.seed)
@@ -272,6 +292,7 @@ async def run_benchmark(args: argparse.Namespace) -> Dict[str, Any]:
         "rigor_mode": args.rigor_mode,
         "requested_rigor_ids": args.rigor or [],
         "requested_executor_skill_ids": requested_executor_skill_ids,
+        "requested_required_executor_skill_ids": requested_required_executor_skill_ids,
         "requested_executor_skill_groups": args.executor_skill_group or [],
         "executor_skill_root": str(args.executor_skill_root),
         "executor_skill_order": "executor_skills",

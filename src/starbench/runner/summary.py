@@ -54,6 +54,18 @@ def build_instruction_ablation_summary(batch_summaries: Sequence[Dict[str, Any]]
                         "instruction_steps": task_result.get("instruction_steps", []),
                         "executor_skill_ids": task_result.get("executor_skill_ids", []),
                         "executor_skills": task_result.get("executor_skills", []),
+                        "advisory_executor_skill_ids": task_result.get(
+                            "advisory_executor_skill_ids", []
+                        ),
+                        "advisory_executor_skills": task_result.get(
+                            "advisory_executor_skills", []
+                        ),
+                        "required_executor_skill_ids": task_result.get(
+                            "required_executor_skill_ids", []
+                        ),
+                        "required_executor_skills": task_result.get(
+                            "required_executor_skills", []
+                        ),
                         "_attempt_ids": [],
                         "_run_task_ids": [],
                         "_inconclusive_count": 0,
@@ -109,6 +121,10 @@ def build_instruction_ablation_summary(batch_summaries: Sequence[Dict[str, Any]]
                 "instruction_steps": group["instruction_steps"],
                 "executor_skill_ids": group["executor_skill_ids"],
                 "executor_skills": group["executor_skills"],
+                "advisory_executor_skill_ids": group["advisory_executor_skill_ids"],
+                "advisory_executor_skills": group["advisory_executor_skills"],
+                "required_executor_skill_ids": group["required_executor_skill_ids"],
+                "required_executor_skills": group["required_executor_skills"],
                 "attempts": len(group["_attempt_ids"]),
                 "inconclusive": group["_inconclusive_count"],
                 "runs": runs,

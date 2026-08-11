@@ -185,6 +185,7 @@ class ClosedLoopTests(unittest.TestCase):
                         "argv": args,
                         "pi_home": home,
                         "gemini_api_key": os.environ.get("GEMINI_API_KEY"),
+                        "prompt": prompt,
                     }),
                     encoding="utf-8",
                 )
@@ -569,7 +570,7 @@ class ClosedLoopTests(unittest.TestCase):
                 # native --thinking switch on both sides of the loop.
                 "--thinking-effort",
                 "off",
-                "--executor-skill",
+                "--required-executor-skill",
                 skill_id,
                 "--executor-skill-root",
                 str(shared_skill_root),
@@ -621,6 +622,8 @@ class ClosedLoopTests(unittest.TestCase):
             # cannot reroute the evaluator that grades it through a key var.
             self.assertEqual(executor_call["gemini_api_key"], "sentinel-executor-only")
             self.assertIsNone(judge_call["gemini_api_key"])
+            self.assertIn("Required executor skills:", executor_call["prompt"])
+            self.assertIn("read the complete SKILL.md", executor_call["prompt"])
 
             executor_home = task_root / "agent_home" / "pi_executor"
             judge_home = task_root / "agent_home" / "judge_single_pi"
@@ -656,9 +659,14 @@ class ClosedLoopTests(unittest.TestCase):
 
             aggregate = json.loads((task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8"))
             self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
-            provenance = json.loads(
+            run_config = json.loads(
                 (runs_dir / "test_pi_run" / "run_config.json").read_text(encoding="utf-8")
-            )["runtime_provenance"]
+            )
+            self.assertEqual(
+                run_config["requested_required_executor_skill_ids"],
+                [skill_id],
+            )
+            provenance = run_config["runtime_provenance"]
             self.assertEqual(provenance["executor"]["agent"], "pi")
             self.assertEqual(provenance["evaluator"]["agent"], "pi")
 

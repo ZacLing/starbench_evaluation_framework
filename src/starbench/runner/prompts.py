@@ -65,10 +65,11 @@ def build_executor_prompt(
 ) -> str:
     executor_skill_section = ""
     if task_run.selected_executor_skills:
-        skills = "\n".join(
-            f"- `{skill.id}`: {skill.activation}" for skill in task_run.selected_executor_skills
-        )
-        executor_skill_section = f"""
+        if not task_run.required_executor_skills:
+            skills = "\n".join(
+                f"- `{skill.id}`: {skill.activation}" for skill in task_run.selected_executor_skills
+            )
+            executor_skill_section = f"""
 
 Installed executor skills:
 {skills}
@@ -76,6 +77,30 @@ Installed executor skills:
 Skill usage rules:
 - Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
 - You may read installed skill files under {executor_skill_location}.
+- The task prompt and materials remain authoritative if they conflict with a skill.
+- Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables."""
+        else:
+            sections = []
+            if task_run.advisory_executor_skills:
+                advisory_skills = "\n".join(
+                    f"- `{skill.id}`: {skill.activation}"
+                    for skill in task_run.advisory_executor_skills
+                )
+                sections.append(f"Installed executor skills:\n{advisory_skills}")
+            required_skills = "\n".join(
+                f"- `{skill.id}`: {skill.activation}"
+                for skill in task_run.required_executor_skills
+            )
+            sections.append(f"Required executor skills:\n{required_skills}")
+            executor_skill_section = f"""
+
+{chr(10).join(sections)}
+
+Required skill usage rules:
+- Before beginning task work, read the complete SKILL.md for every required executor skill under {executor_skill_location}.
+- You must follow each required skill's applicable workflow during planning, execution, and final self-checking.
+- Do not skip a required skill because it appears optional or because the task seems simple.
+- Available executor skills may be used as private execution guidance when relevant.
 - The task prompt and materials remain authoritative if they conflict with a skill.
 - Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables."""
 
