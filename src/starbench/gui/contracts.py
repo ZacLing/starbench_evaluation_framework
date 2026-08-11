@@ -830,6 +830,8 @@ class ExperimentPlanItem(_ExperimentPlanItemBase, total=False):
     run_plan: Optional[Dict[str, Any]]
     # Final, group-expanded skill ids injected into every contender (shared).
     executor_skills: List[str]
+    advisory_executor_skills: List[str]
+    required_executor_skills: List[str]
     # Auth mode the launch will use; the review-step preflight passes it
     # through so credential checks match reality.
     executor_auth_mode: str
@@ -1293,6 +1295,7 @@ class SharedConfig(TypedDict, total=False):
     web_search_mode: str
     extra_args: str
     executor_skills: List[str]
+    required_executor_skills: List[str]
     executor_skill_groups: List[str]
     instruction_mode: str
     instruction_steps: List[str]

@@ -524,6 +524,8 @@ export interface ExperimentPlanItem {
   docker_image?: string
   run_plan?: Record<string, unknown> | null
   executor_skills?: string[]
+  advisory_executor_skills?: string[]
+  required_executor_skills?: string[]
   executor_auth_mode?: string
   evaluator_agent?: string
   evaluator_auth_mode?: string
@@ -954,6 +956,7 @@ export interface SharedConfig {
   web_search_mode?: string
   extra_args?: string
   executor_skills?: string[]
+  required_executor_skills?: string[]
   executor_skill_groups?: string[]
   instruction_mode?: string
   instruction_steps?: string[]

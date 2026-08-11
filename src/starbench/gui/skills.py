@@ -18,6 +18,7 @@ will run.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
@@ -29,6 +30,13 @@ DEFAULT_SKILLS_DIR = Path(__file__).resolve().parents[3] / "executor_skills"
 
 class SkillError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class SkillSelection:
+    installed_ids: List[str]
+    advisory_ids: List[str]
+    required_ids: List[str]
 
 
 def _directory_stats(path: Path) -> tuple[int, int]:
@@ -139,10 +147,27 @@ def validate_selection(
     once (individually and via a group, or via two overlapping groups) — the
     runner rejects that same overlap, so surfacing it here keeps the plan honest.
     """
+    return resolve_selection(skill_root, skill_ids, group_ids, []).installed_ids
+
+
+def resolve_selection(
+    skill_root: Path,
+    skill_ids: Sequence[Any] | None,
+    group_ids: Sequence[Any] | None,
+    required_skill_ids: Sequence[Any] | None,
+) -> SkillSelection:
+    """Validate and normalize Available/Required skill selections.
+
+    Required ids imply installation and upgrade an ordinary or group-provided
+    skill rather than creating a duplicate installation.
+    """
     requested_skill_ids = _clean_ids(skill_ids, "Executor skills")
     requested_group_ids = _clean_ids(group_ids, "Executor skill groups")
-    if not requested_skill_ids and not requested_group_ids:
-        return []
+    requested_required_ids = _clean_ids(
+        required_skill_ids, "Required executor skills"
+    )
+    if not requested_skill_ids and not requested_group_ids and not requested_required_ids:
+        return SkillSelection(installed_ids=[], advisory_ids=[], required_ids=[])
 
     skill_root = skill_root.resolve()
     try:
@@ -179,12 +204,43 @@ def validate_selection(
             "These skills are selected more than once (a skill and a group that "
             f"contains it, or two overlapping groups): {', '.join(duplicates)}"
         )
-    return expanded
+    duplicate_required = sorted(
+        {
+            skill_id
+            for skill_id in requested_required_ids
+            if requested_required_ids.count(skill_id) > 1
+        }
+    )
+    if duplicate_required:
+        raise SkillError(
+            "These skills are required more than once: "
+            + ", ".join(duplicate_required)
+        )
+    unknown_required = [
+        skill_id
+        for skill_id in dict.fromkeys(requested_required_ids)
+        if skill_id not in available_ids
+    ]
+    if unknown_required:
+        raise SkillError(f"Unknown required skill(s): {', '.join(unknown_required)}")
+
+    installed = list(expanded)
+    installed.extend(
+        skill_id for skill_id in requested_required_ids if skill_id not in installed
+    )
+    required_set = set(requested_required_ids)
+    return SkillSelection(
+        installed_ids=installed,
+        advisory_ids=[skill_id for skill_id in installed if skill_id not in required_set],
+        required_ids=[skill_id for skill_id in installed if skill_id in required_set],
+    )
 
 
 __all__ = [
     "DEFAULT_SKILLS_DIR",
     "SkillError",
+    "SkillSelection",
     "list_skills",
+    "resolve_selection",
     "validate_selection",
 ]

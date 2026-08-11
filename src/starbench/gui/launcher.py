@@ -205,6 +205,11 @@ def _normalized_launch(payload: Dict[str, Any], *, runs_dir: Path) -> Dict[str, 
     skills = _string_list(payload.get("executor_skills"), "Executor skills")
     if skills:
         plan["executor_skills"] = skills
+    required_skills = _string_list(
+        payload.get("required_executor_skills"), "Required executor skills"
+    )
+    if required_skills:
+        plan["required_executor_skills"] = required_skills
     skill_groups = _string_list(payload.get("executor_skill_groups"), "Executor skill groups")
     if skill_groups:
         plan["executor_skill_groups"] = skill_groups

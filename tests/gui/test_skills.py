@@ -9,7 +9,7 @@ from pathlib import Path
 
 from starbench.gui import experiments, skills
 from starbench.gui.experiments import ExperimentError
-from starbench.gui.launcher import LaunchError, build_run_argv
+from starbench.gui.launcher import LaunchError, build_run_argv, build_run_plan
 from starbench.gui.skills import SkillError
 from helpers import launch_flags, write_json
 
@@ -131,6 +131,26 @@ class ValidateSelectionTest(unittest.TestCase):
         with self.assertRaisesRegex(SkillError, "more than once"):
             skills.validate_selection(self.root, ["alpha-expert", "beta-expert"], ["core"])
 
+    def test_required_selection_upgrades_a_group_member(self) -> None:
+        selection = skills.resolve_selection(
+            self.root,
+            [],
+            ["core"],
+            ["alpha-expert"],
+        )
+        self.assertEqual(selection.installed_ids, ["alpha-expert", "beta-expert"])
+        self.assertEqual(selection.advisory_ids, ["beta-expert"])
+        self.assertEqual(selection.required_ids, ["alpha-expert"])
+
+    def test_duplicate_required_selection_is_rejected(self) -> None:
+        with self.assertRaisesRegex(SkillError, "required more than once"):
+            skills.resolve_selection(
+                self.root,
+                [],
+                [],
+                ["alpha-expert", "alpha-expert"],
+            )
+
 
 class LauncherSkillPassthroughTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -196,6 +216,16 @@ class LauncherSkillPassthroughTest(unittest.TestCase):
         self.assertIn("--executor-skill beta-expert", joined)
         self.assertIn("--executor-skill-group core", joined)
         self.assertIn("--executor-skill-root /srv/skills", joined)
+
+    def test_required_skill_passes_through_plan_and_argv(self) -> None:
+        payload = self.payload(
+            required_executor_skills=["alpha-expert"],
+            executor_skill_root="/srv/skills",
+        )
+        plan = build_run_plan(payload, runs_dir=self.runs_dir)
+        self.assertEqual(plan["required_executor_skills"], ["alpha-expert"])
+        argv = build_run_argv(payload, runs_dir=self.runs_dir)
+        self.assertIn("--required-executor-skill alpha-expert", " ".join(argv))
 
     def test_no_skills_emits_no_flags(self) -> None:
         argv = build_run_argv(self.payload(), runs_dir=self.runs_dir)
@@ -290,6 +320,21 @@ class ExperimentSkillTest(unittest.TestCase):
             self.assertIn("--executor-skill alpha-expert", joined)
             self.assertIn(f"--executor-skill-root {self.skills_dir}", joined)
             self.assertEqual(item["executor_skills"], ["alpha-expert"])
+
+    def test_required_skill_is_separate_in_every_contender_preview(self) -> None:
+        payload = self.payload(
+            shared_extra={
+                "executor_skill_groups": ["core"],
+                "required_executor_skills": ["alpha-expert"],
+            }
+        )
+        plan = self.plan(payload)
+        for item in plan["plans"]:
+            joined = launch_flags(item)
+            self.assertIn("--required-executor-skill alpha-expert", joined)
+            self.assertEqual(item["executor_skills"], ["alpha-expert", "beta-expert"])
+            self.assertEqual(item["advisory_executor_skills"], ["beta-expert"])
+            self.assertEqual(item["required_executor_skills"], ["alpha-expert"])
 
     def test_group_selection_expands_in_summary_and_passes_group_flag(self) -> None:
         payload = self.payload(shared_extra={"executor_skill_groups": ["core"]})

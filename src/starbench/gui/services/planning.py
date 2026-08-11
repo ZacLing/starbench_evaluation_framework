@@ -87,12 +87,17 @@ def plan_experiment(
     # is a plan-time error — and keep the group-expanded id list for the summary.
     executor_skill_ids = shared.get("executor_skills")
     executor_skill_group_ids = shared.get("executor_skill_groups")
+    required_executor_skill_ids = shared.get("required_executor_skills")
     try:
-        expanded_skill_ids = skills_module.validate_selection(
-            skills_dir, executor_skill_ids, executor_skill_group_ids
+        skill_selection = skills_module.resolve_selection(
+            skills_dir,
+            executor_skill_ids,
+            executor_skill_group_ids,
+            required_executor_skill_ids,
         )
     except SkillError as error:
         raise ExperimentError(str(error))
+    expanded_skill_ids = skill_selection.installed_ids
 
     # Instruction ablation is shared across contenders (a controlled comparison,
     # like the shared judge and skills). Resolve the selected tasks' public expert
@@ -381,6 +386,7 @@ def plan_experiment(
             # Shared executor skills: forward ids and groups as-is (the runner
             # expands groups) plus the library root the console validated against.
             "executor_skills": executor_skill_ids or [],
+            "required_executor_skills": required_executor_skill_ids or [],
             "executor_skill_groups": executor_skill_group_ids or [],
             "executor_skill_root": str(skills_dir) if expanded_skill_ids else "",
         }
@@ -558,6 +564,8 @@ def plan_experiment(
                 # Group-expanded skill ids injected into this contender (shared
                 # across contenders); surfaced in the Review summary.
                 "executor_skills": expanded_skill_ids,
+                "advisory_executor_skills": skill_selection.advisory_ids,
+                "required_executor_skills": skill_selection.required_ids,
                 "warnings": warnings,
                 "argv": argv,
                 # The typed launch contract this run starts from (null when the
