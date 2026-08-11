@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/run_summary.schema.json",
+  "title": "StarBench run summary",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "run_root": {
+      "type": "string"
+    },
+    "seed": {
+      "type": "integer"
+    },
+    "batch_size": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "judge_mode": {
+      "type": "string"
+    },
+    "executor_agent": {
+      "type": "string"
+    },
+    "evaluator_agent": {
+      "type": "string"
+    },
+    "executor_model": {
+      "type": ["string", "null"]
+    },
+    "evaluator_model": {
+      "type": ["string", "null"]
+    },
+    "executor_backend": {
+      "type": "string"
+    },
+    "runtime_provenance": {
+      "type": "object",
+      "description": "Optional runtime provenance snapshot; absent on runs created before provenance capture. Full contract: runtime_provenance.schema.json."
+    },
+    "task_order": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "batches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "batch_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "run_task_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "tasks": {
+            "type": "array"
+          }
+        },
+        "required": ["batch_index", "run_task_ids", "tasks"]
+      }
+    }
+  },
+  "required": ["run_id", "run_root", "batches"]
+}
+

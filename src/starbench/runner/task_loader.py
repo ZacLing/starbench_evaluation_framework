@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
+from starbench.contracts import ContractValidationError, validate_payload
+from starbench.domain import assert_no_symlinks, parse_safe_id, resolve_within
+
 from .models import ExecutorSkill, HumanReferenceStep, Rigor, Rubric, TaskRunSpec, TaskSpec
 
 
@@ -19,7 +22,10 @@ def _discover_material_paths(
     extra_excluded_paths: Sequence[Path] | None = None,
 ) -> List[Path]:
     if configured_materials is not None:
-        return [(task_dir / material).resolve() for material in configured_materials]
+        return [
+            resolve_within(task_dir, material, kind="task material path")
+            for material in configured_materials
+        ]
 
     excluded = {config_path.resolve(), prompt_path.resolve(), rubrics_path.resolve()}
     if human_reference_path.exists():
@@ -41,22 +47,54 @@ def _discover_material_paths(
 
 
 def load_task(task_dir: Path) -> TaskSpec:
+    task_dir = task_dir.expanduser()
+    if task_dir.is_symlink():
+        raise ValueError(f"Task package root cannot be a symbolic link: {task_dir}")
     task_dir = task_dir.resolve()
-    config_path = task_dir / "task.json"
+    assert_no_symlinks(task_dir, kind="task package")
+    config_path = resolve_within(task_dir, "task.json", kind="task config path")
     if not config_path.exists():
         raise FileNotFoundError(f"Missing task.json in {task_dir}")
 
     config = json.loads(config_path.read_text(encoding="utf-8"))
-    prompt_path = task_dir / config.get("prompt", "prompt.md")
-    rubrics_path = task_dir / config.get("rubrics", "rubrics.json")
-    human_reference_path = task_dir / config.get("human_reference", "human_reference.json")
-    rigors_path = task_dir / config.get("rigors", "rigors.json")
+    _validate_contract("task.schema.json", config, config_path)
+    task_id = parse_safe_id(config["id"], kind="task id")
+    prompt_path = resolve_within(
+        task_dir, config.get("prompt", "prompt.md"), kind="task prompt path"
+    )
+    rubrics_path = resolve_within(
+        task_dir, config.get("rubrics", "rubrics.json"), kind="task rubrics path"
+    )
+    human_reference_path = resolve_within(
+        task_dir,
+        config.get("human_reference", "human_reference.json"),
+        kind="task human reference path",
+    )
+    rigors_path = resolve_within(
+        task_dir, config.get("rigors", "rigors.json"), kind="task rigors path"
+    )
     executor_skills_value = config.get("executor_skills", "executor_skills.json")
-    executor_skills_path = task_dir / executor_skills_value if executor_skills_value else None
+    executor_skills_path = (
+        resolve_within(
+            task_dir, executor_skills_value, kind="task executor skills manifest path"
+        )
+        if executor_skills_value
+        else None
+    )
     subtle_difference_value = config.get("subtle_difference")
-    subtle_difference_path = task_dir / subtle_difference_value if subtle_difference_value else None
+    subtle_difference_path = (
+        resolve_within(
+            task_dir, subtle_difference_value, kind="task subtle difference path"
+        )
+        if subtle_difference_value
+        else None
+    )
     files_dir_value = config.get("files_dir", "files")
-    files_dir = task_dir / files_dir_value if files_dir_value else None
+    files_dir = (
+        resolve_within(task_dir, files_dir_value, kind="task files directory")
+        if files_dir_value
+        else None
+    )
     if files_dir is not None and not files_dir.exists():
         files_dir = None
     configured_materials = config.get("materials")
@@ -66,6 +104,7 @@ def load_task(task_dir: Path) -> TaskSpec:
     executor_skill_exclusions: List[Path] = []
     if executor_skills_path is not None and executor_skills_path.exists():
         executor_skills_data = json.loads(executor_skills_path.read_text(encoding="utf-8"))
+        _validate_contract("executor_skills.schema.json", executor_skills_data, executor_skills_path)
         seen_executor_skill_ids = set()
         for item in executor_skills_data.get("skills", []):
             skill = ExecutorSkill.from_dict(item, task_dir=task_dir)
@@ -109,10 +148,19 @@ def load_task(task_dir: Path) -> TaskSpec:
         raise FileNotFoundError(f"Missing rubrics file for {task_dir}: {rubrics_path}")
 
     rubrics_data = json.loads(rubrics_path.read_text(encoding="utf-8"))
-    rubrics = [Rubric.from_dict(item) for item in rubrics_data["rubrics"]]
+    _validate_contract("rubrics.schema.json", rubrics_data, rubrics_path)
+    rubrics: List[Rubric] = []
+    seen_rubric_ids = set()
+    for item in rubrics_data["rubrics"]:
+        rubric = Rubric.from_dict(item)
+        if rubric.id in seen_rubric_ids:
+            raise ValueError(f"Duplicate rubric id {rubric.id} in {rubrics_path}")
+        seen_rubric_ids.add(rubric.id)
+        rubrics.append(rubric)
     human_reference_steps: List[HumanReferenceStep] = []
     if human_reference_path.exists():
         human_reference_data = json.loads(human_reference_path.read_text(encoding="utf-8"))
+        _validate_contract("human_reference.schema.json", human_reference_data, human_reference_path)
         seen_step_ids = set()
         for step_index, item in enumerate(human_reference_data.get("steps", []), start=1):
             step = HumanReferenceStep.from_dict(item, step_index=step_index)
@@ -125,18 +173,24 @@ def load_task(task_dir: Path) -> TaskSpec:
     rigors: List[Rigor] = []
     if rigors_path.exists():
         rigors_data = json.loads(rigors_path.read_text(encoding="utf-8"))
+        _validate_contract("rigors.schema.json", rigors_data, rigors_path)
         seen_rigor_ids = set()
         for item in rigors_data.get("rigors", []):
             rigor = Rigor.from_dict(item)
             if rigor.id in seen_rigor_ids:
                 raise ValueError(f"Duplicate rigor id {rigor.id} in {rigors_path}")
+            if rigor.rubric_id not in seen_rubric_ids:
+                raise ValueError(
+                    f"Rigor {rigor.id} references unknown rubric id "
+                    f"{rigor.rubric_id} in {rigors_path}"
+                )
             seen_rigor_ids.add(rigor.id)
             rigors.append(rigor)
     else:
         rigors_path = None
 
     return TaskSpec(
-        id=str(config["id"]),
+        id=task_id,
         name=str(config.get("name", config["id"])),
         source_dir=task_dir,
         prompt_path=prompt_path,
@@ -155,18 +209,45 @@ def load_task(task_dir: Path) -> TaskSpec:
     )
 
 
+def _validate_contract(schema_name: str, data: object, source_path: Path) -> None:
+    try:
+        validate_payload(schema_name, data, path=source_path.name)
+    except ContractValidationError as error:
+        raise ValueError(f"{source_path} does not match StarBench artifact contract: {error}") from error
+
+
 def discover_tasks(tasks_dir: Path, selected_ids: Sequence[str] | None = None) -> List[TaskSpec]:
     selected = set(selected_ids or [])
     candidates = sorted(path for path in tasks_dir.iterdir() if (path / "task.json").exists())
-    tasks = [load_task(path) for path in candidates]
     if selected:
-        tasks = [task for task in tasks if task.id in selected or task.source_dir.name in selected]
+        selected_candidates: List[Path] = []
+        for candidate in candidates:
+            if candidate.name in selected:
+                selected_candidates.append(candidate)
+                continue
+            try:
+                candidate_config = json.loads(
+                    (candidate / "task.json").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                continue
+            if isinstance(candidate_config, dict) and candidate_config.get("id") in selected:
+                selected_candidates.append(candidate)
+        tasks = [load_task(path) for path in selected_candidates]
         found = {task.id for task in tasks} | {task.source_dir.name for task in tasks}
         missing = sorted(selected - found)
         if missing:
             raise ValueError(f"Selected task(s) not found: {', '.join(missing)}")
+    else:
+        tasks = [load_task(path) for path in candidates]
     if not tasks:
         raise ValueError(f"No tasks found in {tasks_dir}")
+    task_ids = [task.id for task in tasks]
+    duplicate_task_ids = sorted(
+        {task_id for task_id in task_ids if task_ids.count(task_id) > 1}
+    )
+    if duplicate_task_ids:
+        raise ValueError(f"Duplicate task id(s): {', '.join(duplicate_task_ids)}")
     return tasks
 
 
@@ -187,11 +268,13 @@ def build_task_runs(
     rigor_mode: str = "none",
     rigor_ids: Sequence[str] | None = None,
     executor_skill_ids: Sequence[str] | None = None,
+    required_executor_skill_ids: Sequence[str] | None = None,
     external_executor_skills: Sequence[ExecutorSkill] | None = None,
 ) -> List[TaskRunSpec]:
     requested_steps = list(instruction_steps or [])
     requested_rigors = list(rigor_ids or [])
     requested_executor_skills = list(executor_skill_ids or [])
+    requested_required_executor_skills = list(required_executor_skill_ids or [])
     if instruction_mode == "none" and requested_steps:
         instruction_mode = "select"
     if rigor_mode == "none" and requested_rigors:
@@ -221,6 +304,24 @@ def build_task_runs(
         raise ValueError(
             f"Duplicate --executor-skill value(s): {', '.join(duplicate_requested_executor_skills)}"
         )
+    duplicate_required_executor_skills = sorted(
+        {
+            skill_id
+            for skill_id in requested_required_executor_skills
+            if requested_required_executor_skills.count(skill_id) > 1
+        }
+    )
+    if duplicate_required_executor_skills:
+        raise ValueError(
+            "Duplicate --required-executor-skill value(s): "
+            + ", ".join(duplicate_required_executor_skills)
+        )
+    requested_installed_executor_skills = list(requested_executor_skills)
+    requested_installed_executor_skills.extend(
+        skill_id
+        for skill_id in requested_required_executor_skills
+        if skill_id not in requested_installed_executor_skills
+    )
     external_executor_skills = list(external_executor_skills or [])
     external_executor_skill_by_id = {skill.id: skill for skill in external_executor_skills}
     if len(external_executor_skill_by_id) != len(external_executor_skills):
@@ -246,7 +347,8 @@ def build_task_runs(
                 f"Executor skill id(s) defined both in task {task.id} and external registry: "
                 f"{', '.join(overlapping_executor_skill_ids)}"
             )
-        requested_executor_skill_set = set(requested_executor_skills)
+        requested_executor_skill_set = set(requested_installed_executor_skills)
+        required_executor_skill_set = set(requested_required_executor_skills)
         selected_rigors: List[Rigor] = []
         selected_executor_skills: List[ExecutorSkill] = []
         if rigor_mode == "select":
@@ -256,10 +358,10 @@ def build_task_runs(
             if missing_rigors:
                 raise ValueError(f"Task {task.id} missing rigor(s): {', '.join(missing_rigors)}")
             selected_rigors = [rigor for rigor in task.rigors if rigor.id in requested_rigor_set]
-        if requested_executor_skills:
+        if requested_installed_executor_skills:
             missing_executor_skills = [
                 skill_id
-                for skill_id in requested_executor_skills
+                for skill_id in requested_installed_executor_skills
                 if skill_id not in executor_skill_by_id and skill_id not in external_executor_skill_by_id
             ]
             if missing_executor_skills:
@@ -272,6 +374,9 @@ def build_task_runs(
                 for skill in external_executor_skills
                 if skill.id in requested_executor_skill_set
             )
+        selected_required_executor_skill_ids = [
+            skill.id for skill in selected_executor_skills if skill.id in required_executor_skill_set
+        ]
         if instruction_mode == "none":
             task_runs.append(
                 TaskRunSpec(
@@ -281,6 +386,7 @@ def build_task_runs(
                     rigor_mode=rigor_mode,
                     selected_rigors=selected_rigors,
                     selected_executor_skills=selected_executor_skills,
+                    required_executor_skill_ids=selected_required_executor_skill_ids,
                 )
             )
         elif instruction_mode == "traverse":
@@ -295,6 +401,7 @@ def build_task_runs(
                         rigor_mode=rigor_mode,
                         selected_rigors=selected_rigors,
                         selected_executor_skills=selected_executor_skills,
+                        required_executor_skill_ids=selected_required_executor_skill_ids,
                     )
                 )
         elif instruction_mode == "select":
@@ -311,6 +418,7 @@ def build_task_runs(
                     rigor_mode=rigor_mode,
                     selected_rigors=selected_rigors,
                     selected_executor_skills=selected_executor_skills,
+                    required_executor_skill_ids=selected_required_executor_skill_ids,
                 )
             )
         elif instruction_mode == "ablation":
@@ -332,6 +440,7 @@ def build_task_runs(
                     rigor_mode=rigor_mode,
                     selected_rigors=selected_rigors,
                     selected_executor_skills=selected_executor_skills,
+                    required_executor_skill_ids=selected_required_executor_skill_ids,
                 )
             )
             for step in steps:
@@ -343,6 +452,7 @@ def build_task_runs(
                         rigor_mode=rigor_mode,
                         selected_rigors=selected_rigors,
                         selected_executor_skills=selected_executor_skills,
+                        required_executor_skill_ids=selected_required_executor_skill_ids,
                     )
                 )
             if len(steps) > 1:
@@ -354,6 +464,7 @@ def build_task_runs(
                         rigor_mode=rigor_mode,
                         selected_rigors=selected_rigors,
                         selected_executor_skills=selected_executor_skills,
+                        required_executor_skill_ids=selected_required_executor_skill_ids,
                         variant_label="all_instructions",
                     )
                 )

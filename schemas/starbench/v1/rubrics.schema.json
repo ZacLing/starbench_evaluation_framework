@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/rubrics.schema.json",
+  "title": "StarBench rubrics.json",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "rubrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "maxLength": 128
+          },
+          "question": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "boolean"
+          },
+          "fail_fast": {
+            "type": "boolean"
+          }
+        },
+        "required": ["id", "question", "expected", "fail_fast"]
+      }
+    }
+  },
+  "required": ["rubrics"]
+}

@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+from ..domain.identifiers import parse_safe_id
+from ..domain.paths import assert_no_symlinks, resolve_within
+
 
 @dataclass(frozen=True)
 class Rubric:
@@ -15,7 +18,7 @@ class Rubric:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Rubric":
         return cls(
-            id=str(data["id"]),
+            id=parse_safe_id(data["id"], kind="rubric id"),
             fail_fast=bool(data["fail_fast"]),
             expected=bool(data["expected"]),
             question=str(data["question"]),
@@ -41,7 +44,7 @@ class HumanReferenceStep:
     @classmethod
     def from_dict(cls, data: Dict[str, Any], step_index: int = 0) -> "HumanReferenceStep":
         return cls(
-            step_id=str(data["step_id"]),
+            step_id=parse_safe_id(data["step_id"], kind="human reference step id"),
             step_index=int(data.get("step_index", step_index)),
             step_type=str(data["step_type"]),
             instruction=str(data["instruction"]),
@@ -66,8 +69,10 @@ class Rigor:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Rigor":
         return cls(
-            id=str(data["id"]),
-            rubric_id=str(data.get("rubric_id", data["id"])),
+            id=parse_safe_id(data["id"], kind="rigor id"),
+            rubric_id=parse_safe_id(
+                data.get("rubric_id", data["id"]), kind="rigor rubric id"
+            ),
             requirement=str(data["requirement"]),
         )
 
@@ -94,14 +99,15 @@ class ExecutorSkill:
 
     @classmethod
     def from_base_dir(cls, data: Dict[str, Any], *, base_dir: Path) -> "ExecutorSkill":
-        skill_id = str(data["id"])
-        if not skill_id or skill_id in {".", ".."} or "/" in skill_id or "\\" in skill_id:
-            raise ValueError(f"Invalid executor skill id: {skill_id!r}")
+        skill_id = parse_safe_id(data["id"], kind="executor skill id")
 
         source_value = str(data.get("path") or f"skills/{skill_id}")
-        source_path = (base_dir / source_value).resolve()
+        source_path = resolve_within(
+            base_dir, source_value, kind=f"executor skill {skill_id} path"
+        )
         if not source_path.exists() or not source_path.is_dir():
             raise FileNotFoundError(f"Missing executor skill directory for {skill_id}: {source_path}")
+        assert_no_symlinks(source_path, kind=f"executor skill {skill_id}")
 
         skill_md = source_path / "SKILL.md"
         if not skill_md.exists() or not skill_md.is_file():
@@ -167,6 +173,7 @@ class TaskRunSpec:
     rigor_mode: str = "none"
     selected_rigors: List[Rigor] | None = None
     selected_executor_skills: List[ExecutorSkill] | None = None
+    required_executor_skill_ids: List[str] | None = None
     variant_label: str | None = None
 
     @property
@@ -217,6 +224,21 @@ class TaskRunSpec:
         return [skill.id for skill in self.selected_executor_skills or []]
 
     @property
+    def advisory_executor_skill_ids(self) -> List[str]:
+        required = set(self.required_executor_skill_ids or [])
+        return [skill.id for skill in self.selected_executor_skills or [] if skill.id not in required]
+
+    @property
+    def advisory_executor_skills(self) -> List[ExecutorSkill]:
+        required = set(self.required_executor_skill_ids or [])
+        return [skill for skill in self.selected_executor_skills or [] if skill.id not in required]
+
+    @property
+    def required_executor_skills(self) -> List[ExecutorSkill]:
+        required = set(self.required_executor_skill_ids or [])
+        return [skill for skill in self.selected_executor_skills or [] if skill.id in required]
+
+    @property
     def executor_skill_label(self) -> str | None:
         if not self.selected_executor_skills:
             return None
@@ -238,6 +260,14 @@ class TaskRunSpec:
             "executor_skill_ids": self.executor_skill_ids,
             "executor_skill_count": len(self.selected_executor_skills or []),
             "executor_skills": [skill.public_metadata() for skill in self.selected_executor_skills or []],
+            "advisory_executor_skill_ids": self.advisory_executor_skill_ids,
+            "advisory_executor_skills": [
+                skill.public_metadata() for skill in self.advisory_executor_skills
+            ],
+            "required_executor_skill_ids": list(self.required_executor_skill_ids or []),
+            "required_executor_skills": [
+                skill.public_metadata() for skill in self.required_executor_skills
+            ],
         }
 
 
@@ -264,26 +294,67 @@ class ProcessResult:
 
 
 @dataclass(frozen=True)
-class RubricResult:
+class JudgeAnswer:
     rubric_id: str
     answer: bool
+    evidence: str
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "JudgeAnswer":
+        if not isinstance(data, dict):
+            raise ValueError("Judge answer must be a JSON object")
+
+        allowed = {"rubric_id", "answer", "evidence"}
+        unexpected = sorted(set(data) - allowed)
+        if unexpected:
+            raise ValueError(f"unexpected Judge answer fields: {', '.join(unexpected)}")
+        missing = sorted(allowed - set(data))
+        if missing:
+            raise ValueError(f"missing Judge answer fields: {', '.join(missing)}")
+
+        rubric_id = parse_safe_id(data["rubric_id"], kind="Judge rubric id")
+        answer = data["answer"]
+        if type(answer) is not bool:
+            raise ValueError("answer must be a JSON boolean")
+        evidence = data["evidence"]
+        if not isinstance(evidence, str):
+            raise ValueError("evidence must be a JSON string")
+        return cls(rubric_id=rubric_id, answer=answer, evidence=evidence)
+
+
+@dataclass(frozen=True)
+class RubricResult:
+    rubric_id: str
+    answer: bool | None
     expected: bool
-    passed: bool
+    passed: bool | None
     fail_fast: bool
     evidence: str
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RubricResult":
-        answer = bool(data["answer"])
-        expected = bool(data["expected"])
-        passed = bool(data.get("passed", answer == expected))
+    def from_answer(cls, rubric: Rubric, answer: JudgeAnswer) -> "RubricResult":
+        if answer.rubric_id != rubric.id:
+            raise ValueError(
+                f"Judge answer {answer.rubric_id!r} does not match rubric {rubric.id!r}"
+            )
         return cls(
-            rubric_id=str(data.get("rubric_id") or data.get("id")),
-            answer=answer,
-            expected=expected,
-            passed=passed,
-            fail_fast=bool(data["fail_fast"]),
-            evidence=str(data.get("evidence", "")),
+            rubric_id=rubric.id,
+            answer=answer.answer,
+            expected=rubric.expected,
+            passed=answer.answer == rubric.expected,
+            fail_fast=rubric.fail_fast,
+            evidence=answer.evidence,
+        )
+
+    @classmethod
+    def missing(cls, rubric: Rubric) -> "RubricResult":
+        return cls(
+            rubric_id=rubric.id,
+            answer=None,
+            expected=rubric.expected,
+            passed=None,
+            fail_fast=rubric.fail_fast,
+            evidence="Missing evaluator result.",
         )
 
     def to_dict(self) -> Dict[str, Any]:

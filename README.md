@@ -2,28 +2,51 @@
 
 Starbench is a small benchmark runner for evaluating coding-agent CLIs with rubric judges.
 
-It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Executors can run in a Docker workspace by default, while evaluators inspect only the delivered package, trace summaries, and rubrics.
+It runs executor agents on task packages, captures the event trace exposed by the CLI, then grades the delivered outputs with yes/no rubrics. Every built-in runtime has its own Docker executor image for isolated runs (Codex defaults to Docker; the others opt in with `--executor-backend docker`), and docker-enabled custom runtimes get the same isolation — see [docs/docker.md](docs/docker.md). Evaluators inspect only the delivered package, trace summaries, and rubrics.
 
 ## What Is Included
 
-- Batch execution with `--seed`, `--batch-size`, and deterministic task ordering.
-- Docker-backed executor isolation by default.
-- Independent executor and evaluator model selection.
-- Runtime selection for Codex, Claude Code, OpenCode, Grok Build, or Gemini CLI executors/evaluators.
+- Batch execution with `--seed`, `--batch-size`, `--repeat`, and deterministic task ordering.
+- A typed launch contract: `starbench-run --plan plan.json` takes one validated JSON file ([schemas/starbench/v1/run_plan.schema.json](schemas/starbench/v1/run_plan.schema.json)) instead of thirty flags, fails closed before any run state exists, and materializes the plan into the run directory for provenance. Flag-by-flag argv still works and shares the same validation.
+- Independent executor and evaluator model selection, with separate auth modes and isolated executor/judge environment scopes.
+- Runtime selection for Codex, Claude Code, Gemini CLI, Grok Build, OpenCode, or Pi executors/evaluators.
   - Use Claude Code for Claude-family models.
   - Use Codex for GPT/OpenAI-family models.
   - Use OpenCode for other OpenAI-compatible models, such as Doubao or Qwen.
   - Use Grok Build for xAI Grok Build runs.
   - Use Gemini CLI for existing Gemini CLI environments.
+  - Use Pi to reach Anthropic, OpenAI, Google, or xAI models through one multi-provider CLI.
+- Declarative custom runtimes (`custom:<id>`), with Qwen Code, Kimi Code CLI, and Trae Agent specs bundled in `runtimes/`.
+- `--thinking-effort {default,off,minimal,low,medium,high,xhigh,max,ultra}` applied through each runtime's native reasoning switch where one exists (Claude Code `--effort`, Codex `model_reasoning_effort`, OpenCode `--variant`, Pi `--thinking`) and as a prompt-level instruction elsewhere. `default` leaves the runtime/model default alone (`none` is its deprecated spelling), while `off` explicitly disables reasoning through the runtime's own switch; each runtime declares which tiers it supports, and the console narrows the choice further to the selected model's own published level table where the runtime ships one (Codex model catalog).
+- `--web-search {task,allow,deny}`: follow each task package's `allow_web_search` or override it for the run (enforced for Claude Code and Codex; other runtimes' own tooling decides).
 - Single-judge and per-rubric parallel-judge modes.
 - `human_reference.json` instruction sweep support.
 - Rule-based instruction ablation: baseline, one variant per expert instruction, and an all-instructions variant, with repeat runs and uplift summaries.
+- Rigor prompt injection: restate selected rubric requirements as hard requirements in the executor prompt.
+- Executor skills: install reusable skill folders into the executor workspace, individually or as named groups, and optionally require selected skills through the executor prompt.
 - Trace capture: raw JSONL events, final message, status/timing, artifact manifest, and derived summary.
-- A default `tasks/` directory for user task packages.
+- A default task library at `$STARBENCH_HOME/tasks` (`~/.starbench/tasks`) for user task packages.
 - Two sample task packages under `examples/tasks/`.
 - Unit and closed-loop fake-runner smoke tests that do not call a live model.
+- A local GUI console (`starbench-gui`): a five-step launch wizard with readiness checks (broken task packages surfaced, CLI/credential/Docker preflight gating Launch), reusable measurement profiles (shared judge/seed/roster/task set, frozen into each run as `profile_snapshot.json`), a task-by-agent coverage matrix, run browsing with rubric verdicts and traces, and stateless side-by-side comparison of any runs (`/api/compare?runs=a,b,c`).
 
 ## Quick Start
+
+StarBench keeps everything — task packages, run results, custom runtimes,
+executor skills — under one home: `~/.starbench`, relocatable with
+`STARBENCH_HOME`. Explicit `--tasks-dir` / `--runs-dir` flags always win.
+
+    pip install starbench
+    mkdir -p ~/.starbench/tasks
+    cp -r examples/tasks/* ~/.starbench/tasks/   # seed the library (from a repo checkout)
+    starbench-gui                                 # zero-argument console
+
+Migrating an existing checkout:
+
+    mkdir -p ~/.starbench
+    mv runs ~/.starbench/runs
+
+For a full Docker-isolated run from a repository checkout:
 
 ```bash
 cd starbench_evaluation_framework
@@ -35,17 +58,13 @@ pip install -e .
 
 Install the Codex CLI on the host, then authenticate it in the way your environment expects.
 
-Build the Docker executor image:
+Build the Docker executor image for Codex (the default Docker runtime):
 
 ```bash
 docker build -t starbench-codex:latest -f docker/codex-bench.Dockerfile .
 ```
 
-Optional Claude Code helper image, useful when the host does not have the `claude` CLI:
-
-```bash
-docker build -t starbench-claude-code:latest -f docker/claude-code.Dockerfile .
-```
+Each runtime has its own image (`starbench-claude-code`, `starbench-gemini-cli`, `starbench-grok`, `starbench-opencode`, `starbench-pi`, plus images for the bundled custom runtimes); build the ones you plan to isolate — see [docs/docker.md](docs/docker.md) for the full list and build commands.
 
 Run the sample task with real Codex execution and one GPT judge:
 
@@ -64,109 +83,89 @@ starbench-run \
   --seed 123
 ```
 
+The same run as a typed plan file — one validated document instead of flags
+(`--plan` is exclusive; only `--runs-dir` and `--no-progress` may accompany it):
+
+```bash
+cat > plan.json <<'JSON'
+{
+  "schema_version": 1,
+  "run_id": "smoke_plan",
+  "tasks_dir": "examples/tasks",
+  "tasks": ["demo_python_cli"],
+  "executor_backend": "docker",
+  "docker_image": "starbench-codex:latest",
+  "auth_mode": "copy-auth",
+  "executor_model": "gpt-5.5",
+  "evaluator_model": "gpt-5.5",
+  "judge_mode": "single",
+  "seed": 123
+}
+JSON
+starbench-run --plan plan.json --runs-dir runs
+```
+
+An invalid plan (unknown key, wrong type, credential-shaped field) aborts at
+argument time with the exact contract violation; nothing is written to disk.
+
 Runtime convention:
 
 ```text
-Claude-family models          -> --executor-agent/--evaluator-agent claude
-GPT/OpenAI-family models      -> --executor-agent/--evaluator-agent codex
-Other OpenAI-compatible models -> --executor-agent/--evaluator-agent opencode
-xAI Grok Build models         -> --executor-agent/--evaluator-agent grok
-Gemini CLI models             -> --executor-agent/--evaluator-agent gemini
+Claude-family models             -> --executor-agent/--evaluator-agent claude
+GPT/OpenAI-family models         -> --executor-agent/--evaluator-agent codex
+Other OpenAI-compatible models   -> --executor-agent/--evaluator-agent opencode
+xAI Grok Build models            -> --executor-agent/--evaluator-agent grok
+Gemini CLI models                -> --executor-agent/--evaluator-agent gemini
+Anthropic/OpenAI/Google/xAI in
+  one multi-provider CLI         -> --executor-agent/--evaluator-agent pi
+Any other headless agent CLI     -> --executor-agent/--evaluator-agent custom:<id>
 ```
 
-To switch the evaluator, set both the evaluator model and evaluator runtime:
+Custom runtimes are declarative: drop a `<id>.json` file in `runtimes/`
+(command, prompt delivery, output parser, env, optional docker image) and no
+Python changes are needed. See [runtimes/README.md](runtimes/README.md).
 
-```bash
---evaluator-agent codex    --evaluator-model gpt-5.5
---evaluator-agent claude   --evaluator-model claude-opus-4-8
---evaluator-agent opencode --evaluator-model yunwu/doubao-seed-2-0-pro-260215
---evaluator-agent grok     --evaluator-model your-grok-model
---evaluator-agent gemini   --evaluator-model gemini-2.5-pro
+To switch the evaluator, pair the runtime with the model it should call —
+`--evaluator-agent codex --evaluator-model gpt-5.5`, and likewise for `claude`,
+`gemini`, `grok`, `opencode`, `pi`, or `custom:<id>`. When the two sides use
+different runtimes, split the auth modes: `--executor-auth-mode env` for an
+OpenCode executor reading a gateway key from the environment,
+`--evaluator-auth-mode global` for a Codex evaluator reading the local Codex
+login.
+
+Every other runtime keeps the same command shape as the Codex sample above —
+swap `--executor-agent`/`--evaluator-agent`, point the runtime's `--claude-bin`
+/ `--gemini-bin` / `--grok-bin` / `--opencode-bin` / `--pi-bin` at its CLI when
+it is not on `PATH`, and leave the backend alone (every non-Codex runtime
+defaults to `local`). Authenticate each CLI before invoking StarBench, or use
+`--auth-mode env` when it reads its API key from the environment. Per-runtime
+commands, gateway wiring (`--executor-option provider=…`), Pi's env-only auth
+rule, and mixed-auth examples live in the
+[Runner Reference](docs/runner_reference.md#agent-runtimes).
+
+Run-level knobs that apply to any of the above:
+
+```text
+--thinking-effort {default,off,minimal,   reasoning effort, via each runtime's native
+                   low,medium,high,        switch (Claude Code --effort, Codex
+                   xhigh,max,ultra}        model_reasoning_effort, OpenCode --variant,
+                                           Pi --thinking); prompt-level request for the
+                                           rest; "default" = leave the model default
+                                           alone, "off" = disable reasoning explicitly;
+                                           levels a runtime does not declare are
+                                           rejected at start
+--web-search {task,allow,deny}             follow the task package's allow_web_search,
+                                           or force it on/off for the whole run
+                                           (enforced for Claude Code and Codex)
+--instruction-mode / --rigor-mode          expert-step sweeps and rigor prompt injection
+                                           (see the docs below)
+--executor-skill ID                        install a skill as available guidance; repeatable
+--required-executor-skill ID               install a skill and require its workflow through
+                                           the executor prompt; repeatable and not trace-verified
 ```
 
-When mixing runtimes, split auth modes. For example, use `--executor-auth-mode env` for an OpenCode executor that reads an API key from the environment, and `--evaluator-auth-mode global` for a Codex evaluator that should read local Codex login credentials.
-
-Run the sample task with Claude Code through an Anthropic-compatible gateway:
-
-```bash
-export ANTHROPIC_BASE_URL=https://your-gateway.example
-export ANTHROPIC_AUTH_TOKEN=...
-
-PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
-  --tasks-dir examples/tasks \
-  --task demo_python_cli \
-  --runs-dir runs \
-  --run-id smoke_claude \
-  --executor-agent claude \
-  --evaluator-agent claude \
-  --claude-bin "$(pwd)/tmp/claude-code-docker.sh" \
-  --auth-mode env \
-  --executor-backend local \
-  --executor-model claude-opus-4-8 \
-  --evaluator-model claude-opus-4-8 \
-  --judge-mode single
-```
-
-Run the sample task with OpenCode through an OpenAI-compatible gateway:
-
-```bash
-export ANTHROPIC_AUTH_TOKEN=...
-
-PYTHONPATH=src python3 -m starbench.runner.run_benchmark \
-  --tasks-dir examples/tasks \
-  --task demo_python_cli \
-  --runs-dir runs \
-  --run-id smoke_opencode \
-  --executor-agent opencode \
-  --evaluator-agent codex \
-  --opencode-bin "$HOME/.opencode/bin/opencode" \
-  --opencode-provider yunwu \
-  --opencode-base-url https://yunwu.ai/v1 \
-  --opencode-api-key-env ANTHROPIC_AUTH_TOKEN \
-  --auth-mode env \
-  --executor-auth-mode env \
-  --evaluator-auth-mode global \
-  --executor-backend local \
-  --executor-model doubao-seed-2-0-pro-260215 \
-  --evaluator-model gpt-5.5 \
-  --judge-mode single
-```
-
-Run the sample task with Grok Build:
-
-```bash
-starbench-run \
-  --tasks-dir examples/tasks \
-  --task demo_python_cli \
-  --runs-dir runs \
-  --run-id smoke_grok \
-  --executor-agent grok \
-  --evaluator-agent grok \
-  --executor-backend local \
-  --auth-mode global \
-  --executor-model your-grok-model \
-  --evaluator-model your-grok-model \
-  --judge-mode single
-```
-
-Run the sample task with Gemini CLI:
-
-```bash
-starbench-run \
-  --tasks-dir examples/tasks \
-  --task demo_python_cli \
-  --runs-dir runs \
-  --run-id smoke_gemini \
-  --executor-agent gemini \
-  --evaluator-agent gemini \
-  --executor-backend local \
-  --auth-mode global \
-  --executor-model gemini-2.5-pro \
-  --evaluator-model gemini-2.5-pro \
-  --judge-mode single
-```
-
-Grok Build and Gemini CLI support currently run host-local only. Authenticate those CLIs before invoking StarBench, or use `--auth-mode env` when the CLI reads its API key from the environment.
+Every knob above is also a field of the run plan (same names, underscores
+instead of dashes).
 
 For a no-cost local framework smoke test:
 
@@ -177,9 +176,12 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 ## Documentation
 
 - [Quickstart](docs/quickstart.md)
+- [Recipes: common changes, one file each](docs/recipes.md)
+- [Architecture: structure, boundaries, ownership](docs/ARCHITECTURE.md)
+- [GUI Console](docs/gui.md)
 - [Task Package Structure](docs/task_package.md)
+- [Artifact Contracts](docs/artifact_contracts.md)
 - [Runner Reference](docs/runner_reference.md)
-- [Model Runtime Matrix](docs/model_runtime_matrix.md)
 - [Docker Isolation](docs/docker.md)
 - [Executor Skills](docs/executor_skills.md)
 - [Trace-to-Skill Distillation](docs/skill_distillation.md)
@@ -187,13 +189,21 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 - [Use Executor Skills In Evaluation Runs](docs/use_skills_in_eval.md)
 - [Authoring Rubrics](docs/rubrics.md)
 - [Human Reference Instructions](docs/human_reference.md)
+- [Rigor Prompt Injection](docs/rigor_prompt_injection.md)
+- [Contributing Notes](docs/contributing.md)
+
+Superseded plans and one-off requirement snapshots (including the 2026-07 BRD and
+the model/runtime matrix) are kept read-only under [docs/archive/](docs/archive/).
+They describe the system as it was; they are not maintained.
 
 ## Where To Put Tasks
 
-Put your own task packages under `tasks/`:
+Put your own task packages under the StarBench home task library —
+`$STARBENCH_HOME/tasks` (`~/.starbench/tasks` by default; `--tasks-dir`
+overrides it):
 
 ```text
-tasks/
+~/.starbench/tasks/
   my_task/
     task.json
     prompt.md
@@ -201,15 +211,23 @@ tasks/
     materials/
 ```
 
-`starbench-run` uses `tasks/` by default. The bundled `examples/tasks/` directory is only for sample tasks and smoke tests. To run a sample, pass `--tasks-dir examples/tasks`.
+`starbench-run` and `starbench-gui` use `$STARBENCH_HOME/tasks` by default.
+The bundled `examples/tasks/` directory in a repository checkout is only for
+sample tasks and smoke tests, and it is never auto-loaded: seed it into the
+library with `cp -r examples/tasks/* ~/.starbench/tasks/`, or pass
+`--tasks-dir examples/tasks` to run it directly without seeding.
 
 ## Output Layout
 
-Each run writes to `runs/<run_id>/`.
+Each run writes to `<runs-dir>/<run_id>/`, where `<runs-dir>` defaults to
+`$STARBENCH_HOME/runs` (`~/.starbench/runs`) and `--runs-dir` overrides it.
 
 ```text
-runs/<run_id>/
+<runs-dir>/<run_id>/
   run_config.json
+  run_plan.json                     # plan-launched runs: the exact launch contract
+  profile_snapshot.json             # profile-launched runs: the frozen measurement contract
+  run_state.json                    # console-launched runs: supervision state (batch, heartbeat)
   progress_events.jsonl
   summary.json
   instruction_ablation_summary.json

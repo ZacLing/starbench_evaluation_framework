@@ -8,15 +8,6 @@
     "answer": {
       "type": "boolean"
     },
-    "expected": {
-      "type": "boolean"
-    },
-    "passed": {
-      "type": "boolean"
-    },
-    "fail_fast": {
-      "type": "boolean"
-    },
     "evidence": {
       "type": "string"
     }
@@ -24,10 +15,6 @@
   "required": [
     "rubric_id",
     "answer",
-    "expected",
-    "passed",
-    "fail_fast",
     "evidence"
   ]
 }
-

@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
+from ..contracts import ARTIFACT_SCHEMA_VERSION
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -65,7 +67,7 @@ class BenchmarkProgress:
         self.executor_bar = StageBar(total_executors, "executors", enabled=enabled)
         self.evaluator_bar = StageBar(total_evaluators, "evaluators", enabled=enabled) if total_evaluators else None
         self.executor_stats = {"success": 0, "failed": 0, "timeout": 0}
-        self.evaluator_stats = {"success": 0, "failed": 0, "timeout": 0}
+        self.evaluator_stats = {"success": 0, "failed": 0, "timeout": 0, "skipped": 0}
         self.write_event(
             "run_progress_initialized",
             total_executors=total_executors,
@@ -74,7 +76,12 @@ class BenchmarkProgress:
         )
 
     def write_event(self, event: str, **payload: Any) -> None:
-        row = {"timestamp": utc_now(), "event": event, **payload}
+        row = {
+            "timestamp": utc_now(),
+            "event": event,
+            **payload,
+            "schema_version": ARTIFACT_SCHEMA_VERSION,
+        }
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
 
@@ -143,6 +150,7 @@ class BenchmarkProgress:
             exit_code=(status or {}).get("exit_code"),
             timed_out=(status or {}).get("timed_out"),
             duration_seconds=duration,
+            outcome=(aggregate or {}).get("outcome"),
             overall_pass=(aggregate or {}).get("overall_pass"),
             passed_count=(aggregate or {}).get("passed_count"),
             total_count=(aggregate or {}).get("total_count"),
@@ -156,6 +164,23 @@ class BenchmarkProgress:
                     **self.evaluator_stats,
                 }
             )
+
+    def evaluator_skipped(
+        self,
+        *,
+        run_task_id: str,
+        mode: str,
+        aggregate: Dict[str, Any],
+        rubric_id: str | None = None,
+        reason: str = "executor_not_successful",
+    ) -> None:
+        self.evaluator_finished(
+            run_task_id=run_task_id,
+            mode=mode,
+            rubric_id=rubric_id,
+            status={"status": "skipped", "reason": reason},
+            aggregate=aggregate,
+        )
 
     def close(self) -> None:
         self.write_event("run_progress_finished", executor_stats=self.executor_stats, evaluator_stats=self.evaluator_stats)

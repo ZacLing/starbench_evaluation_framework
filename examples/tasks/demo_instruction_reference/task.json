@@ -4,6 +4,7 @@
   "prompt": "prompt.md",
   "rubrics": "rubrics.json",
   "human_reference": "human_reference.json",
+  "rigors": "rigors.json",
   "timeout_seconds": 1800,
   "allow_web_search": true
 }

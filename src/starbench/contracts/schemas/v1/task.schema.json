@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/task.schema.json",
+  "title": "StarBench task.json",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "maxLength": 128
+    },
+    "name": {
+      "type": "string"
+    },
+    "prompt": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+      "maxLength": 512
+    },
+    "rubrics": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+      "maxLength": 512
+    },
+    "human_reference": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+      "maxLength": 512
+    },
+    "rigors": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+      "maxLength": 512
+    },
+    "executor_skills": {
+      "type": ["string", "null"],
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+      "maxLength": 512
+    },
+    "subtle_difference": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+      "maxLength": 512
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "allow_web_search": {
+      "type": "boolean"
+    },
+    "materials": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+        "maxLength": 512
+      }
+    },
+    "input_materials": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+        "maxLength": 512
+      }
+    },
+    "files_dir": {
+      "type": ["string", "null"],
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\\\).+$",
+      "maxLength": 512
+    }
+  },
+  "required": ["id"]
+}

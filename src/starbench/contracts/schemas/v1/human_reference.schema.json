@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/human_reference.schema.json",
+  "title": "StarBench human_reference.json",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "step_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+            "maxLength": 128
+          },
+          "step_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "step_type": {
+            "type": "string"
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string",
+            "x-starbench-private": true
+          }
+        },
+        "required": ["step_id", "step_type", "instruction", "reasoning"]
+      }
+    }
+  },
+  "required": ["steps"]
+}

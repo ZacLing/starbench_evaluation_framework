@@ -19,9 +19,12 @@ dependencies = [
 [project.scripts]
 starbench-run = "starbench.runner.run_benchmark:main"
 starbench-distill-skill = "starbench.skill_distiller.distill:main"
+starbench-gui = "starbench.gui.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 "starbench.runner" = ["schemas/*.json"]
+"starbench.contracts" = ["schemas/v1/*.json", "schemas/v2/*.json"]
+"starbench.gui" = ["static/*", "static/assets/*"]

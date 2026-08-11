@@ -2,11 +2,12 @@
 
 ## Project Shape
 
-StarBench is a benchmark runner for isolated coding-agent task execution and rubric judging. Keep runtime integrations first-class and explicit in `src/starbench/runner/codex_process.py` and `src/starbench/runner/run_benchmark.py`; do not hide runtime-specific behavior in ad hoc shell wrappers unless the wrapper is part of a documented test fixture.
+StarBench is a benchmark runner for isolated coding-agent task execution and rubric judging. Structure, layer boundaries, ownership, and the console/core contract surface are governed by `docs/ARCHITECTURE.md` — read it before making cross-layer changes. Keep runtime integrations first-class and explicit in the adapter registry (`src/starbench/adapters/`); do not hide runtime-specific behavior in ad hoc shell wrappers unless the wrapper is part of a documented test fixture.
 
 ## Working Rules
 
 - Preserve task isolation: executor work belongs under each run's `workspace/`, with deliverables under `workspace/outputs/`.
+- Run-directory file ownership is disjoint: the runner writes all run artifacts; the console supervisor owns exactly two files — `run_state.json` (process supervision) and the `.runner_claim` reservation handshake. Neither side writes the other's files.
 - Keep evaluator workspaces slim and evidence-oriented; evaluators should inspect executor outputs, logs, trace summaries, manifests, and prompts rather than re-solving tasks.
 - Prefer deterministic fake CLI tests for runtime compatibility, then use real CLIs only for manual smoke runs.
 - Do not put live API tokens in prompts, committed docs, task packages, rubrics, or test fixtures.
@@ -15,9 +16,11 @@ StarBench is a benchmark runner for isolated coding-agent task execution and rub
 ## Runtime Notes
 
 - Codex remains the Docker-backed default runtime and uses `$CODEX_HOME/skills/` for selected executor skills.
-- Claude Code, OpenCode, Grok Build, and Gemini CLI executor support is host-local unless explicitly documented otherwise.
+- Every built-in runtime ships its own Docker image (`make docker-images`); Codex defaults to the docker backend, the others default to local with docker selectable per run.
+- Pi (pi.dev) auth mode is env only — the operator's `~/.pi` OAuth login must never carry benchmark traffic.
+- When running tests locally, never use the Claude Code CLI login as the executor model credential. If Claude Code is the executor, it must run in API mode: `--executor-auth-mode env` with `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, never `global` or `copy-auth`. The CLI login is the operator's personal subscription identity; benchmark executor traffic must not ride on it.
 - Grok Build reads this `AGENTS.md` natively.
-- Gemini CLI reads `GEMINI.md`; this repo keeps `GEMINI.md` as a thin import of this file so runtime guidance has one maintained source.
+- Gemini CLI reads `GEMINI.md`; this repo keeps `GEMINI.md` as a thin import of this file so runtime guidance has one maintained source. `CLAUDE.md` is the same thin import for Claude Code.
 
 <!-- memory-connector:start -->
 ## Friday Memory

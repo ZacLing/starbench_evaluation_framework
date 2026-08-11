@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/run_state.schema.json",
+  "title": "StarBench persisted run state",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "maxLength": 128
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "prepared",
+        "starting",
+        "running",
+        "stopping",
+        "completed",
+        "exited",
+        "stopped",
+        "rolled_back",
+        "launch_failed",
+        "orphaned"
+      ]
+    },
+    "batch": {
+      "type": "string",
+      "description": "Launch batch this run belongs to; runs launched together share it. Descriptive only - comparisons are computed statelessly from artifacts."
+    },
+    "argv": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "pgid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "heartbeat_at": {
+      "type": "string"
+    },
+    "ended_at": {
+      "type": "string"
+    },
+    "exit_code": {
+      "type": ["integer", "null"]
+    },
+    "log_path": {
+      "type": "string"
+    },
+    "reservation_token": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128
+    },
+    "stop_requested_at": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    },
+    "docker_cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "matched": {"type": "array", "items": {"type": "string"}},
+        "stopped": {"type": "array", "items": {"type": "string"}},
+        "killed": {"type": "array", "items": {"type": "string"}},
+        "errors": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["matched", "stopped", "killed", "errors"]
+    }
+  },
+  "required": [
+    "schema_version",
+    "run_id",
+    "state",
+    "argv",
+    "updated_at",
+    "log_path",
+    "reservation_token"
+  ]
+}

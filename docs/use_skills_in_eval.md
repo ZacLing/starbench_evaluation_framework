@@ -2,11 +2,12 @@
 
 This guide shows how to load executor skills during `starbench-run`.
 
-Baseline behavior is unchanged unless you pass `--executor-skill` or `--executor-skill-group`.
+Baseline behavior is unchanged unless you pass `--executor-skill`,
+`--required-executor-skill`, or `--executor-skill-group`.
 
 ## Shared Skill Registry
 
-Shared skills live under:
+A shared skill library is a root directory laid out like this:
 
 ```text
 executor_skills/
@@ -14,7 +15,9 @@ executor_skills/
   generated/<skill-id>/SKILL.md
 ```
 
-The runner reads `registry.json` from `--executor-skill-root`.
+The runner reads `registry.json` from `--executor-skill-root`, which defaults to
+`$STARBENCH_HOME/skills` (`~/.starbench/skills`). The examples below point at
+`executor_skills/`, the example library this repository ships.
 
 ## Load One Skill
 
@@ -69,6 +72,25 @@ starbench-run \
 
 The final selected skill ids must be unique. If a group and an explicit skill select the same id, the runner fails fast.
 
+## Require A Skill By Prompt
+
+Use `--required-executor-skill` when the experiment must instruct the agent to
+read and follow a particular skill rather than merely make it available:
+
+```bash
+starbench-run \
+  --executor-skill-root executor_skills \
+  --required-executor-skill senior-technical-proposal-expert
+```
+
+The flag is repeatable and implies installation. It can be combined with
+`--executor-skill` and `--executor-skill-group`; selecting a group member as
+required upgrades that member to required mode. In a run plan, use the
+`required_executor_skills` array.
+
+Required mode is prompt-only enforcement. It does not validate skill usage from
+the trace and does not turn missing trace evidence into a failed run.
+
 ## Generated Example Groups
 
 The repository currently includes:
@@ -96,7 +118,8 @@ starbench-run --executor-skill-root executor_skills --executor-skill-group senio
 
 ## What The Executor Sees
 
-The executor prompt receives only a short activation block, for example:
+The executor prompt receives only a short activation block, here as rendered for
+Codex — the read path in the second rule is the selected runtime's own skill path:
 
 ```text
 Installed executor skills:
@@ -104,7 +127,7 @@ Installed executor skills:
 
 Skill usage rules:
 - Use the installed executor skills as private execution guidance for planning, execution, and final self-checking.
-- You may read installed skill files under the selected runtime's skill path.
+- You may read installed skill files under $CODEX_HOME/skills/<skill-id>/.
 - The task prompt and materials remain authoritative if they conflict with a skill.
 - Do not mention installed skills, expert traces, harnesses, or internal checklists in deliverables.
 ```
@@ -116,7 +139,7 @@ The full skill body is not appended to `workspace/inputs/prompt.md`.
 Codex Docker executor:
 
 ```text
-runs/<run_id>/<task_run_id>/codex_home/docker/skills/<skill-id>/
+runs/<run_id>/<task_run_id>/agent_home/docker/skills/<skill-id>/
 ```
 
 Inside the container:
@@ -128,16 +151,16 @@ Inside the container:
 Codex local executor:
 
 ```text
-runs/<run_id>/<task_run_id>/codex_home/skills/<skill-id>/
+runs/<run_id>/<task_run_id>/agent_home/skills/<skill-id>/
 ```
 
-Other local runtime paths:
+Other runtime paths, on either backend:
 
 ```text
-Grok Build  -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill-id>/
-Gemini CLI  -> runs/<run_id>/<task_run_id>/workspace/.gemini/skills/<skill-id>/
-Claude Code -> runs/<run_id>/<task_run_id>/workspace/.claude/skills/<skill-id>/
-OpenCode    -> runs/<run_id>/<task_run_id>/workspace/.starbench/executor_skills/<skill-id>/
+Grok Build     -> runs/<run_id>/<task_run_id>/workspace/.grok/skills/<skill-id>/
+Gemini CLI     -> runs/<run_id>/<task_run_id>/workspace/.gemini/skills/<skill-id>/
+Claude Code    -> runs/<run_id>/<task_run_id>/workspace/.claude/skills/<skill-id>/
+OpenCode, Pi   -> runs/<run_id>/<task_run_id>/workspace/.starbench/executor_skills/<skill-id>/
 ```
 
 ## Run Metadata
@@ -151,6 +174,9 @@ runs/<run_id>/<task_run_id>/task_summary.json
 ```
 
 `manifest.json` includes installed skill ids, source paths, and directory SHA-256 hashes.
+It also separates `advisory_executor_skill_ids` from
+`required_executor_skill_ids`, while retaining `executor_skill_ids` as the
+combined compatibility field.
 
 ## Task-local Skills
 

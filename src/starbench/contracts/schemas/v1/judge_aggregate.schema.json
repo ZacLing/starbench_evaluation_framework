@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/judge_aggregate.schema.json",
+  "title": "StarBench judge aggregate",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "mode": {
+      "type": "string"
+    },
+    "overall_pass": {
+      "type": "boolean"
+    },
+    "passed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "fail_fast_failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "rubric_id": {
+            "type": "string"
+          },
+          "answer": {
+            "type": ["boolean", "null"]
+          },
+          "expected": {
+            "type": "boolean"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "fail_fast": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": ["rubric_id", "expected", "passed", "fail_fast", "evidence"]
+      }
+    }
+  },
+  "required": ["mode", "overall_pass", "results"]
+}

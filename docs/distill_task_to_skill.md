@@ -16,7 +16,7 @@ The distiller reads these files when present:
     rubrics.json
     human_reference.json
   trace/
-    reviews/*/review.json
+    reviews/r*_review/review.json
 ```
 
 It uses:
@@ -109,6 +109,11 @@ executor_skills/
     ],
     "quant-finance": ["quant-finance-research-platform-expert"],
     "empirical-measurement": ["empirical-measurement-governance-expert"],
+    "research-platforms": [
+      "empirical-measurement-governance-expert",
+      "quant-finance-research-platform-expert",
+      "research-platform-architecture-expert"
+    ],
     "senior-expert-stack": [
       "empirical-measurement-governance-expert",
       "quant-finance-research-platform-expert",

@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starbench.dev/schemas/v1/run_plan.schema.json",
+  "title": "StarBench run plan",
+  "description": "A complete, typed launch request for one starbench-run invocation. Passed via `starbench-run --plan plan.json`; replaces the flag-by-flag argv surface for programmatic launches. Credential VALUES never appear here - only environment variable names.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "tasks_dir"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [2]
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "maxLength": 128
+    },
+    "batch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "maxLength": 128
+    },
+    "tasks_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "runtimes_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "executor_agent": {
+      "type": "string",
+      "pattern": "^([A-Za-z0-9][A-Za-z0-9._-]*|custom:[A-Za-z0-9][A-Za-z0-9._-]*)$"
+    },
+    "evaluator_agent": {
+      "type": "string",
+      "pattern": "^([A-Za-z0-9][A-Za-z0-9._-]*|custom:[A-Za-z0-9][A-Za-z0-9._-]*)$"
+    },
+    "judge_mode": {
+      "type": "string",
+      "enum": ["both", "single", "parallel"]
+    },
+    "auth_mode": {
+      "type": "string",
+      "enum": ["env", "global", "copy-auth"]
+    },
+    "executor_auth_mode": {
+      "type": "string",
+      "enum": ["env", "global", "copy-auth"]
+    },
+    "evaluator_auth_mode": {
+      "type": "string",
+      "enum": ["env", "global", "copy-auth"]
+    },
+    "executor_backend": {
+      "type": "string",
+      "enum": ["local", "docker"]
+    },
+    "docker_image": {
+      "type": "string"
+    },
+    "docker_bin": {
+      "type": "string"
+    },
+    "codex_bin": {
+      "type": "string"
+    },
+    "claude_bin": {
+      "type": "string"
+    },
+    "grok_bin": {
+      "type": "string"
+    },
+    "gemini_bin": {
+      "type": "string"
+    },
+    "opencode_bin": {
+      "type": "string"
+    },
+    "executor_bin": {
+      "type": "string"
+    },
+    "evaluator_bin": {
+      "type": "string"
+    },
+    "executor_model": {
+      "type": "string"
+    },
+    "evaluator_model": {
+      "type": "string"
+    },
+    "executor_options": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": {
+        "type": ["string", "integer", "boolean", "null"],
+        "maxLength": 512
+      }
+    },
+    "evaluator_options": {
+      "type": "object",
+      "maxProperties": 32,
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": {
+        "type": ["string", "integer", "boolean", "null"],
+        "maxLength": 512
+      }
+    },
+    "thinking_effort": {
+      "type": "string",
+      "enum": ["default", "off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "none"]
+    },
+    "web_search": {
+      "type": "string",
+      "enum": ["task", "allow", "deny"]
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "batch_size": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "repeat": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_evaluator_parallel": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "evaluator_timeout_seconds": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "instruction_mode": {
+      "type": "string",
+      "enum": ["none", "traverse", "select", "ablation"]
+    },
+    "instruction_steps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "rigor_mode": {
+      "type": "string",
+      "enum": ["none", "select"]
+    },
+    "rigors": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "executor_skills": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required_executor_skills": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "executor_skill_groups": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "executor_skill_root": {
+      "type": "string"
+    },
+    "profile_snapshot": {
+      "type": "object",
+      "description": "Embedded measurement-contract snapshot; validated against profile_snapshot.schema.json before the run starts."
+    }
+  }
+}

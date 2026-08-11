@@ -27,9 +27,9 @@ starbench-run --help
 
 ## Pick the Runtime
 
-Use Claude Code for Claude-family models, Codex for GPT/OpenAI-family models, and OpenCode for other OpenAI-compatible models such as Doubao or Qwen. See [Runner Reference](runner_reference.md#agent-runtimes) for provider-specific flags and mixed-auth examples.
+Use Claude Code for Claude-family models, Codex for GPT/OpenAI-family models, OpenCode for other OpenAI-compatible models such as Doubao or Qwen, Gemini CLI and Grok Build for their own vendors, and Pi to reach Anthropic/OpenAI/Google/xAI models through one multi-provider CLI. See [Runner Reference](runner_reference.md#agent-runtimes) for provider-specific flags and mixed-auth examples.
 
-Executor and evaluator runtimes are selected independently. To change the evaluator, set `--evaluator-agent` to `codex`, `claude`, or `opencode`, and set `--evaluator-model` to the exact model id that runtime should call.
+Executor and evaluator runtimes are selected independently: set `--evaluator-agent` to any built-in id (`codex`, `claude`, `gemini`, `grok`, `opencode`, `pi`) or `custom:<id>`, and `--evaluator-model` to the exact model id that runtime should call.
 
 ## Build the Docker Image
 
@@ -56,9 +56,14 @@ Then run Starbench with:
 Environment-variable mode is also supported:
 
 ```bash
-export CODEX_API_KEY="your-key-here"
+export OPENAI_API_KEY="your-key-here"
 starbench-run ... --auth-mode env
 ```
+
+`OPENAI_API_KEY` is the credential StarBench declares for the `codex` runtime,
+and it is the one the console's preflight checks before it will let you launch.
+`CODEX_API_KEY` and `OPENAI_BASE_URL` are also forwarded into the container when
+set, but StarBench does not treat them as the credential on their own.
 
 Do not commit real keys.
 
@@ -97,17 +102,18 @@ PYTHONPATH=src python3 -m unittest discover -s tests
 
 ## Your Own Tasks
 
-Put real benchmark task packages in `tasks/`:
+Put real benchmark task packages in the StarBench home task library —
+`$STARBENCH_HOME/tasks` (`~/.starbench/tasks` by default):
 
 ```text
-tasks/
+~/.starbench/tasks/
   my_task/
     task.json
     prompt.md
     rubrics.json
 ```
 
-Then run without `--tasks-dir`:
+Then run without `--tasks-dir`, since it now resolves to that directory:
 
 ```bash
 starbench-run \

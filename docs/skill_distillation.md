@@ -21,7 +21,7 @@ The distiller reads:
     rubrics.json
     human_reference.json
   trace/
-    reviews/*/review.json
+    reviews/r*_review/review.json
 ```
 
 ## Generate A Senior Expert Skill

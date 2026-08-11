@@ -10,13 +10,18 @@ setup(
     package_dir={"": "src"},
     packages=find_packages("src"),
     include_package_data=True,
-    package_data={"starbench.runner": ["schemas/*.json"]},
+    package_data={
+        "starbench.runner": ["schemas/*.json"],
+        "starbench.contracts": ["schemas/v1/*.json", "schemas/v2/*.json"],
+        "starbench.gui": ["static/*", "static/assets/*"],
+    },
     python_requires=">=3.9",
     install_requires=["tqdm>=4.66"],
     entry_points={
         "console_scripts": [
             "starbench-run=starbench.runner.run_benchmark:main",
             "starbench-distill-skill=starbench.skill_distiller.distill:main",
+            "starbench-gui=starbench.gui.server:main",
         ]
     },
 )
