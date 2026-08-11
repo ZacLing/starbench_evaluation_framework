@@ -130,6 +130,12 @@ For Codex local executors, selected skills are installed at:
 runs/<run_id>/<task_run_id>/agent_home/skills/<skill_id>/
 ```
 
+When a local Codex executor selects any skill, an executor auth mode of
+`global` is normalized to `copy-auth`. This preserves the host Codex login while
+setting the run-local `CODEX_HOME`, so Codex reads the same `agent_home/skills`
+directory into which StarBench installed the skill. The evaluator auth mode is
+not changed.
+
 Other runtimes use task-workspace paths, on either backend:
 
 ```text

@@ -474,6 +474,22 @@ def parse_args(
         args.docker_image = DEFAULT_DOCKER_IMAGES.get(args.executor_agent) or ""
     args.executor_auth_mode = args.executor_auth_mode or args.auth_mode
     args.evaluator_auth_mode = args.evaluator_auth_mode or args.auth_mode
+    executor_skills_requested = bool(
+        args.executor_skill
+        or args.required_executor_skill
+        or args.executor_skill_group
+    )
+    if (
+        args.executor_agent == "codex"
+        and args.executor_backend == "local"
+        and args.executor_auth_mode == "global"
+        and executor_skills_requested
+    ):
+        # Local Codex installs selected skills under the run's agent_home. A
+        # global auth home leaves CODEX_HOME unset, so Codex searches ~/.codex
+        # instead and cannot read those installed skills. copy-auth preserves
+        # the host login while pointing CODEX_HOME at the isolated agent_home.
+        args.executor_auth_mode = "copy-auth"
 
     def parse_option_pairs(pairs, flag):
         raw: Dict[str, str] = {}

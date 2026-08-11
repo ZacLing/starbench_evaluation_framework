@@ -36,6 +36,11 @@ prompt and artifacts, but StarBench does not trace-verify compliance. The typed
 run-plan equivalents are `executor_skills`, `required_executor_skills`,
 `executor_skill_groups`, and `executor_skill_root`.
 
+For a local Codex executor, selecting any skill automatically normalizes an
+executor auth mode of `global` to `copy-auth`. That keeps the host login while
+setting a run-local `CODEX_HOME` whose `skills/` directory matches the install
+location. Evaluator auth remains unchanged.
+
 See [Executor Skills](executor_skills.md) for registry layout, runtime install
 paths, and the exact prompt behavior.
 

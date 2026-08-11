@@ -258,6 +258,33 @@ class ExecutorSkillTests(unittest.TestCase):
             )
             self.assertEqual(args.required_executor_skill, ["skill-a", "skill-b"])
 
+    def test_local_codex_skills_upgrade_global_executor_auth_to_copy_auth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for selection_flag in (
+                "--executor-skill",
+                "--required-executor-skill",
+                "--executor-skill-group",
+            ):
+                with self.subTest(selection_flag=selection_flag):
+                    args = parse_args(
+                        [
+                            "--tasks-dir",
+                            tmp,
+                            "--runs-dir",
+                            tmp,
+                            "--executor-agent",
+                            "codex",
+                            "--executor-backend",
+                            "local",
+                            "--auth-mode",
+                            "global",
+                            selection_flag,
+                            "skill-a",
+                        ]
+                    )
+                    self.assertEqual(args.executor_auth_mode, "copy-auth")
+                    self.assertEqual(args.evaluator_auth_mode, "global")
+
     def test_agent_runtime_cli_arguments_can_select_claude(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = parse_args(
