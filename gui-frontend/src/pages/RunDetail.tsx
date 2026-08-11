@@ -1111,12 +1111,19 @@ function buildProtocolView(
     })
   const skillIds = ids("requested_executor_skill_ids")
   const skillGroups = ids("requested_executor_skill_groups")
+  const requiredSkillIds = ids("requested_required_executor_skill_ids")
   const skillOrder = str("executor_skill_order")
   if (skillIds.length || skillGroups.length)
     variables.push({
       label: "skills",
       value: [...skillGroups, ...skillIds].join(", "),
       code: skillOrder ? `order ${skillOrder}` : undefined,
+    })
+  if (requiredSkillIds.length)
+    variables.push({
+      label: "required skills",
+      value: requiredSkillIds.join(", "),
+      code: "Required by prompt · not trace-verified",
     })
 
   /* Only the bins of runtimes that took part pin this run; the other three

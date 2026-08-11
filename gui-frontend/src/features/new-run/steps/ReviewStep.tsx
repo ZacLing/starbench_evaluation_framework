@@ -63,6 +63,10 @@ export function StepReview({
   const nextRev = profileRev !== null ? profileRev + 1 : null
   const repeat = Number(shared.repeat) || 1
   const planSkills = plan.plans?.[0]?.executor_skills ?? []
+  const requiredPlanSkills = plan.plans?.[0]?.required_executor_skills ?? []
+  const advisoryPlanSkills =
+    plan.plans?.[0]?.advisory_executor_skills ??
+    planSkills.filter((id) => !requiredPlanSkills.includes(id))
   // Prefer the backend's execution estimate (it accounts for the instruction
   // sweep's variant expansion); fall back to the simple product until the plan
   // preview returns.
@@ -174,21 +178,44 @@ export function StepReview({
 
       {planSkills.length > 0 && (
         <Card className="py-4">
-          <CardContent className="grid gap-2 px-4">
+          <CardContent className="grid gap-3 px-4">
             <span className="text-xs font-semibold text-muted-foreground">
               Executor skills
             </span>
-            <div className="flex flex-wrap gap-1.5">
-              {planSkills.map((id) => (
-                <Badge
-                  key={id}
-                  variant="outline"
-                  className="font-mono text-[11px] text-muted-foreground"
-                >
-                  {id}
-                </Badge>
-              ))}
-            </div>
+            {requiredPlanSkills.length > 0 && (
+              <div className="grid gap-1.5">
+                <span className="text-[11px] font-medium text-warn-ink">
+                  Required by prompt · usage is instructed, not trace-verified
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {requiredPlanSkills.map((id) => (
+                    <Badge
+                      key={id}
+                      variant="outline"
+                      className="border-warn-ink/40 font-mono text-[11px] text-warn-ink"
+                    >
+                      {id}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+            {advisoryPlanSkills.length > 0 && (
+              <div className="grid gap-1.5">
+                <span className="text-[11px] text-muted-foreground">Available guidance</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {advisoryPlanSkills.map((id) => (
+                    <Badge
+                      key={id}
+                      variant="outline"
+                      className="font-mono text-[11px] text-muted-foreground"
+                    >
+                      {id}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
