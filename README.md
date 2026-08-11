@@ -23,7 +23,7 @@ It runs executor agents on task packages, captures the event trace exposed by th
 - `human_reference.json` instruction sweep support.
 - Rule-based instruction ablation: baseline, one variant per expert instruction, and an all-instructions variant, with repeat runs and uplift summaries.
 - Rigor prompt injection: restate selected rubric requirements as hard requirements in the executor prompt.
-- Executor skills: install reusable skill folders into the executor workspace, individually or as named groups.
+- Executor skills: install reusable skill folders into the executor workspace, individually or as named groups, and optionally require selected skills through the executor prompt.
 - Trace capture: raw JSONL events, final message, status/timing, artifact manifest, and derived summary.
 - A default task library at `$STARBENCH_HOME/tasks` (`~/.starbench/tasks`) for user task packages.
 - Two sample task packages under `examples/tasks/`.
@@ -159,6 +159,9 @@ Run-level knobs that apply to any of the above:
                                            (enforced for Claude Code and Codex)
 --instruction-mode / --rigor-mode          expert-step sweeps and rigor prompt injection
                                            (see the docs below)
+--executor-skill ID                        install a skill as available guidance; repeatable
+--required-executor-skill ID               install a skill and require its workflow through
+                                           the executor prompt; repeatable and not trace-verified
 ```
 
 Every knob above is also a field of the run plan (same names, underscores

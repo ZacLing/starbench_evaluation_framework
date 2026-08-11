@@ -8,7 +8,8 @@ This is different from human-reference instruction injection or rigor injection:
 - Executor skills are copied as real skill directories into the runtime-specific install path.
 - The executor prompt only names the selected installed skills and tells the executor where to read them as private execution guidance.
 
-Baseline runs are unchanged unless `--executor-skill` or `--executor-skill-group` is passed.
+Baseline runs are unchanged unless `--executor-skill`,
+`--required-executor-skill`, or `--executor-skill-group` is passed.
 
 ## Task Package Format
 
@@ -77,6 +78,20 @@ starbench-run \
   --executor-skill-root executor_skills \
   --executor-skill-group research-platforms
 ```
+
+Require a selected skill's workflow through the executor prompt:
+
+```bash
+starbench-run \
+  --executor-skill-root executor_skills \
+  --required-executor-skill research-platform-architecture-expert
+```
+
+The option is per skill and repeatable. A required skill is installed
+automatically, so it does not also need `--executor-skill`. Available and
+required skills can be mixed in the same run. If a required id was also selected
+as an available skill or through a group, required mode upgrades that id instead
+of installing it twice.
 
 Task-local skills and shared registry skills can be used together as long as skill ids do not collide.
 
@@ -148,6 +163,22 @@ The read path in the second rule is the selected runtime's own location:
 `./.starbench/executor_skills/<skill-id>/` for OpenCode, Pi, and custom runtimes.
 
 The skill body itself is not appended into `workspace/inputs/prompt.md`.
+
+For required skills, the prompt uses a distinct block:
+
+```text
+Required executor skills:
+- `research-platform-architecture-expert`: ...
+
+Required skill usage rules:
+- Before beginning task work, read the complete SKILL.md for every required executor skill under $CODEX_HOME/skills/<skill-id>/.
+- You must follow each required skill's applicable workflow during planning, execution, and final self-checking.
+- Do not skip a required skill because it appears optional or because the task seems simple.
+```
+
+This is prompt enforcement only. StarBench records the requirement but does not
+inspect the agent trace to prove that the skill was used, and it does not fail a
+run solely because usage cannot be verified.
 
 ## Reproducibility
 

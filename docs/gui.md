@@ -162,13 +162,17 @@ single-operator tool; do not expose it to a network.
   `STARBENCH_JUDGE_ENV_*` prefix that the runner unpacks separately), so an
   agent's injected endpoint no longer reroutes the judge; a variable read by
   both is surfaced as an amber advisory in the plan, not a rejection. Shared
-  config also carries research experiments — executor skills and a **Prompt
-  assistance** region whose Expert instructions sub-section runs the
+  config also carries research experiments — executor skills, with a per-skill
+  **Off / Available / Required by prompt** control, and a **Prompt assistance**
+  region whose Expert instructions sub-section runs the
   human-reference sweep (none / selected steps / traverse / ablation) and whose
   **Rigor requirements** sub-section (off by default) restates selected rubric
   requirements as hard requirements in every agent's prompt — a controlled
   experiment that injects into the existing runs without expanding variants. The
-  review step's billing uses the backend execution estimate so any variant
+  review step separates available from required skills and states that required
+  usage is instructed rather than trace-verified. A skill supplied by a group
+  remains available by default and can be upgraded individually to required.
+  The review step's billing uses the backend execution estimate so any variant
   fan-out is visible before launch.
 
 ## Launching runs

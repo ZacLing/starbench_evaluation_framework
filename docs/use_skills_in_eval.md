@@ -2,7 +2,8 @@
 
 This guide shows how to load executor skills during `starbench-run`.
 
-Baseline behavior is unchanged unless you pass `--executor-skill` or `--executor-skill-group`.
+Baseline behavior is unchanged unless you pass `--executor-skill`,
+`--required-executor-skill`, or `--executor-skill-group`.
 
 ## Shared Skill Registry
 
@@ -70,6 +71,25 @@ starbench-run \
 ```
 
 The final selected skill ids must be unique. If a group and an explicit skill select the same id, the runner fails fast.
+
+## Require A Skill By Prompt
+
+Use `--required-executor-skill` when the experiment must instruct the agent to
+read and follow a particular skill rather than merely make it available:
+
+```bash
+starbench-run \
+  --executor-skill-root executor_skills \
+  --required-executor-skill senior-technical-proposal-expert
+```
+
+The flag is repeatable and implies installation. It can be combined with
+`--executor-skill` and `--executor-skill-group`; selecting a group member as
+required upgrades that member to required mode. In a run plan, use the
+`required_executor_skills` array.
+
+Required mode is prompt-only enforcement. It does not validate skill usage from
+the trace and does not turn missing trace evidence into a failed run.
 
 ## Generated Example Groups
 
@@ -154,6 +174,9 @@ runs/<run_id>/<task_run_id>/task_summary.json
 ```
 
 `manifest.json` includes installed skill ids, source paths, and directory SHA-256 hashes.
+It also separates `advisory_executor_skill_ids` from
+`required_executor_skill_ids`, while retaining `executor_skill_ids` as the
+combined compatibility field.
 
 ## Task-local Skills
 

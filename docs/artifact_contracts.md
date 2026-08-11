@@ -200,12 +200,25 @@ Schema: `schemas/starbench/v1/progress_event.schema.json`.
 `manifest.json` records what the executor task run saw and which research
 variants were selected.
 
+Executor-skill fields distinguish selection mode:
+
+- `executor_skill_ids` and `executor_skills` contain all installed skills and
+  remain the compatibility view;
+- `advisory_executor_skill_ids` and `advisory_executor_skills` contain skills
+  installed as available guidance;
+- `required_executor_skill_ids` and `required_executor_skills` contain skills
+  the prompt requires the executor to read and follow.
+
+“Required” describes the prompt contract, not trace-verified usage.
+
 Schema: `schemas/starbench/v1/task_manifest.schema.json`.
 
 ### 5.4 `task_summary.json`
 
 `task_summary.json` is the public summary for one task run. It links executor
-status and judge results.
+status and judge results. It carries the same combined, advisory, and required
+executor-skill fields as `manifest.json` so consumers do not need to infer mode
+from prompt text.
 
 Schema: `schemas/starbench/v1/task_summary.schema.json`.
 
