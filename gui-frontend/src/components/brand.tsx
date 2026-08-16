@@ -101,6 +101,9 @@ export function AgentIcon({
       return <OpenCode.Avatar size={size} />
     case "pi":
       return <Pi.Avatar size={size} />
+    case "dsh":
+      // DeepSeek Harness is DeepSeek's own CLI, so it carries the vendor mark.
+      return <DeepSeek.Avatar size={size} />
   }
   if (agent.startsWith("custom:")) {
     const render = icon ? CUSTOM_ICONS[icon.toLowerCase()] : undefined

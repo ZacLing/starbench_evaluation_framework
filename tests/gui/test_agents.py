@@ -56,7 +56,7 @@ class AgentRegistryTest(unittest.TestCase):
         listing = agents.list_agents(self.runtimes_dir)
         by_id = {agent["id"]: agent for agent in listing["builtin"]}
         self.assertEqual(
-            sorted(by_id), ["claude", "codex", "gemini", "grok", "opencode", "pi"]
+            sorted(by_id), ["claude", "codex", "dsh", "gemini", "grok", "opencode", "pi"]
         )
         # Docker capability is reported per runtime, not assumed for all;
         # every current built-in ships its own starbench- image.
@@ -227,6 +227,12 @@ class AgentRegistryTest(unittest.TestCase):
             by_id["pi"]["latest_source"], {"npm": "@earendil-works/pi-coding-agent"}
         )
         self.assertEqual(by_id["pi"]["update_command"], by_id["pi"]["install_command"])
+        # DeepSeek publishes dsh on npm only — no installer script exists, so
+        # npm is both the delivery channel and the on-disk artifact.
+        self.assertEqual(by_id["dsh"]["channel"], "npm")
+        self.assertIsNone(by_id["dsh"]["artifact_channel"])
+        self.assertEqual(by_id["dsh"]["bin"], "dsh")
+        self.assertEqual(by_id["dsh"]["latest_source"], {"npm": "@deepseek-ai/dsh"})
 
     def test_agent_status_reports_versions_and_updates_via_github(self) -> None:
         original_which = agents.shutil.which

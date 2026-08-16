@@ -178,6 +178,13 @@ INSTALL_SPECS: Dict[str, Dict[str, Any]] = {
         "name": "@earendil-works/pi-coding-agent",
         "latest_source": {"npm": "@earendil-works/pi-coding-agent"},
     },
+    # DeepSeek ships dsh through npm only — the harness has no installer script,
+    # and its README installs the CLI package globally.
+    "dsh": _npm_spec(
+        "@deepseek-ai/dsh",
+        "dsh",
+        "https://github.com/deepseek-ai/deepseek-harness",
+    ),
     "custom:qwen-code": _npm_spec(
         "@qwen-code/qwen-code",
         "qwen",

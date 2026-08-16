@@ -47,7 +47,7 @@ class AgentsRegistrySnapshotTest(unittest.TestCase):
         # appended alphabetically after it, so the prefix never shifts.
         self.assertEqual(
             [a["id"] for a in listing["builtin"]],
-            ["claude", "codex", "gemini", "grok", "opencode", "pi"],
+            ["claude", "codex", "gemini", "grok", "opencode", "dsh", "pi"],
         )
         # Every historical field intact.
         codex = by_id["codex"]

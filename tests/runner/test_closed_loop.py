@@ -233,6 +233,144 @@ class ClosedLoopTests(unittest.TestCase):
         )
         return script, argv_dir
 
+    def make_fake_dsh(self, directory: Path) -> tuple[Path, Path]:
+        """Fake dsh that serves both roles: executor turn, and judge verdict JSON.
+
+        dsh is configuration-driven, so the fake reads the generated documents
+        the adapter wrote instead of only inspecting flags: it parses the
+        ``--patch`` overlay to learn where its session log belongs and writes a
+        real ``@deepseek-ai/dsh-session`` transcript there, and it reads the
+        settings document beside it. Both roles assert the headless contract
+        (``--profile headless``, the task as the trailing positional, an empty
+        stdin) and the telemetry lockdown.
+
+        Each role dumps its argv, both generated documents, its ``DSH_HOME``,
+        and the provider key var it can see to ``<argv-dir>/<role>.json``, so
+        the test checks the command, the configuration, and the env scope from
+        the outside. Returns the script path and that dump directory.
+        """
+        argv_dir = directory / "dsh_calls"
+        argv_dir.mkdir(parents=True, exist_ok=True)
+        script = directory / "fake_dsh.py"
+        script.write_text(
+            textwrap.dedent(
+                r'''
+                import json
+                import os
+                import re
+                import sys
+                from pathlib import Path
+
+                CALL_DIR = Path(r"__CALL_DIR__")
+
+                def load_document(path):
+                    if not path.exists():
+                        return None
+                    body = "\n".join(
+                        line for line in path.read_text(encoding="utf-8").splitlines()
+                        if not line.startswith("#")
+                    )
+                    return json.loads(body)
+
+                def rubric_ids(prompt):
+                    ids = re.findall(r'"id":\s*"([A-Z]\d+)"', prompt)
+                    return ids or ["R001"]
+
+                args = sys.argv[1:]
+                assert args[:2] == ["--profile", "headless"], args
+                assert "--patch" in args, args
+                # The task is the trailing positional, never stdin.
+                assert sys.stdin.read() == "", "dsh reads no prompt from stdin"
+                prompt = args[-1]
+                assert prompt.strip(), "the task must arrive as a positional"
+
+                assert os.environ.get("DSH_TELEMETRY_DISABLED") == "1", "telemetry must be off"
+                assert os.environ.get("DSH_TELEMETRY_MODE") == "DISABLED", "telemetry must be off"
+                assert "DSH_TELEMETRY_OTLP_URL" not in os.environ, "no telemetry endpoint"
+                home = os.environ.get("DSH_HOME", "")
+                assert home, "DSH_HOME must be set"
+
+                patch_path = Path(args[args.index("--patch") + 1])
+                assert patch_path.parent == Path(home), (patch_path, home)
+                patch = load_document(patch_path)
+                settings = load_document(Path(home) / "settings.yaml")
+                rows = {row["id"]: row for row in patch}
+                session_root = Path(rows["session-persistence-jsonl"]["config"]["root"])
+
+                role = "judge" if "Return only one JSON value" in prompt else "executor"
+                (CALL_DIR / (role + ".json")).write_text(
+                    json.dumps({
+                        "argv": args,
+                        "patch": patch,
+                        "settings": settings,
+                        "dsh_home": home,
+                        "permission_mode": os.environ.get("DSH_PERMISSION_MODE"),
+                        "gemini_api_key": os.environ.get("GEMINI_API_KEY"),
+                    }),
+                    encoding="utf-8",
+                )
+
+                events = [
+                    {"type": "session", "version": 0, "id": "session-1",
+                     "cwd": os.getcwd(), "createdAt": 1},
+                    {"type": "turn/start", "seq": 1, "time": 2, "data": {"turn": 0}},
+                ]
+                if role == "judge":
+                    text = json.dumps({
+                        "mode": "single",
+                        "results": [
+                            {
+                                "rubric_id": rid,
+                                "answer": False if rid in ("R015", "R016", "U016") else True,
+                                "evidence": f"fake evidence for {rid}"
+                            }
+                            for rid in rubric_ids(prompt)
+                        ],
+                        "overall_notes": "fake ok"
+                    })
+                else:
+                    outputs = Path(os.getcwd()) / "outputs" / "demo"
+                    outputs.mkdir(parents=True, exist_ok=True)
+                    (outputs / "result.txt").write_text("done")
+                    events.append({
+                        "type": "tool/call", "seq": 2, "time": 3,
+                        "data": {"turn": 0, "step": 0, "callId": "call-1",
+                                 "name": "write_file",
+                                 "arguments": '{"path":"outputs/demo/result.txt"}'},
+                    })
+                    events.append({
+                        "type": "tool/result", "seq": 3, "time": 4,
+                        "data": {"turn": 0, "step": 0, "message": {
+                            "id": "m1", "role": "user", "source": {"kind": "tool"},
+                            "content": [{"type": "tool-result", "toolCallId": "call-1",
+                                         "content": [{"type": "text",
+                                                      "text": "wrote outputs/demo/result.txt"}]}],
+                        }},
+                    })
+                    text = "Fake dsh finished the task."
+                events.append({
+                    "type": "assistant/message", "seq": len(events), "time": 9,
+                    "data": {"turn": 0, "step": 0, "usage": {"inputTokens": 7, "outputTokens": 3},
+                             "message": {"id": "m2", "role": "assistant",
+                                         "source": {"kind": "model"},
+                                         "content": [{"type": "text", "text": text}]}},
+                })
+                events.append({
+                    "type": "turn/end", "seq": len(events), "time": 10,
+                    "data": {"turn": 0, "reason": {"kind": "completed"}},
+                })
+                log = session_root / "--fake-cwd--" / "session-1" / "session.jsonl"
+                log.parent.mkdir(parents=True, exist_ok=True)
+                log.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+                # stdout is the last non-empty assistant text and nothing else.
+                sys.stdout.write(text + "\n")
+                '''
+            ).replace("__CALL_DIR__", str(argv_dir)),
+            encoding="utf-8",
+        )
+        return script, argv_dir
+
     def add_executor_skill(self, task_dir: Path, skill_id: str) -> None:
         """Give a copied task package one minimal executor skill.
 
@@ -669,6 +807,158 @@ class ClosedLoopTests(unittest.TestCase):
             provenance = run_config["runtime_provenance"]
             self.assertEqual(provenance["executor"]["agent"], "pi")
             self.assertEqual(provenance["evaluator"]["agent"], "pi")
+
+    def test_closed_loop_with_fake_dsh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            tasks_dir = tmp_path / "tasks"
+            runs_dir = tmp_path / "runs"
+            shutil.copytree(DEMO_TASK, tasks_dir / "demo_python_cli")
+            fake_dsh, dsh_calls = self.make_fake_dsh(tmp_path)
+
+            cmd = [
+                sys.executable,
+                "-m",
+                "starbench.runner.run_benchmark",
+                "--tasks-dir",
+                str(tasks_dir),
+                "--runs-dir",
+                str(runs_dir),
+                "--run-id",
+                "test_dsh_run",
+                "--seed",
+                "123",
+                "--judge-mode",
+                "single",
+                # dsh refuses every other auth mode: the operator's ~/.dsh
+                # login must never carry benchmark traffic.
+                "--auth-mode",
+                "env",
+                "--executor-backend",
+                "local",
+                "--executor-agent",
+                "dsh",
+                "--evaluator-agent",
+                "dsh",
+                "--dsh-bin",
+                f"{sys.executable} {fake_dsh}",
+                # The console computes these three as wiring; a CLI user states
+                # them, and they end up in the generated settings document.
+                "--executor-option",
+                "provider=google",
+                "--executor-option",
+                "api_key_env=GEMINI_API_KEY",
+                "--executor-model",
+                "gemini-3-pro",
+                # `off` is in dsh's declared set on both routes, so the
+                # run-level tier reaches the judge side too.
+                "--thinking-effort",
+                "off",
+                "--no-progress",
+            ]
+            run_env = {k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"}
+            run_env["STARBENCH_EXECUTOR_ENV_GEMINI_API_KEY"] = "sentinel-executor-only"
+            completed = subprocess.run(
+                cmd,
+                cwd=ROOT,
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=run_env,
+            )
+            self.assertEqual(completed.returncode, 0, msg=completed.stderr)
+            task_root = runs_dir / "test_dsh_run" / "demo_python_cli"
+            status = json.loads((task_root / "logs" / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["status"], "success")
+
+            # stdout is plain text, so the deliverable is the text itself.
+            final = (task_root / "logs" / "final.md").read_text(encoding="utf-8")
+            self.assertEqual(final, "Fake dsh finished the task.")
+            events = [
+                json.loads(line)
+                for line in (task_root / "logs" / "events.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            # The session log rides in verbatim (dsh keeps its trace out of
+            # band), then the Codex-compat tail every trace reader shares.
+            self.assertEqual(events[0]["type"], "session")
+            self.assertEqual(events[-1]["type"], "turn.completed")
+            summary = json.loads(
+                (task_root / "logs" / "trace_summary.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(summary["agent_messages"][0]["text"], final)
+            self.assertEqual(
+                summary["command_executions"][0]["aggregated_output"],
+                "wrote outputs/demo/result.txt",
+            )
+            self.assertEqual(summary["usage"], {"input_tokens": 7, "output_tokens": 3})
+
+            executor_call = json.loads((dsh_calls / "executor.json").read_text(encoding="utf-8"))
+            judge_call = json.loads((dsh_calls / "judge.json").read_text(encoding="utf-8"))
+
+            # A provider key scoped to the executor reaches the executor and
+            # stops there: the judge's dsh process cannot see it, so a contender
+            # cannot reroute the evaluator that grades it through a key var.
+            self.assertEqual(executor_call["gemini_api_key"], "sentinel-executor-only")
+            self.assertIsNone(judge_call["gemini_api_key"])
+
+            executor_home = task_root / "agent_home" / "dsh_executor"
+            judge_home = task_root / "agent_home" / "judge_single_dsh"
+            self.assertEqual(Path(executor_call["dsh_home"]).resolve(), executor_home.resolve())
+            self.assertEqual(Path(judge_call["dsh_home"]).resolve(), judge_home.resolve())
+            # The judge only reads evidence; the executor may write its outputs.
+            self.assertEqual(executor_call["permission_mode"], "workspace-write")
+            self.assertEqual(judge_call["permission_mode"], "read-only")
+
+            # Wiring options become the settings document: the route, its key
+            # var *name* (never a value), and this run's thinking tier.
+            self.assertEqual(
+                executor_call["settings"],
+                {
+                    "llm-pi-ai": {
+                        "providers": {
+                            "google": {"apiKeyEnv": "GEMINI_API_KEY", "reasoning": "off"}
+                        }
+                    }
+                },
+            )
+            self.assertNotIn(
+                "sentinel-executor-only", json.dumps(executor_call["settings"])
+            )
+            # The judge named no provider, so it stays on dsh's own route and
+            # only states the tier.
+            self.assertEqual(judge_call["settings"], {"llm-deepseek": {"reasoningEffort": "off"}})
+
+            executor_rows = {row["id"]: row for row in executor_call["patch"]}
+            self.assertEqual(
+                executor_rows["agent-default-model"]["config"],
+                {"provider": "google", "model": "gemini-3-pro"},
+            )
+            self.assertEqual(
+                executor_rows["session-persistence-jsonl"]["config"]["compression"], "none"
+            )
+            for row_id in ("session-telemetry-otel", "telemetry-otel"):
+                self.assertTrue(executor_rows[row_id]["disabled"], row_id)
+                judge_rows = {row["id"]: row for row in judge_call["patch"]}
+                self.assertTrue(judge_rows[row_id]["disabled"], row_id)
+            # No evaluator model was named, so dsh keeps its own default pair
+            # rather than being handed a half-stated row.
+            self.assertNotIn(
+                "agent-default-model", {row["id"] for row in judge_call["patch"]}
+            )
+
+            aggregate = json.loads(
+                (task_root / "judges" / "single_aggregate.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(aggregate["passed_count"], aggregate["total_count"])
+            provenance = json.loads(
+                (runs_dir / "test_dsh_run" / "run_config.json").read_text(encoding="utf-8")
+            )["runtime_provenance"]
+            self.assertEqual(provenance["executor"]["agent"], "dsh")
+            self.assertEqual(provenance["evaluator"]["agent"], "dsh")
 
     def test_closed_loop_ablation_with_repeats_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

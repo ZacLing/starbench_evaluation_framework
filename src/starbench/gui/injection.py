@@ -42,20 +42,32 @@ DEFAULT_OPENAI_BASE_URLS: Dict[str, str] = {
     "xai": "https://api.x.ai/v1",
 }
 
-# pi drives four native provider kinds; each maps to pi's --provider name and
-# the official API-key env var pi reads for it (pi.dev docs/providers).
-PI_PROVIDER_NAMES: Dict[str, str] = {
+# The pi-ai provider catalog, shared by the two runtimes that route through it:
+# pi (the CLI) and dsh (whose `llm-pi-ai` adapter *is* @earendil-works/pi-ai).
+# Each native provider kind maps to the catalog's route name and to the official
+# API-key env var that route reads (pi-ai `dist/env-api-keys.js`).
+NATIVE_PROVIDER_ROUTES: Dict[str, str] = {
     "anthropic": "anthropic",
     "openai": "openai",
     "google": "google",
     "xai": "xai",
 }
-PI_KEY_VARS: Dict[str, str] = {
+NATIVE_PROVIDER_KEY_VARS: Dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "google": "GEMINI_API_KEY",
     "xai": "XAI_API_KEY",
 }
+
+# pi's historical names for the same two tables (one source, two spellings).
+PI_PROVIDER_NAMES = NATIVE_PROVIDER_ROUTES
+PI_KEY_VARS = NATIVE_PROVIDER_KEY_VARS
+
+# dsh reaches an OpenAI-compatible endpoint through its native DeepSeek
+# adapter's single route, whose baseURL and key var are configurable
+# (@deepseek-ai/dsh-llm-deepseek); DeepSeek's own API is that route unmodified.
+DSH_COMPAT_ROUTE = "deepseek-official"
+DSH_COMPAT_KEY_VAR = "DEEPSEEK_API_KEY"
 
 Settings = Dict[str, Any]
 
@@ -137,6 +149,39 @@ def builtin_settings(info: RuntimeInfo, provider: Dict[str, Any]) -> Settings:
         return {
             "auth_mode": auth_mode,
             "gateway": {"provider": PI_PROVIDER_NAMES.get(provider_kind)},
+            "env": env or None,
+        }
+
+    if kind == "dsh_gateway":
+        # dsh routes a provider through one of two LLM adapters, chosen by kind:
+        # the four native kinds ride its pi-ai twin under the shared catalog
+        # route names, while openai-compatible rides the native DeepSeek
+        # adapter's route with the endpoint carried explicitly. Either way the
+        # adapter writes the route, the endpoint, and the key *var name* into
+        # the run's generated settings document, so all three are gateway keys
+        # (the adapter's declared wiring options) rather than env overrides —
+        # except the key itself, which still reaches dsh through the official
+        # env var for that kind.
+        provider_kind = str(provider.get("kind") or "")
+        env: Dict[str, Any] = {}
+        if provider_kind == "openai-compatible":
+            route: str | None = DSH_COMPAT_ROUTE
+            official_var = DSH_COMPAT_KEY_VAR
+            base_url = str(provider.get("base_url") or "") or None
+        else:
+            route = NATIVE_PROVIDER_ROUTES.get(provider_kind)
+            official_var = NATIVE_PROVIDER_KEY_VARS.get(provider_kind, "")
+            base_url = None
+        source_var = str(provider.get("api_key_env") or "")
+        if official_var and source_var:
+            env[official_var] = {"from_env": source_var}
+        return {
+            "auth_mode": auth_mode,
+            "gateway": {
+                "provider": route,
+                "base_url": base_url,
+                "api_key_env": official_var or None,
+            },
             "env": env or None,
         }
 
