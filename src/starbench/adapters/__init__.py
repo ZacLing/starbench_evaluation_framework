@@ -7,8 +7,8 @@ registry and drives it, holding no per-runtime branches of its own.
 
 Layout:
 - ``base.py``     RuntimeInfo + RuntimeAdapter interface + Executor/JudgeContext
-- ``registry.py`` get_builtin / list_builtin / resolve (built-in 6 + custom)
-- ``codex/claude/gemini/grok/opencode/pi.py``  the six built-in adapters
+- ``registry.py`` get_builtin / list_builtin / resolve (built-in 7 + custom)
+- ``codex/claude/gemini/grok/opencode/pi/dsh.py``  the seven built-in adapters
 - ``spec.py``     the data-driven adapter for ``runtimes/<id>.json`` customs
 
 Dependency arrow points down: adapters import ``starbench.execution`` and

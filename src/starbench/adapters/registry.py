@@ -24,6 +24,7 @@ from ..runner.custom_runtime import CustomRuntimeSpec, load_custom_runtime
 from .base import RuntimeAdapter
 from .claude import ClaudeAdapter
 from .codex import CodexAdapter
+from .dsh import DshAdapter
 from .gemini import GeminiAdapter
 from .grok import GrokAdapter
 from .opencode import OpenCodeAdapter
@@ -40,6 +41,7 @@ _BUILTIN_ORDER: List[RuntimeAdapter] = [
     GrokAdapter(),
     OpenCodeAdapter(),
     PiAdapter(),
+    DshAdapter(),
 ]
 
 _BUILTIN: Dict[str, RuntimeAdapter] = {adapter.info.id: adapter for adapter in _BUILTIN_ORDER}

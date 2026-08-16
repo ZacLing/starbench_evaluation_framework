@@ -25,6 +25,13 @@ DOCKER_ENV_WHITELIST_BY_ID = {
     "grok": ["XAI_API_KEY"],
     "opencode": ["OPENAI_API_KEY", "XAI_API_KEY"],
     "pi": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY"],
+    "dsh": [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "XAI_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ],
 }
 
 # Built-in runtimes that ship no Docker image and run host-local only.
@@ -37,9 +44,12 @@ class RegistryTests(unittest.TestCase):
     def test_builtins_in_stable_order(self) -> None:
         ids = [adapter.info.id for adapter in list_builtin()]
         # The historical five keep their order; later runtimes append at the tail.
-        self.assertEqual(ids, ["codex", "claude", "gemini", "grok", "opencode", "pi"])
         self.assertEqual(
-            BUILTIN_AGENTS, {"codex", "claude", "gemini", "grok", "opencode", "pi"}
+            ids, ["codex", "claude", "gemini", "grok", "opencode", "pi", "dsh"]
+        )
+        self.assertEqual(
+            BUILTIN_AGENTS,
+            {"codex", "claude", "gemini", "grok", "opencode", "pi", "dsh"},
         )
 
     def test_default_docker_images_are_derived_and_match_gui(self) -> None:
@@ -52,6 +62,7 @@ class RegistryTests(unittest.TestCase):
                 "grok": "starbench-grok:latest",
                 "opencode": "starbench-opencode:latest",
                 "pi": "starbench-pi:latest",
+                "dsh": "starbench-dsh:latest",
             },
         )
         for agent in GUI_BUILTIN_AGENTS:

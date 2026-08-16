@@ -2,7 +2,7 @@
 
 Runtime-agnostic in the sense that these functions key off an *output format*
 (headless-json, jsonl-events, plain text, Claude stream-json, OpenCode export,
-pi JSON events)
+pi JSON events, dsh session logs)
 rather than a runtime name — several runtimes share a format. Adapters pick the
 right parser for their runtime and call these helpers.
 
@@ -718,5 +718,201 @@ def normalize_pi_events(events_path: Path) -> None:
         return
     compat.append({"type": "turn.completed", "usage": None})
     with events_path.open("a", encoding="utf-8") as handle:
+        for event in compat:
+            handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def write_dsh_final_output(
+    stdout_path: Path, final_path: Path, *, output_schema: Path | None = None
+) -> None:
+    """Write ``final.md`` from dsh's plain-text stdout.
+
+    ``dsh --profile headless`` prints exactly one thing: the last non-empty
+    assistant text of the turn, followed by a newline
+    (``@deepseek-ai/dsh-headless/lib/index.js``). There is no JSON envelope and
+    no event stream on stdout, so the deliverable is the file's text. An empty
+    stdout means the turn produced no assistant message; that raises, so the
+    caller downgrades the run instead of grading emptiness.
+    """
+    text = stdout_path.read_text(encoding="utf-8").strip() if stdout_path.exists() else ""
+    if not text:
+        raise ValueError("dsh produced no assistant text on stdout")
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_schema is None:
+        final_path.write_text(text, encoding="utf-8")
+        return
+    structured = _extract_json_object(text)
+    final_path.write_text(json.dumps(structured, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def find_dsh_session_log(session_root: Path) -> Path | None:
+    """Locate this run's raw session transcript under a dsh session root.
+
+    ``@deepseek-ai/dsh-session-persistence-jsonl`` stores one log per session at
+    ``<root>/--<normalized-cwd>--/<encoded-session-id>/session.jsonl`` (the
+    ``.zstd`` suffix is the default; the dsh adapter patches
+    ``compression: none`` so the raw file is the one on disk). A run creates one
+    session, but a resumed or crashed root can hold several — the newest wins,
+    and a root with none yields ``None`` (honest absence, not an error).
+    """
+    if not session_root.is_dir():
+        return None
+    logs = [path for path in session_root.rglob("session.jsonl") if path.is_file()]
+    if not logs:
+        return None
+    return max(logs, key=lambda path: path.stat().st_mtime)
+
+
+def _dsh_block_text(blocks: Any) -> str:
+    """Join the text of a dsh ``ContentBlock[]`` (``@deepseek-ai/dsh-llm``)."""
+    if not isinstance(blocks, list):
+        return ""
+    parts = [
+        str(block.get("text") or "")
+        for block in blocks
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    return "".join(parts)
+
+
+def _dsh_usage_totals(usages: List[Dict[str, Any]]) -> Dict[str, Any] | None:
+    """Sum dsh ``TokenUsage`` records into the Codex-shaped usage keys.
+
+    dsh reports usage per model call on each ``assistant/message``; a turn holds
+    one per step. The Codex-compat terminator carries one usage object for the
+    turn, so the steps are summed — which is the billed total, since dsh's
+    counts are disjoint (uncached input, output, cache reads/writes reported
+    separately). Keys are renamed to the ``input_tokens`` / ``output_tokens``
+    spelling every other runtime's trace uses.
+    """
+    if not usages:
+        return None
+    mapping = (
+        ("inputTokens", "input_tokens"),
+        ("outputTokens", "output_tokens"),
+        ("cacheReadTokens", "cache_read_tokens"),
+        ("cacheWriteTokens", "cache_write_tokens"),
+        ("reasoningTokens", "reasoning_tokens"),
+    )
+    totals: Dict[str, Any] = {}
+    for source, target in mapping:
+        values = [usage[source] for usage in usages if isinstance(usage.get(source), (int, float))]
+        if values:
+            totals[target] = sum(values)
+    return totals or None
+
+
+def normalize_dsh_events(session_root: Path, events_path: Path) -> None:
+    """Write ``events.jsonl`` from a dsh session log plus a Codex-compat tail.
+
+    dsh keeps its transcript out of band: stdout is the final text only, while
+    the durable turn lives in the session JSONL the adapter pins into the run
+    directory. This copies that log verbatim (its header line first, then one
+    ``SessionEvent`` per line) and appends the ``item.completed`` items the
+    trace readers share, so a dsh run is comparable with every other runtime.
+
+    Mapped from ``@deepseek-ai/dsh-session``'s event vocabulary:
+    ``assistant/message`` text blocks → ``agent_message``, its ``reasoning``
+    blocks → ``reasoning``, and ``tool/call`` + ``tool/result`` → one
+    ``command_execution`` per completed call (the tool *name* is the command,
+    since dsh logs raw tool arguments as an opaque JSON string).
+
+    Deliberately unmapped: ``file_change``. dsh's filesystem tools carry their
+    result-time diff in the tool-private ``tool/result.meta`` payload, whose
+    shape ``dsh-tool-fs`` owns and does not document; guessing at it would
+    invent trace facts. ``trace_summary.file_changes`` is therefore empty for
+    dsh until a real-CLI smoke run pins the payload (same posture as pi).
+
+    Idempotent: an events file that already carries compat items is left alone,
+    so a re-run of finalize cannot double-count. A root with no session log
+    writes nothing — the absent trace stays absent rather than being invented.
+    """
+    if events_path.exists():
+        existing = _read_jsonl_events(events_path)
+        if any(event.get("type") == "item.completed" for event in existing):
+            return
+    session_log = find_dsh_session_log(session_root)
+    if session_log is None:
+        return
+
+    raw_lines: List[str] = []
+    events: List[Dict[str, Any]] = []
+    for line in session_log.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        raw_lines.append(line)
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+
+    calls: Dict[str, str] = {}
+    compat: List[Dict[str, Any]] = []
+    usages: List[Dict[str, Any]] = []
+    for event in events:
+        event_type = event.get("type")
+        data = event.get("data")
+        data = data if isinstance(data, dict) else {}
+        seq = event.get("seq")
+        if event_type == "assistant/message":
+            message = data.get("message")
+            message = message if isinstance(message, dict) else {}
+            usage = data.get("usage")
+            if isinstance(usage, dict):
+                usages.append(usage)
+            for index, block in enumerate(message.get("content") or []):
+                if not isinstance(block, dict):
+                    continue
+                text = block.get("text")
+                if not isinstance(text, str) or not text:
+                    continue
+                if block.get("type") == "text":
+                    item_type = "agent_message"
+                elif block.get("type") == "reasoning":
+                    item_type = "reasoning"
+                else:
+                    continue
+                compat.append(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": item_type, "id": f"dsh-{seq}-{index}", "text": text},
+                    }
+                )
+        elif event_type == "tool/call":
+            call_id = data.get("callId")
+            if isinstance(call_id, str):
+                calls[call_id] = str(data.get("name") or "")
+        elif event_type == "tool/result":
+            message = data.get("message")
+            message = message if isinstance(message, dict) else {}
+            content = message.get("content")
+            block = content[0] if isinstance(content, list) and content else None
+            block = block if isinstance(block, dict) else {}
+            call_id = block.get("toolCallId")
+            call_id = call_id if isinstance(call_id, str) else f"dsh-{seq}"
+            is_error = bool(block.get("isError")) or isinstance(data.get("error"), dict)
+            output = _dsh_block_text(block.get("content"))
+            compat.append(
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "type": "command_execution",
+                        "id": call_id,
+                        "command": calls.get(call_id, ""),
+                        "status": "failed" if is_error else "completed",
+                        "exit_code": 1 if is_error else 0,
+                        "aggregated_output": output or None,
+                    },
+                }
+            )
+
+    if compat:
+        compat.append({"type": "turn.completed", "usage": _dsh_usage_totals(usages)})
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    with events_path.open("w", encoding="utf-8") as handle:
+        for line in raw_lines:
+            handle.write(line + "\n")
         for event in compat:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")

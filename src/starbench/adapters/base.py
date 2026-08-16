@@ -93,6 +93,9 @@ class InjectionChannel:
     - ``opencode_gateway`` opencode provider/base_url/api_key_env options
     - ``pi_gateway``       pi ``--provider`` flag plus the official key env var
                            that provider kind uses (hybrid: gateway *and* env)
+    - ``dsh_gateway``      dsh provider route / base_url / api_key_env options,
+                           written into the run's generated settings document,
+                           plus that same official key env var (hybrid too)
     - ``spec_env``         env vars named by a custom spec (``base_url_env`` etc.)
     - ``none``             no override channel at all (Grok Build)
 
