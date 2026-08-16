@@ -109,6 +109,14 @@ Evaluator-only switch examples:
 --evaluator-auth-mode env \
 --evaluator-option provider=anthropic \
 --evaluator-model claude-opus-4-8
+
+# DeepSeek Harness evaluator (auth mode env only).
+--evaluator-agent dsh \
+--dsh-bin dsh \
+--evaluator-auth-mode env \
+--evaluator-option provider=deepseek-official \
+--evaluator-option api_key_env=DEEPSEEK_API_KEY \
+--evaluator-model deepseek-v4-pro
 ```
 
 ## Agent Runtimes
@@ -123,6 +131,7 @@ Use this runtime convention:
 | xAI Grok Build models | Grok Build, `--executor-agent grok` / `--evaluator-agent grok` |
 | Gemini CLI models | Gemini CLI, `--executor-agent gemini` / `--evaluator-agent gemini` |
 | Anthropic, OpenAI, Google, or xAI models through one multi-provider CLI | Pi, `--executor-agent pi` / `--evaluator-agent pi` |
+| DeepSeek models, or the same four provider kinds through DeepSeek's harness | DeepSeek Harness, `--executor-agent dsh` / `--evaluator-agent dsh` |
 | Any other headless agent CLI | Custom runtime, `--executor-agent custom:<id>` / `--evaluator-agent custom:<id>` |
 
 Codex is the default executor and evaluator runtime, and is the expected runtime for GPT/OpenAI-family models:
@@ -292,6 +301,36 @@ StarBench invokes Pi with `--mode json` and `--no-skills`, and sends the prompt 
 Pi accepts `--auth-mode env` only; `global` and `copy-auth` are refused by the adapter and fail the task with that reason recorded in `status.json`. Every run gets its own `PI_CODING_AGENT_DIR` under the task's `agent_home/` (the executor and the judge get separate ones), with `PI_CODING_AGENT_SESSION_DIR` pinned beneath it, and `PI_OFFLINE` / `PI_SKIP_VERSION_CHECK` are forced on, so the operator's `~/.pi` OAuth login never carries benchmark traffic. Credentials come from the provider's own API-key variable: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, or `XAI_API_KEY`.
 
 In Pi's container the isolation home moves into the workspace mount (`/workspace/.runner/pi_home`), so session artifacts stay readable from the host after the run. Per-runtime image and backend rules: [Executor Backend](#executor-backend).
+
+DeepSeek Harness (`dsh`) is DeepSeek's plugin-composed harness. It is configured, not flagged: the run's route, model, session log, and telemetry stance are written into two documents the adapter generates per run, and the launcher is pointed at them.
+
+```bash
+starbench-run \
+  --executor-agent dsh \
+  --evaluator-agent dsh \
+  --dsh-bin dsh \
+  --executor-backend local \
+  --auth-mode env \
+  --executor-option provider=anthropic \
+  --executor-option api_key_env=ANTHROPIC_API_KEY \
+  --executor-model claude-opus-4-8 \
+  --evaluator-option provider=deepseek-official \
+  --evaluator-option api_key_env=DEEPSEEK_API_KEY \
+  --evaluator-model deepseek-v4-pro
+```
+
+StarBench invokes `dsh --profile headless --patch <generated> "<task>"`: the task is a positional argument (dsh reads nothing from stdin), stdout is the final assistant text as plain text, and the exit code is 0 only when the turn ended `completed`. Three `--executor-option` / `--evaluator-option` knobs are the whole wiring surface — `provider` (the route: `anthropic`, `openai`, `google`, `xai`, or `deepseek-official`), `api_key_env` (the env var name the route reads its key from), and `base_url` (an endpoint override for `deepseek-official`). The console fills all three from the selected AI provider. Reasoning is a settings value rather than a flag; dsh's DeepSeek route accepts `off`, `high`, and `max`, so this runtime declares only `default`, `off`, `high`, `max` — the tiers every supported route takes.
+
+The two generated documents land in the run's own dsh home (`agent_home/dsh_executor/` for the executor, `agent_home/judge_<id>_dsh/` for each judge):
+
+- `settings.yaml` activates the chosen route — an `llm-pi-ai:` provider profile for the four native kinds, an `llm-deepseek:` section for `deepseek-official`. It carries the *name* of the key variable, never a key.
+- `starbench.patch.yml` is the `--patch` overlay: it pins `agent-default-model` to the run's route and model (only when a model is named — dsh's own default pair is left alone otherwise), points `session-persistence-jsonl` at a readable JSONL under the run directory (`compression: none`, `packChunks: false`), and disables the session-telemetry row.
+
+**Telemetry is off, deliberately and redundantly.** When its telemetry row runs, dsh mirrors every session-log event — assistant text included, with no redaction rule mounted — onto an OTLP endpoint, tagged with the harness home's anonymous id. StarBench hard-sets `DSH_TELEMETRY_DISABLED=1` and `DSH_TELEMETRY_MODE=DISABLED`, drops any inherited `DSH_TELEMETRY_OTLP_URL`, and disables the row in the patch overlay under both ids dsh has shipped for it. The overlay is the load-bearing one: it does not depend on which dsh version is installed.
+
+dsh accepts `--auth-mode env` only; `global` and `copy-auth` are refused by the adapter and fail the task with that reason recorded in `status.json`. Every run gets its own `DSH_HOME`, so the operator's `~/.dsh` profile, settings, and `.credentials.yaml` never carry benchmark traffic. `DSH_PERMISSION_MODE` is pinned per role — `workspace-write` for a local executor, `danger-full-access` in the container (where the container is the sandbox), `read-only` for every judge. In dsh's container the home and the session log move into the workspace mount (`/workspace/.runner/dsh/`), so both stay readable from the host after the run.
+
+dsh keeps its transcript out of band, so `logs/events.jsonl` is *derived*: the raw session log is copied in, then the shared `item.completed` tail is appended (assistant text, reasoning, and one command entry per completed tool call). `trace_summary.file_changes` stays empty for dsh — its filesystem tools carry their diff in a tool-private payload this repo does not guess at.
 
 Custom runtimes plug in any other headless agent CLI through a declarative
 config file — no Python adapter:

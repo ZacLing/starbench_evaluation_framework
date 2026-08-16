@@ -64,7 +64,7 @@ Build the Docker executor image for Codex (the default Docker runtime):
 docker build -t starbench-codex:latest -f docker/codex-bench.Dockerfile .
 ```
 
-Each runtime has its own image (`starbench-claude-code`, `starbench-gemini-cli`, `starbench-grok`, `starbench-opencode`, `starbench-pi`, plus images for the bundled custom runtimes); build the ones you plan to isolate — see [docs/docker.md](docs/docker.md) for the full list and build commands.
+Each runtime has its own image (`starbench-claude-code`, `starbench-gemini-cli`, `starbench-grok`, `starbench-opencode`, `starbench-pi`, `starbench-dsh`, plus images for the bundled custom runtimes); build the ones you plan to isolate — see [docs/docker.md](docs/docker.md) for the full list and build commands.
 
 Run the sample task with real Codex execution and one GPT judge:
 
@@ -118,6 +118,8 @@ xAI Grok Build models            -> --executor-agent/--evaluator-agent grok
 Gemini CLI models                -> --executor-agent/--evaluator-agent gemini
 Anthropic/OpenAI/Google/xAI in
   one multi-provider CLI         -> --executor-agent/--evaluator-agent pi
+DeepSeek models, or those four
+  through DeepSeek's harness     -> --executor-agent/--evaluator-agent dsh
 Any other headless agent CLI     -> --executor-agent/--evaluator-agent custom:<id>
 ```
 
@@ -127,7 +129,7 @@ Python changes are needed. See [runtimes/README.md](runtimes/README.md).
 
 To switch the evaluator, pair the runtime with the model it should call —
 `--evaluator-agent codex --evaluator-model gpt-5.5`, and likewise for `claude`,
-`gemini`, `grok`, `opencode`, `pi`, or `custom:<id>`. When the two sides use
+`gemini`, `grok`, `opencode`, `pi`, `dsh`, or `custom:<id>`. When the two sides use
 different runtimes, split the auth modes: `--executor-auth-mode env` for an
 OpenCode executor reading a gateway key from the environment,
 `--evaluator-auth-mode global` for a Codex evaluator reading the local Codex
@@ -135,12 +137,13 @@ login.
 
 Every other runtime keeps the same command shape as the Codex sample above —
 swap `--executor-agent`/`--evaluator-agent`, point the runtime's `--claude-bin`
-/ `--gemini-bin` / `--grok-bin` / `--opencode-bin` / `--pi-bin` at its CLI when
+/ `--gemini-bin` / `--grok-bin` / `--opencode-bin` / `--pi-bin` / `--dsh-bin`
+at its CLI when
 it is not on `PATH`, and leave the backend alone (every non-Codex runtime
 defaults to `local`). Authenticate each CLI before invoking StarBench, or use
 `--auth-mode env` when it reads its API key from the environment. Per-runtime
-commands, gateway wiring (`--executor-option provider=…`), Pi's env-only auth
-rule, and mixed-auth examples live in the
+commands, gateway wiring (`--executor-option provider=…`), the env-only auth
+rule Pi and DeepSeek Harness share, and mixed-auth examples live in the
 [Runner Reference](docs/runner_reference.md#agent-runtimes).
 
 Run-level knobs that apply to any of the above:

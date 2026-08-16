@@ -10,6 +10,7 @@ tag, so `--executor-backend docker` is all you need:
 - **Grok Build** (image `starbench-grok:latest`): `HOME` pointed at `/workspace/.runner/grok_home`; env whitelist `XAI_API_KEY`. The prompt travels on the container argv (grok takes `-p <prompt>`).
 - **OpenCode** (image `starbench-opencode:latest`): `HOME` pointed at `/workspace/.runner/opencode_home` so config *and* session storage stay inside the workspace mount — the host reads the session afterwards for the final-message export fallback. Gateway configuration is injected via `OPENCODE_CONFIG_CONTENT`; env whitelist `OPENAI_API_KEY`, `XAI_API_KEY`, plus the gateway's `api_key_env` option when set.
 - **Pi** (image `starbench-pi:latest`): `HOME` and `PI_CODING_AGENT_DIR` pointed at `/workspace/.runner/pi_home` (session dir beneath it) so session artifacts stay readable from the host; `PI_OFFLINE` and `PI_SKIP_VERSION_CHECK` are forced on. Env whitelist `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY` (use `--auth-mode env`; Pi refuses the other modes). Installed executor skills are passed as `--skill /workspace/.starbench/executor_skills/<skill-id>`.
+- **DeepSeek Harness** (image `starbench-dsh:latest`): `HOME` pointed at `/workspace/.runner/dsh`, with `DSH_HOME` at `.../dsh/home` and the session log at `.../dsh/sessions`, so the generated settings/patch documents and the transcript all stay inside the workspace mount and readable from the host. `DSH_TELEMETRY_DISABLED=1` and `DSH_TELEMETRY_MODE=DISABLED` are forced, and `DSH_PERMISSION_MODE=danger-full-access` because the container itself is the sandbox. Env whitelist `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY` (use `--auth-mode env`; dsh refuses the other modes).
 - **Custom runtimes** with a `docker` section in their `runtimes/<id>.json` (image + `env_passthrough`). `HOME` defaults to `/workspace/.runner/custom_home` inside the container. Dockerfiles for the bundled runtimes ship in `docker/` (`make docker-images-custom` builds `starbench-qwen:latest`, `starbench-kimi:latest`, and `starbench-trae-agent:latest`). The Kimi image bakes a seeded `~/.kimi/config.toml` (see `docker/kimi-config.toml`) whose endpoint/key are overridden by `OPENAI_BASE_URL` / `OPENAI_API_KEY` at run time.
 
 All executor backends default to `local` except Codex; pass
@@ -28,6 +29,7 @@ docker build -t starbench-gemini-cli:latest -f docker/gemini-cli.Dockerfile .
 docker build -t starbench-grok:latest -f docker/grok.Dockerfile .
 docker build -t starbench-opencode:latest -f docker/opencode.Dockerfile .
 docker build -t starbench-pi:latest -f docker/pi.Dockerfile .
+docker build -t starbench-dsh:latest -f docker/dsh.Dockerfile .
 ```
 
 Grok Build installs via xAI's shell installer rather than npm; if a build of
@@ -114,6 +116,7 @@ to `env`:
 - [ ] Grok Build — `--executor-agent grok --executor-backend docker`. Needs `XAI_API_KEY`.
 - [ ] OpenCode — `--executor-agent opencode --executor-backend docker --executor-option provider=…`. Needs the gateway key named by its `api_key_env` option (default `OPENAI_API_KEY`).
 - [ ] Pi — `--executor-agent pi --executor-backend docker` (Pi rejects `global` and `copy-auth` outright). Needs the key for the provider you select.
+- [ ] DeepSeek Harness — `--executor-agent dsh --executor-backend docker --executor-option provider=…` (dsh rejects `global` and `copy-auth` outright). Needs the key for the route you select; confirm the generated `settings.yaml`/`starbench.patch.yml` and the session log all landed under `workspace/.runner/dsh/`.
 - [ ] A docker-enabled custom runtime — `--executor-agent custom:<id> --executor-backend docker`.
 
 Cross-cutting:
